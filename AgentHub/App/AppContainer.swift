@@ -13,6 +13,7 @@ final class AppContainer {
     let activityLogStore: ActivityLogStore
     let chatRuntime: CodexRuntime
     let authService: CodexAuthService
+    let loginCoordinator: CodexLoginCoordinator
     let chatSessionService: ChatSessionService
     let taskOrchestrator: TaskOrchestrator
     let scheduleRunner: ScheduleRunner
@@ -30,6 +31,7 @@ final class AppContainer {
         activityLogStore: ActivityLogStore,
         chatRuntime: CodexRuntime,
         authService: CodexAuthService,
+        loginCoordinator: CodexLoginCoordinator,
         chatSessionService: ChatSessionService,
         taskOrchestrator: TaskOrchestrator,
         scheduleRunner: ScheduleRunner
@@ -46,6 +48,7 @@ final class AppContainer {
         self.activityLogStore = activityLogStore
         self.chatRuntime = chatRuntime
         self.authService = authService
+        self.loginCoordinator = loginCoordinator
         self.chatSessionService = chatSessionService
         self.taskOrchestrator = taskOrchestrator
         self.scheduleRunner = scheduleRunner
@@ -68,6 +71,7 @@ final class AppContainer {
         let activityLogStore = ActivityLogStore(paths: paths)
         let chatRuntime = CodexCLIRuntime()
         let authService = CodexAuthService(store: authStore, runtime: chatRuntime, paths: paths)
+        let loginCoordinator = CodexLoginCoordinator(authService: authService, paths: paths)
         let chatSessionService = ChatSessionService(
             sessionStore: assistantSessionStore,
             personaManager: personaManager,
@@ -104,6 +108,7 @@ final class AppContainer {
             activityLogStore: activityLogStore,
             chatRuntime: chatRuntime,
             authService: authService,
+            loginCoordinator: loginCoordinator,
             chatSessionService: chatSessionService,
             taskOrchestrator: taskOrchestrator,
             scheduleRunner: scheduleRunner
