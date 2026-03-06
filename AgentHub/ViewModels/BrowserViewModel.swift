@@ -15,7 +15,12 @@ final class BrowserViewModel: ObservableObject {
     @Published var canGoForward = false
     @Published private(set) var pendingCommand: Command?
 
+    let profile: BrowserProfile
     var commandExecutor: ((Command) -> Void)?
+
+    init(profile: BrowserProfile) {
+        self.profile = profile
+    }
 
     func open(url: URL) {
         currentURL = url
@@ -54,7 +59,6 @@ final class BrowserViewModel: ObservableObject {
     }
 
     func close() {
-        commandExecutor = nil
         pendingCommand = nil
         currentURL = nil
         pageTitle = ""
