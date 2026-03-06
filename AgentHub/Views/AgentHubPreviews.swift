@@ -17,7 +17,9 @@ private enum PreviewFactory {
         let personaManager = PersonaManager(paths: paths)
         let runtime = PreviewCodexRuntime()
         let configStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = CodexAuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
+        _ = try? authStore.loadOrCreateDefault()
         let chatSessionService = ChatSessionService(
             sessionStore: sessionStore,
             personaManager: personaManager,
@@ -64,7 +66,9 @@ private enum PreviewFactory {
         let taskRunStore = TaskRunStore(paths: paths)
         let activityLogStore = ActivityLogStore(paths: paths)
         let configStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = CodexAuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
+        _ = try? authStore.loadOrCreateDefault()
         let orchestrator = TaskOrchestrator(
             taskStore: taskStore,
             taskRunStore: taskRunStore,

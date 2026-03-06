@@ -46,6 +46,7 @@ struct AgentHubTests {
     func computeNextRunSupportsManualAndInterval() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let paths = AppPaths(root: root)
+        let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
         let orchestrator = TaskOrchestrator(
             taskStore: try TaskStore(paths: paths),
             taskRunStore: TaskRunStore(paths: paths),
@@ -53,6 +54,7 @@ struct AgentHubTests {
             personaManager: PersonaManager(paths: paths),
             workspaceManager: WorkspaceManager(),
             paths: paths,
+            runtimeConfigStore: runtimeConfigStore,
             runtimeFactory: { DummyRuntime() }
         )
 
