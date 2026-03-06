@@ -161,7 +161,7 @@ private struct ChatSurfacePreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeChatViewModel()
 
     var body: some View {
-        ChatView(viewModel: viewModel, isPanelPresented: false, onTogglePanel: {})
+        ChatView(viewModel: viewModel, isPanelPresented: false, onTogglePanel: {}, onOpenLink: { _ in })
             .frame(width: 1120, height: 760)
             .padding()
             .background(Color.black)
@@ -172,7 +172,7 @@ private struct ChatBusyPreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeBusyChatViewModel()
 
     var body: some View {
-        ChatView(viewModel: viewModel, isPanelPresented: true, onTogglePanel: {})
+        ChatView(viewModel: viewModel, isPanelPresented: true, onTogglePanel: {}, onOpenLink: { _ in })
             .frame(width: 1120, height: 760)
             .padding()
             .background(Color.black)

@@ -5,6 +5,7 @@ struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     let isPanelPresented: Bool
     let onTogglePanel: () -> Void
+    let onOpenLink: (URL) -> Void
 
     @State private var composerHeight: CGFloat = 22
 
@@ -44,7 +45,7 @@ struct ChatView: View {
                         case let .separator(label):
                             DateSeparator(label: label)
                         case let .message(message):
-                            ConversationBubble(message: message)
+                            ConversationBubble(message: message, onOpenLink: onOpenLink)
                                 .id(message.id)
                         }
                     }
@@ -267,6 +268,7 @@ private struct DateSeparator: View {
 
 private struct ConversationBubble: View {
     let message: Message
+    let onOpenLink: (URL) -> Void
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
@@ -282,13 +284,22 @@ private struct ConversationBubble: View {
     }
 
     private var bubble: some View {
-        Text(message.text)
+        Text(attributedMessage)
             .textSelection(.enabled)
             .font(.body)
             .foregroundStyle(textColor)
             .multilineTextAlignment(.leading)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
+            .environment(\.openURL, OpenURLAction { url in
+                guard let scheme = url.scheme?.lowercased(),
+                      scheme == "http" || scheme == "https" else {
+                    return .systemAction
+                }
+
+                onOpenLink(url)
+                return .handled
+            })
             .background(
                 bubbleShape
                     .fill(bubbleFill)
@@ -297,6 +308,29 @@ private struct ConversationBubble: View {
                             .stroke(Color.white.opacity(isIncoming ? 0.04 : 0.0), lineWidth: 1)
                     )
             )
+    }
+
+    private var attributedMessage: AttributedString {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return AttributedString(message.text)
+        }
+
+        let nsRange = NSRange(message.text.startIndex..<message.text.endIndex, in: message.text)
+        var attributed = AttributedString(message.text)
+
+        for match in detector.matches(in: message.text, options: [], range: nsRange) {
+            guard Range(match.range, in: message.text) != nil,
+                  let attributedRange = Range(match.range, in: attributed),
+                  let url = match.url,
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                continue
+            }
+
+            attributed[attributedRange].link = url
+        }
+
+        return attributed
     }
 
     private var isIncoming: Bool {

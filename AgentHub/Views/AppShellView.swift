@@ -27,7 +27,11 @@ struct AppShellView: View {
         ChatView(
             viewModel: chatViewModel,
             isPanelPresented: appViewModel.isPanelPresented,
-            onTogglePanel: { appViewModel.togglePanel() }
+            onTogglePanel: { appViewModel.togglePanel() },
+            onOpenLink: { url in
+                browserViewModel.open(url: url)
+                appViewModel.openBrowser()
+            }
         )
         .inspector(isPresented: $appViewModel.isPanelPresented) {
             AssistantPanelView(
