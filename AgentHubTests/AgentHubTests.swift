@@ -65,6 +65,36 @@ struct AgentHubTests {
         #expect(abs(interval!.timeIntervalSince(now) - 1800) < 1)
     }
 
+    @Test
+    func browserViewModelTracksNavigationStateAndCloseResetsIt() {
+        let viewModel = BrowserViewModel(profile: BrowserProfile())
+        let url = URL(string: "https://www.opentable.com")!
+
+        viewModel.open(url: url)
+        #expect(viewModel.currentURL == url)
+
+        viewModel.updateNavigationState(
+            currentURL: url,
+            pageTitle: "OpenTable",
+            isLoading: true,
+            canGoBack: true,
+            canGoForward: false
+        )
+
+        #expect(viewModel.pageTitle == "OpenTable")
+        #expect(viewModel.isLoading)
+        #expect(viewModel.canGoBack)
+        #expect(!viewModel.canGoForward)
+
+        viewModel.close()
+
+        #expect(viewModel.currentURL == nil)
+        #expect(viewModel.pageTitle.isEmpty)
+        #expect(!viewModel.isLoading)
+        #expect(!viewModel.canGoBack)
+        #expect(!viewModel.canGoForward)
+    }
+
 }
 
 private struct DummyRuntime: CodexRuntime {

@@ -88,6 +88,19 @@ private enum PreviewFactory {
         return viewModel
     }
 
+    @MainActor
+    static func makeBrowserViewModel() -> BrowserViewModel {
+        let viewModel = BrowserViewModel(profile: BrowserProfile())
+        viewModel.updateNavigationState(
+            currentURL: URL(string: "https://www.opentable.com")!,
+            pageTitle: "OpenTable",
+            isLoading: false,
+            canGoBack: true,
+            canGoForward: false
+        )
+        return viewModel
+    }
+
     static func sampleMessages() -> [Message] {
         let sessionID = UUID()
         return [
@@ -199,6 +212,15 @@ private struct TaskDrawerPreviewHost: View {
     }
 }
 
+private struct BrowserPreviewHost: View {
+    @StateObject private var viewModel = PreviewFactory.makeBrowserViewModel()
+
+    var body: some View {
+        BrowserView(viewModel: viewModel, onClose: {})
+            .frame(width: 1120, height: 760)
+    }
+}
+
 struct ChatSurfacePreview: PreviewProvider {
     static var previews: some View {
         ChatSurfacePreviewHost()
@@ -217,6 +239,13 @@ struct TaskDrawerPreview: PreviewProvider {
     static var previews: some View {
         TaskDrawerPreviewHost()
             .previewDisplayName("Task Drawer")
+    }
+}
+
+struct BrowserPreview: PreviewProvider {
+    static var previews: some View {
+        BrowserPreviewHost()
+            .previewDisplayName("Browser")
     }
 }
 
