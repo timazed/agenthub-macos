@@ -3,6 +3,7 @@ import Foundation
 final class AppContainer {
     let paths: AppPaths
     let appExecutableURL: URL
+    let browserViewModel: BrowserViewModel
     let personaManager: PersonaManager
     let workspaceManager: WorkspaceManager
     let assistantSessionStore: AssistantSessionStore
@@ -18,6 +19,7 @@ final class AppContainer {
     private init(
         paths: AppPaths,
         appExecutableURL: URL,
+        browserViewModel: BrowserViewModel,
         personaManager: PersonaManager,
         workspaceManager: WorkspaceManager,
         assistantSessionStore: AssistantSessionStore,
@@ -32,6 +34,7 @@ final class AppContainer {
     ) {
         self.paths = paths
         self.appExecutableURL = appExecutableURL
+        self.browserViewModel = browserViewModel
         self.personaManager = personaManager
         self.workspaceManager = workspaceManager
         self.assistantSessionStore = assistantSessionStore
@@ -50,6 +53,7 @@ final class AppContainer {
         try paths.prepare()
 
         let appExecutableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+        let browserViewModel = BrowserViewModel()
         let personaManager = PersonaManager(paths: paths)
         let workspaceManager = WorkspaceManager()
         let assistantSessionStore = AssistantSessionStore(paths: paths)
@@ -85,6 +89,7 @@ final class AppContainer {
         return AppContainer(
             paths: paths,
             appExecutableURL: appExecutableURL,
+            browserViewModel: browserViewModel,
             personaManager: personaManager,
             workspaceManager: workspaceManager,
             assistantSessionStore: assistantSessionStore,
