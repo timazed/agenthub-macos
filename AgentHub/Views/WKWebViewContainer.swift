@@ -12,6 +12,7 @@ struct WKWebViewContainer: NSViewRepresentable {
         let configuration = viewModel.profile.makeConfiguration()
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         context.coordinator.attach(to: webView)
         context.coordinator.loadCurrentURLIfNeeded()
@@ -23,7 +24,7 @@ struct WKWebViewContainer: NSViewRepresentable {
         context.coordinator.handleModelUpdates()
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         private let viewModel: BrowserViewModel
         private weak var webView: WKWebView?
         private var observations: [NSKeyValueObservation] = []
@@ -122,6 +123,17 @@ struct WKWebViewContainer: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             syncState()
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            guard navigationAction.targetFrame == nil else { return nil }
+            webView.load(navigationAction.request)
+            return nil
         }
     }
 }
