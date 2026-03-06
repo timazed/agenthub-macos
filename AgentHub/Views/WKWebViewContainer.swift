@@ -38,6 +38,9 @@ struct WKWebViewContainer: NSViewRepresentable {
             guard self.webView !== webView else { return }
             observations.removeAll()
             self.webView = webView
+            viewModel.commandExecutor = { [weak self] command in
+                self?.execute(command)
+            }
 
             observations = [
                 webView.observe(\.title, options: [.initial, .new]) { [weak self] _, _ in
@@ -72,6 +75,13 @@ struct WKWebViewContainer: NSViewRepresentable {
 
         private func handlePendingCommand() {
             guard let webView, let command = viewModel.pendingCommand else { return }
+            _ = webView
+            execute(command)
+            viewModel.finishCommand(command)
+        }
+
+        private func execute(_ command: BrowserViewModel.Command) {
+            guard let webView else { return }
 
             switch command {
             case .goBack:
@@ -85,8 +95,6 @@ struct WKWebViewContainer: NSViewRepresentable {
             case .reload:
                 webView.reload()
             }
-
-            viewModel.finishCommand(command)
         }
 
         private func syncState() {

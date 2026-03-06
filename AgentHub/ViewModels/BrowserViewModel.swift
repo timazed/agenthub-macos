@@ -15,20 +15,22 @@ final class BrowserViewModel: ObservableObject {
     @Published var canGoForward = false
     @Published private(set) var pendingCommand: Command?
 
+    var commandExecutor: ((Command) -> Void)?
+
     func open(url: URL) {
         currentURL = url
     }
 
     func goBack() {
-        pendingCommand = .goBack
+        execute(.goBack)
     }
 
     func goForward() {
-        pendingCommand = .goForward
+        execute(.goForward)
     }
 
     func reload() {
-        pendingCommand = .reload
+        execute(.reload)
     }
 
     func finishCommand(_ command: Command) {
@@ -52,11 +54,20 @@ final class BrowserViewModel: ObservableObject {
     }
 
     func close() {
+        commandExecutor = nil
         pendingCommand = nil
         currentURL = nil
         pageTitle = ""
         isLoading = false
         canGoBack = false
         canGoForward = false
+    }
+
+    private func execute(_ command: Command) {
+        if let commandExecutor {
+            commandExecutor(command)
+        } else {
+            pendingCommand = command
+        }
     }
 }
