@@ -25,7 +25,8 @@ private enum PreviewFactory {
             personaManager: personaManager,
             runtime: runtime,
             paths: paths,
-            runtimeConfigStore: configStore
+            runtimeConfigStore: configStore,
+            authService: CodexAuthService(store: authStore, runtime: runtime, paths: paths)
         )
 
         let taskStore = (try? TaskStore(paths: paths)) ?? fatalTaskStore(paths: paths)
@@ -39,6 +40,7 @@ private enum PreviewFactory {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
+            authService: CodexAuthService(store: authStore, runtime: runtime, paths: paths),
             runtimeFactory: { PreviewCodexRuntime() }
         )
 
@@ -46,6 +48,32 @@ private enum PreviewFactory {
         viewModel.messages = sampleMessages()
         viewModel.pendingProposal = sampleProposal()
         return viewModel
+    }
+
+    @MainActor
+    static func makeAuthViewModel(authenticated: Bool) -> AuthViewModel {
+        let paths = makePaths()
+        try? paths.prepare()
+
+        let authStore = CodexAuthStore(paths: paths)
+        let runtime = PreviewCodexRuntime()
+        let authService = CodexAuthService(store: authStore, runtime: runtime, paths: paths)
+        let loginCoordinator = CodexLoginCoordinator(authService: authService, paths: paths)
+        let state = CodexAuthState(
+            status: authenticated ? .authenticated : .unauthenticated,
+            accountEmail: authenticated ? "preview@example.com" : nil,
+            lastValidatedAt: authenticated ? Date() : nil,
+            failureReason: authenticated ? nil : "Sign in before using AgentHub.",
+            updatedAt: Date()
+        )
+        try? authStore.save(state)
+
+        return AuthViewModel(
+            authService: authService,
+            loginCoordinator: loginCoordinator,
+            initialState: state,
+            openURL: { _ in true }
+        )
     }
 
     @MainActor
@@ -77,6 +105,7 @@ private enum PreviewFactory {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
+            authService: CodexAuthService(store: authStore, runtime: PreviewCodexRuntime(), paths: paths),
             runtimeFactory: { PreviewCodexRuntime() }
         )
         let scheduleRunner = ScheduleRunner(taskStore: taskStore, orchestrator: orchestrator, paths: paths)
@@ -173,7 +202,7 @@ private struct ChatSurfacePreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeChatViewModel()
 
     var body: some View {
-        ChatView(viewModel: viewModel, isPanelPresented: false, onTogglePanel: {})
+        ChatView(viewModel: viewModel, isPanelPresented: false, onTogglePanel: {}, isInputEnabled: true, blockedMessage: nil)
             .frame(width: 1120, height: 760)
             .padding()
             .background(Color.black)
@@ -184,10 +213,25 @@ private struct ChatBusyPreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeBusyChatViewModel()
 
     var body: some View {
-        ChatView(viewModel: viewModel, isPanelPresented: true, onTogglePanel: {})
+        ChatView(viewModel: viewModel, isPanelPresented: true, onTogglePanel: {}, isInputEnabled: true, blockedMessage: nil)
             .frame(width: 1120, height: 760)
             .padding()
             .background(Color.black)
+    }
+}
+
+private struct LoginGatePreviewHost: View {
+    @StateObject private var viewModel = PreviewFactory.makeAuthViewModel(authenticated: false)
+
+    var body: some View {
+        CodexLoginGateView(
+            viewModel: viewModel,
+            onStartLogin: {},
+            onRetryStatus: {},
+            onCancelLogin: {},
+            onOpenSecuritySettings: {}
+        )
+        .frame(width: 1120, height: 760)
     }
 }
 
@@ -237,5 +281,12 @@ struct TaskEditorPreview: PreviewProvider {
         TaskEditorSheetView(task: PreviewFactory.sampleTasks().first, onSave: { _, _ in }, onCancel: {})
             .frame(width: 760, height: 620)
             .previewDisplayName("Task Editor")
+    }
+}
+
+struct LoginGatePreview: PreviewProvider {
+    static var previews: some View {
+        LoginGatePreviewHost()
+            .previewDisplayName("Codex Login Gate")
     }
 }

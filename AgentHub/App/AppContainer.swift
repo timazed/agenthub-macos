@@ -77,7 +77,8 @@ final class AppContainer {
             personaManager: personaManager,
             runtime: chatRuntime,
             paths: paths,
-            runtimeConfigStore: runtimeConfigStore
+            runtimeConfigStore: runtimeConfigStore,
+            authService: authService
         )
         let taskOrchestrator = TaskOrchestrator(
             taskStore: taskStore,
@@ -87,6 +88,7 @@ final class AppContainer {
             workspaceManager: workspaceManager,
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
+            authService: authService,
             runtimeFactory: { CodexCLIRuntime() }
         )
         let scheduleRunner = ScheduleRunner(

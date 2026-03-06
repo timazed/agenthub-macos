@@ -47,6 +47,8 @@ struct AgentHubTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let paths = AppPaths(root: root)
         let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = CodexAuthStore(paths: paths)
+        let authService = CodexAuthService(store: authStore, runtime: DummyRuntime(), paths: paths)
         let orchestrator = TaskOrchestrator(
             taskStore: try TaskStore(paths: paths),
             taskRunStore: TaskRunStore(paths: paths),
@@ -55,6 +57,7 @@ struct AgentHubTests {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
+            authService: authService,
             runtimeFactory: { DummyRuntime() }
         )
 

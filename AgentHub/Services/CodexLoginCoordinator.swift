@@ -26,6 +26,36 @@ enum CodexLoginCoordinatorError: LocalizedError {
     }
 }
 
+private final class LockedLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+
+    func append(_ line: String) {
+        lock.lock()
+        lines.append(line)
+        lock.unlock()
+    }
+
+    func snapshot() -> String {
+        lock.lock()
+        let value = lines.joined(separator: "\n")
+        lock.unlock()
+        return value
+    }
+}
+
+private final class LockedChallengeParser: @unchecked Sendable {
+    private let lock = NSLock()
+    private var parser = ChallengeParser()
+
+    func consume(line: String) -> CodexDeviceAuthChallenge? {
+        lock.lock()
+        let challenge = parser.consume(line: line)
+        lock.unlock()
+        return challenge
+    }
+}
+
 final class CodexLoginCoordinator {
     private let authService: CodexAuthService
     private let paths: AppPaths
@@ -66,30 +96,17 @@ final class CodexLoginCoordinator {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        stateLock.lock()
-        if currentProcess != nil {
-            stateLock.unlock()
-            throw CodexLoginCoordinatorError.loginInProgress
-        }
-        currentProcess = process
-        stateLock.unlock()
+        try reserve(process: process)
 
-        let parserLock = NSLock()
-        var parser = ChallengeParser()
-        var diagnostics: [String] = []
-
-        func appendDiagnostic(_ line: String) {
-            parserLock.lock()
-            diagnostics.append(line)
-            parserLock.unlock()
-        }
+        let diagnostics = LockedLines()
+        let parser = LockedChallengeParser()
 
         let challengeTask = Task<CodexDeviceAuthChallenge, Error> {
             try await withCheckedThrowingContinuation { continuation in
                 let continuationLock = NSLock()
                 var didResolve = false
 
-                func resolve(_ result: Result<CodexDeviceAuthChallenge, Error>) {
+                let resolve: @Sendable (Result<CodexDeviceAuthChallenge, Error>) -> Void = { result in
                     continuationLock.lock()
                     defer { continuationLock.unlock() }
                     guard !didResolve else { return }
@@ -97,25 +114,21 @@ final class CodexLoginCoordinator {
                     continuation.resume(with: result)
                 }
 
-                let handleLine: (String) -> Void = { line in
+                let handleLine: @Sendable (String) -> Void = { line in
                     let cleaned = Self.stripANSI(from: line).trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !cleaned.isEmpty else { return }
 
-                    parserLock.lock()
-                    let challenge = parser.consume(line: cleaned)
-                    parserLock.unlock()
-
-                    if let challenge {
+                    if let challenge = parser.consume(line: cleaned) {
                         resolve(.success(challenge))
                     } else {
-                        appendDiagnostic(cleaned)
+                        diagnostics.append(cleaned)
                     }
                 }
 
                 Self.installReadabilityHandler(on: stdoutPipe.fileHandleForReading, handleLine: handleLine)
                 Self.installReadabilityHandler(on: stderrPipe.fileHandleForReading, handleLine: handleLine)
 
-                process.terminationHandler = { process in
+                process.terminationHandler = { terminatedProcess in
                     stdoutPipe.fileHandleForReading.readabilityHandler = nil
                     stderrPipe.fileHandleForReading.readabilityHandler = nil
 
@@ -125,10 +138,8 @@ final class CodexLoginCoordinator {
                         handleLine(String(line))
                     }
 
-                    if process.terminationStatus != 0 {
-                        parserLock.lock()
-                        let message = diagnostics.joined(separator: "\n")
-                        parserLock.unlock()
+                    if terminatedProcess.terminationStatus != 0 {
+                        let message = diagnostics.snapshot()
                         resolve(.failure(CodexLoginCoordinatorError.challengeUnavailable(
                             message.isEmpty ? "Codex login did not provide a browser challenge" : message
                         )))
@@ -143,15 +154,12 @@ final class CodexLoginCoordinator {
             }
         }
 
-        stateLock.lock()
-        completionTask = Task {
+        let completionTask = Task<CodexAuthState, Error> {
             let exitCode = await Self.waitForExit(of: process)
             defer { self.clearCurrentProcess() }
 
             if exitCode != 0 {
-                parserLock.lock()
-                let message = diagnostics.joined(separator: "\n")
-                parserLock.unlock()
+                let message = diagnostics.snapshot()
                 throw CodexLoginCoordinatorError.loginFailed(
                     message.isEmpty ? "Codex login failed" : message
                 )
@@ -159,28 +167,17 @@ final class CodexLoginCoordinator {
 
             return try self.authService.refreshStatus()
         }
-        stateLock.unlock()
+        storeCompletionTask(completionTask)
 
         return try await challengeTask.value
     }
 
     func waitForCompletion() async throws -> CodexAuthState {
-        stateLock.lock()
-        let task = completionTask
-        stateLock.unlock()
-
-        guard let task else {
+        guard let task = snapshotCompletionTask() else {
             throw CodexLoginCoordinatorError.loginNotStarted
         }
 
-        defer {
-            stateLock.lock()
-            if completionTask == task {
-                completionTask = nil
-            }
-            stateLock.unlock()
-        }
-
+        defer { clearCompletionTask(ifMatching: task) }
         return try await task.value
     }
 
@@ -201,6 +198,36 @@ final class CodexLoginCoordinator {
             }
         }
         return nil
+    }
+
+    private func reserve(process: Process) throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard currentProcess == nil else {
+            throw CodexLoginCoordinatorError.loginInProgress
+        }
+        currentProcess = process
+    }
+
+    private func storeCompletionTask(_ task: Task<CodexAuthState, Error>) {
+        stateLock.lock()
+        completionTask = task
+        stateLock.unlock()
+    }
+
+    private func snapshotCompletionTask() -> Task<CodexAuthState, Error>? {
+        stateLock.lock()
+        let task = completionTask
+        stateLock.unlock()
+        return task
+    }
+
+    private func clearCompletionTask(ifMatching task: Task<CodexAuthState, Error>) {
+        stateLock.lock()
+        if completionTask == task {
+            completionTask = nil
+        }
+        stateLock.unlock()
     }
 
     private func clearCurrentProcess() {
@@ -230,16 +257,20 @@ final class CodexLoginCoordinator {
         throw CodexRuntimeError.binaryNotFound
     }
 
-    private static func installReadabilityHandler(on handle: FileHandle, handleLine: @escaping (String) -> Void) {
-        var buffer = Data()
+    private static func installReadabilityHandler(on handle: FileHandle, handleLine: @escaping @Sendable (String) -> Void) {
+        final class BufferBox: @unchecked Sendable {
+            var data = Data()
+        }
+
+        let buffer = BufferBox()
         handle.readabilityHandler = { readableHandle in
             let chunk = readableHandle.availableData
             guard !chunk.isEmpty else { return }
-            buffer.append(chunk)
+            buffer.data.append(chunk)
 
-            while let range = buffer.firstRange(of: Data([0x0A])) {
-                let lineData = buffer.subdata(in: 0..<range.lowerBound)
-                buffer.removeSubrange(0..<range.upperBound)
+            while let range = buffer.data.firstRange(of: Data([0x0A])) {
+                let lineData = buffer.data.subdata(in: 0..<range.lowerBound)
+                buffer.data.removeSubrange(0..<range.upperBound)
                 let line = String(data: lineData, encoding: .utf8) ?? ""
                 handleLine(line)
             }

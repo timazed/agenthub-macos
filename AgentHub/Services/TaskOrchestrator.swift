@@ -8,6 +8,7 @@ final class TaskOrchestrator {
     private let workspaceManager: WorkspaceManager
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
+    private let authService: CodexAuthService
     private let runtimeFactory: () -> CodexRuntime
     private let runningLock = NSLock()
     private var runningTaskIDs = Set<UUID>()
@@ -20,6 +21,7 @@ final class TaskOrchestrator {
         workspaceManager: WorkspaceManager,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
+        authService: CodexAuthService,
         runtimeFactory: @escaping () -> CodexRuntime
     ) {
         self.taskStore = taskStore
@@ -29,6 +31,7 @@ final class TaskOrchestrator {
         self.workspaceManager = workspaceManager
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
+        self.authService = authService
         self.runtimeFactory = runtimeFactory
     }
 
@@ -89,6 +92,13 @@ final class TaskOrchestrator {
 
     @discardableResult
     func runTask(taskId: UUID) async throws -> TaskRecord {
+        do {
+            try authService.requireAuthenticated()
+        } catch {
+            try? updateTaskForAuthFailure(taskId: taskId, message: error.localizedDescription)
+            throw error
+        }
+
         try beginRunning(taskId: taskId)
         defer { finishRunning(taskId: taskId) }
 
@@ -263,6 +273,23 @@ final class TaskOrchestrator {
             return "\(task.title) failed"
         }
         return "\(task.title) completed a run"
+    }
+
+    private func updateTaskForAuthFailure(taskId: UUID, message: String) throws {
+        let updated = try taskStore.update(taskId: taskId) { current in
+            current.state = .error
+            current.lastError = message
+            current.nextRun = nil
+        }
+        try activityLogStore.append(
+            ActivityEvent(
+                id: UUID(),
+                taskId: updated.id,
+                kind: .taskRunFailed,
+                message: "\(updated.title) blocked: \(message)",
+                createdAt: Date()
+            )
+        )
     }
 
     private func beginRunning(taskId: UUID) throws {
