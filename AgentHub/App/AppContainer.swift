@@ -7,10 +7,12 @@ final class AppContainer {
     let workspaceManager: WorkspaceManager
     let assistantSessionStore: AssistantSessionStore
     let runtimeConfigStore: AppRuntimeConfigStore
+    let authStore: CodexAuthStore
     let taskStore: TaskStore
     let taskRunStore: TaskRunStore
     let activityLogStore: ActivityLogStore
     let chatRuntime: CodexRuntime
+    let authService: CodexAuthService
     let chatSessionService: ChatSessionService
     let taskOrchestrator: TaskOrchestrator
     let scheduleRunner: ScheduleRunner
@@ -22,10 +24,12 @@ final class AppContainer {
         workspaceManager: WorkspaceManager,
         assistantSessionStore: AssistantSessionStore,
         runtimeConfigStore: AppRuntimeConfigStore,
+        authStore: CodexAuthStore,
         taskStore: TaskStore,
         taskRunStore: TaskRunStore,
         activityLogStore: ActivityLogStore,
         chatRuntime: CodexRuntime,
+        authService: CodexAuthService,
         chatSessionService: ChatSessionService,
         taskOrchestrator: TaskOrchestrator,
         scheduleRunner: ScheduleRunner
@@ -36,10 +40,12 @@ final class AppContainer {
         self.workspaceManager = workspaceManager
         self.assistantSessionStore = assistantSessionStore
         self.runtimeConfigStore = runtimeConfigStore
+        self.authStore = authStore
         self.taskStore = taskStore
         self.taskRunStore = taskRunStore
         self.activityLogStore = activityLogStore
         self.chatRuntime = chatRuntime
+        self.authService = authService
         self.chatSessionService = chatSessionService
         self.taskOrchestrator = taskOrchestrator
         self.scheduleRunner = scheduleRunner
@@ -54,11 +60,14 @@ final class AppContainer {
         let workspaceManager = WorkspaceManager()
         let assistantSessionStore = AssistantSessionStore(paths: paths)
         let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = CodexAuthStore(paths: paths)
         _ = try runtimeConfigStore.loadOrCreateDefault()
+        _ = try authStore.loadOrCreateDefault()
         let taskStore = try TaskStore(paths: paths)
         let taskRunStore = TaskRunStore(paths: paths)
         let activityLogStore = ActivityLogStore(paths: paths)
         let chatRuntime = CodexCLIRuntime()
+        let authService = CodexAuthService(store: authStore, runtime: chatRuntime, paths: paths)
         let chatSessionService = ChatSessionService(
             sessionStore: assistantSessionStore,
             personaManager: personaManager,
@@ -89,10 +98,12 @@ final class AppContainer {
             workspaceManager: workspaceManager,
             assistantSessionStore: assistantSessionStore,
             runtimeConfigStore: runtimeConfigStore,
+            authStore: authStore,
             taskStore: taskStore,
             taskRunStore: taskRunStore,
             activityLogStore: activityLogStore,
             chatRuntime: chatRuntime,
+            authService: authService,
             chatSessionService: chatSessionService,
             taskOrchestrator: taskOrchestrator,
             scheduleRunner: scheduleRunner

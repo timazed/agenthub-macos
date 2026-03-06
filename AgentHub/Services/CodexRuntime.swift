@@ -17,6 +17,12 @@ struct CodexExecutionResult {
     var stderr: String
 }
 
+struct CodexLoginStatusResult: Equatable {
+    var isAuthenticated: Bool
+    var accountEmail: String?
+    var message: String?
+}
+
 enum CodexEvent: Sendable {
     case started
     case threadIdentified(String)
@@ -29,6 +35,7 @@ enum CodexEvent: Sendable {
 protocol CodexRuntime {
     func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult
     func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult
+    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult
     func streamEvents() -> AsyncStream<CodexEvent>
     func cancelCurrentRun() throws
 }
@@ -39,6 +46,7 @@ enum CodexRuntimeError: LocalizedError {
     case personaMissing(String)
     case repoMissing(String)
     case launchFailed(String)
+    case unauthenticated(String?)
     case cancelled
 
     var errorDescription: String? {
@@ -53,6 +61,8 @@ enum CodexRuntimeError: LocalizedError {
             return "External directory does not exist: \(path)"
         case let .launchFailed(message):
             return "Failed to launch Codex: \(message)"
+        case let .unauthenticated(message):
+            return message ?? "Codex login is required"
         case .cancelled:
             return "Codex run cancelled"
         }
@@ -106,6 +116,58 @@ final class CodexCLIRuntime: CodexRuntime {
 
     func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
         try await execute(prompt: prompt, command: .resume(threadId), config: config)
+    }
+
+    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
+        let codexURL = try locateCodexBinary()
+
+        let process = Process()
+        process.executableURL = codexURL
+        process.arguments = ["login", "status"]
+        process.currentDirectoryURL = URL(fileURLWithPath: codexHome, isDirectory: true)
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODEX_HOME"] = codexHome
+        process.environment = environment
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            throw CodexRuntimeError.launchFailed(String(describing: error))
+        }
+
+        process.waitUntilExit()
+
+        let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let combined = [stdout, stderr]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+
+        if process.terminationStatus == 0 {
+            return CodexLoginStatusResult(
+                isAuthenticated: true,
+                accountEmail: extractAccountEmail(from: combined),
+                message: combined.isEmpty ? nil : combined
+            )
+        }
+
+        if combined.localizedCaseInsensitiveContains("not logged in") {
+            return CodexLoginStatusResult(
+                isAuthenticated: false,
+                accountEmail: nil,
+                message: combined
+            )
+        }
+
+        throw CodexRuntimeError.launchFailed(combined.isEmpty ? "Unable to determine Codex login status" : combined)
     }
 
     func cancelCurrentRun() throws {
@@ -519,6 +581,22 @@ final class CodexCLIRuntime: CodexRuntime {
         if trimmed.hasPrefix("mcp startup: no servers") { return false }
         if trimmed.hasPrefix("tokens used") { return false }
         return true
+    }
+
+    private func extractAccountEmail(from text: String) -> String? {
+        guard !text.isEmpty else { return nil }
+        let pattern = #"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              let emailRange = Range(match.range, in: text) else {
+            return nil
+        }
+
+        return String(text[emailRange])
     }
 
     private func locateCodexBinary() throws -> URL {

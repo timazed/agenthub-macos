@@ -78,6 +78,10 @@ private struct DummyRuntime: CodexRuntime {
         CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
     }
 
+    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
+        CodexLoginStatusResult(isAuthenticated: true, accountEmail: nil, message: nil)
+    }
+
     func streamEvents() -> AsyncStream<CodexEvent> {
         AsyncStream { continuation in
             continuation.finish()

@@ -152,6 +152,14 @@ private final class PreviewCodexRuntime: CodexRuntime {
         CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
     }
 
+    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
+        CodexLoginStatusResult(
+            isAuthenticated: true,
+            accountEmail: "preview@example.com",
+            message: "Logged in as preview@example.com"
+        )
+    }
+
     func streamEvents() -> AsyncStream<CodexEvent> {
         AsyncStream { continuation in
             continuation.finish()
