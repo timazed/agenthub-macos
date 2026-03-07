@@ -4,7 +4,9 @@ import AppKit
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     let isPanelPresented: Bool
+    let isBrowserPresented: Bool
     let onTogglePanel: () -> Void
+    let onToggleBrowser: () -> Void
     let onOpenLink: (URL) -> Void
 
     @State private var composerHeight: CGFloat = 22
@@ -144,6 +146,19 @@ struct ChatView: View {
                             )
                     )
 
+                    Button(action: onToggleBrowser) {
+                        Label(isBrowserPresented ? "Hide Browser" : "Show Browser", systemImage: isBrowserPresented ? "rectangle.righthalf.inset.filled.arrow.right" : "globe")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.82))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                    }
+                    .buttonStyle(.plain)
+
                     Text(viewModel.runtimeDescriptor)
                         .font(.caption)
                         .foregroundStyle(Color.white.opacity(0.48))
@@ -167,6 +182,15 @@ struct ChatView: View {
 
     private var composer: some View {
         VStack(spacing: 8) {
+            if let confirmation = viewModel.pendingBrowserConfirmation {
+                PendingBrowserConfirmationCard(
+                    confirmation: confirmation,
+                    onApprove: { viewModel.approvePendingBrowserConfirmation() },
+                    onReject: { viewModel.rejectPendingBrowserConfirmation() },
+                    onTakeOver: { viewModel.takeOverPendingBrowserConfirmation() }
+                )
+            }
+
             if let proposal = viewModel.pendingProposal {
                 PendingTaskProposalCard(
                     proposal: proposal,
@@ -418,6 +442,64 @@ private struct PendingTaskProposalCard: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct PendingBrowserConfirmationCard: View {
+    let confirmation: BrowserConfirmationRecord
+    let onApprove: () -> Void
+    let onReject: () -> Void
+    let onTakeOver: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Browser Confirmation", systemImage: "hand.raised.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.88))
+                Spacer()
+                Text(confirmation.actionType.rawValue)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+
+            Text(confirmation.pageTitle.isEmpty ? "Active browser page" : confirmation.pageTitle)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.94))
+
+            Text(confirmation.currentURL ?? "Unknown page")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.55))
+                .textSelection(.enabled)
+
+            if let target = confirmation.target {
+                Text("Target: \(target)")
+                    .font(.callout)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+
+            HStack(spacing: 8) {
+                Button("Approve", action: onApprove)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.green.opacity(0.9))
+
+                Button("Reject", action: onReject)
+                    .buttonStyle(.bordered)
+
+                Button("Take Over", action: onTakeOver)
+                    .buttonStyle(.bordered)
+            }
+            .controlSize(.small)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.orange.opacity(0.13))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
                 )
         )
     }

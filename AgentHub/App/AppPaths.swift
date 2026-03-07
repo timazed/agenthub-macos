@@ -36,6 +36,14 @@ struct AppPaths {
         stateDirectory.appendingPathComponent("runtime-config.json")
     }
 
+    var browserRegistryURL: URL {
+        stateDirectory.appendingPathComponent("browser-registry.json")
+    }
+
+    var browserConfirmationsURL: URL {
+        stateDirectory.appendingPathComponent("browser-confirmations.json")
+    }
+
     var historyFileURL: URL {
         root.appendingPathComponent("history.jsonl")
     }
@@ -50,6 +58,10 @@ struct AppPaths {
 
     var activityLogURL: URL {
         logsDirectory.appendingPathComponent("activity.ndjson")
+    }
+
+    var browserActionLogURL: URL {
+        logsDirectory.appendingPathComponent("browser-actions.ndjson")
     }
 
     var taskListURL: URL {

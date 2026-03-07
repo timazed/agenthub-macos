@@ -21,6 +21,10 @@ final class AppViewModel: ObservableObject {
         isBrowserPresented = true
     }
 
+    func toggleBrowser() {
+        isBrowserPresented.toggle()
+    }
+
     func closeBrowser() {
         isBrowserPresented = false
     }

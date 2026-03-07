@@ -8,6 +8,7 @@ final class ChatViewModel: ObservableObject {
     @Published var isBusy = false
     @Published var errorMessage: String?
     @Published var pendingProposal: TaskProposal?
+    @Published var pendingBrowserConfirmation: BrowserConfirmationRecord?
     @Published private(set) var activeModel = "gpt-5.4"
     @Published private(set) var activeReasoning = "Medium"
 
@@ -17,9 +18,11 @@ final class ChatViewModel: ObservableObject {
 
     private var streamTask: Task<Void, Never>?
     private var streamingMessageID: UUID?
+    private var cancellables: Set<AnyCancellable> = []
 
     var onTasksChanged: (() -> Void)?
     var onActivityChanged: (() -> Void)?
+    var onBrowserRequested: (() -> Void)?
 
     var runtimeDescriptor: String {
         "\(activeModel) · \(activeReasoning) reasoning"
@@ -34,6 +37,7 @@ final class ChatViewModel: ObservableObject {
         self.taskOrchestrator = taskOrchestrator
         self.runtimeConfigStore = runtimeConfigStore
         loadRuntimeConfig()
+        bindBrowserConfirmation()
     }
 
     func load() {
@@ -94,6 +98,18 @@ final class ChatViewModel: ObservableObject {
         pendingProposal = nil
     }
 
+    func approvePendingBrowserConfirmation() {
+        resolvePendingBrowserConfirmation(.approved)
+    }
+
+    func rejectPendingBrowserConfirmation() {
+        resolvePendingBrowserConfirmation(.rejected)
+    }
+
+    func takeOverPendingBrowserConfirmation() {
+        resolvePendingBrowserConfirmation(.takeOver)
+    }
+
     private func send(text: String) async {
         guard !isBusy else { return }
         isBusy = true
@@ -127,6 +143,8 @@ final class ChatViewModel: ObservableObject {
             debugLog("stderr \(line)")
         case let .proposal(proposal):
             pendingProposal = proposal
+        case .browserRequested:
+            onBrowserRequested?()
         case .completed:
             break
         case let .failed(message):
@@ -173,5 +191,30 @@ final class ChatViewModel: ObservableObject {
     private func debugLog(_ message: String) {
         let line = "[AgentHub][ChatViewModel] \(message)"
         print(line)
+    }
+
+    private func bindBrowserConfirmation() {
+        chatSessionService.pendingBrowserConfirmationPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] confirmation in
+                self?.pendingBrowserConfirmation = confirmation
+            }
+            .store(in: &cancellables)
+    }
+
+    private func resolvePendingBrowserConfirmation(_ resolution: BrowserConfirmationResolution) {
+        guard let confirmation = pendingBrowserConfirmation else { return }
+
+        Task {
+            do {
+                _ = try await chatSessionService.sendBrowserCommand(
+                    .resolveConfirmation(sessionID: confirmation.sessionId, resolution: resolution)
+                )
+                load()
+                onActivityChanged?()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 }

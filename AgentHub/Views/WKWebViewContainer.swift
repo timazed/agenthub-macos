@@ -3,9 +3,10 @@ import WebKit
 
 struct WKWebViewContainer: NSViewRepresentable {
     @ObservedObject var viewModel: BrowserViewModel
+    let automationService: BrowserAutomationService?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(viewModel: viewModel)
+        Coordinator(viewModel: viewModel, automationService: automationService)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -26,11 +27,13 @@ struct WKWebViewContainer: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         private let viewModel: BrowserViewModel
+        private let automationService: BrowserAutomationService?
         private weak var webView: WKWebView?
         private var observations: [NSKeyValueObservation] = []
 
-        init(viewModel: BrowserViewModel) {
+        init(viewModel: BrowserViewModel, automationService: BrowserAutomationService?) {
             self.viewModel = viewModel
+            self.automationService = automationService
         }
 
         func attach(to webView: WKWebView) {
@@ -39,6 +42,10 @@ struct WKWebViewContainer: NSViewRepresentable {
             self.webView = webView
             viewModel.commandExecutor = { [weak self] command in
                 self?.execute(command)
+            }
+
+            if let sessionID = viewModel.sessionID {
+                automationService?.attach(webView: webView, to: sessionID)
             }
 
             observations = [
@@ -83,6 +90,8 @@ struct WKWebViewContainer: NSViewRepresentable {
             guard let webView else { return }
 
             switch command {
+            case let .open(url):
+                webView.load(URLRequest(url: url))
             case .goBack:
                 if webView.canGoBack {
                     webView.goBack()
@@ -99,6 +108,13 @@ struct WKWebViewContainer: NSViewRepresentable {
         private func syncState() {
             guard let webView else { return }
             DispatchQueue.main.async {
+                if let sessionID = self.viewModel.sessionID {
+                    self.automationService?.attach(webView: webView, to: sessionID)
+                    self.automationService?.activeSession?.syncState()
+                    if let mode = self.automationService?.activeSession?.mode {
+                        self.viewModel.updateSessionMode(mode)
+                    }
+                }
                 self.viewModel.updateNavigationState(
                     currentURL: webView.url,
                     pageTitle: webView.title ?? "",
@@ -134,6 +150,14 @@ struct WKWebViewContainer: NSViewRepresentable {
             guard navigationAction.targetFrame == nil else { return nil }
             webView.load(navigationAction.request)
             return nil
+        }
+
+        deinit {
+            if let sessionID = viewModel.sessionID {
+                Task { @MainActor [automationService] in
+                    automationService?.detach(sessionID: sessionID)
+                }
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ import Combine
 
 final class BrowserViewModel: ObservableObject {
     enum Command: Equatable {
+        case open(URL)
         case goBack
         case goForward
         case reload
@@ -13,6 +14,8 @@ final class BrowserViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var canGoBack = false
     @Published var canGoForward = false
+    @Published private(set) var sessionID: UUID?
+    @Published private(set) var sessionMode: BrowserSessionMode = .manual
     @Published private(set) var pendingCommand: Command?
 
     let profile: BrowserProfile
@@ -23,7 +26,7 @@ final class BrowserViewModel: ObservableObject {
     }
 
     func open(url: URL) {
-        currentURL = url
+        execute(.open(url))
     }
 
     func goBack() {
@@ -58,7 +61,18 @@ final class BrowserViewModel: ObservableObject {
         self.canGoForward = canGoForward
     }
 
+    func bindSession(_ session: BrowserAutomationSession) {
+        sessionID = session.record.id
+        sessionMode = session.mode
+    }
+
+    func updateSessionMode(_ mode: BrowserSessionMode) {
+        sessionMode = mode
+    }
+
     func close() {
+        sessionID = nil
+        sessionMode = .manual
         pendingCommand = nil
         currentURL = nil
         pageTitle = ""
@@ -71,6 +85,9 @@ final class BrowserViewModel: ObservableObject {
         if let commandExecutor {
             commandExecutor(command)
         } else {
+            if case let .open(url) = command {
+                currentURL = url
+            }
             pendingCommand = command
         }
     }

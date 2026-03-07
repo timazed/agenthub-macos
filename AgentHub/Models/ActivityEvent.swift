@@ -11,6 +11,8 @@ enum ActivityKind: String, Codable, CaseIterable {
     case taskCompleted
     case taskNeedsInput
     case assistantAction
+    case browserAutomation
+    case browserConfirmationRequired
 }
 
 struct ActivityEvent: Identifiable, Codable, Hashable {

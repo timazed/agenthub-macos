@@ -4,6 +4,7 @@ final class AppContainer {
     let paths: AppPaths
     let appExecutableURL: URL
     let browserProfile: BrowserProfile
+    let browserAutomationService: BrowserAutomationService
     let browserViewModel: BrowserViewModel
     let personaManager: PersonaManager
     let workspaceManager: WorkspaceManager
@@ -21,6 +22,7 @@ final class AppContainer {
         paths: AppPaths,
         appExecutableURL: URL,
         browserProfile: BrowserProfile,
+        browserAutomationService: BrowserAutomationService,
         browserViewModel: BrowserViewModel,
         personaManager: PersonaManager,
         workspaceManager: WorkspaceManager,
@@ -37,6 +39,7 @@ final class AppContainer {
         self.paths = paths
         self.appExecutableURL = appExecutableURL
         self.browserProfile = browserProfile
+        self.browserAutomationService = browserAutomationService
         self.browserViewModel = browserViewModel
         self.personaManager = personaManager
         self.workspaceManager = workspaceManager
@@ -57,7 +60,10 @@ final class AppContainer {
 
         let appExecutableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
         let browserProfile = BrowserProfile()
+        let browserAutomationService = BrowserAutomationService()
         let browserViewModel = BrowserViewModel(profile: browserProfile)
+        let browserSession = browserAutomationService.startSession(profile: browserProfile)
+        browserViewModel.bindSession(browserSession)
         let personaManager = PersonaManager(paths: paths)
         let workspaceManager = WorkspaceManager()
         let assistantSessionStore = AssistantSessionStore(paths: paths)
@@ -72,7 +78,9 @@ final class AppContainer {
             personaManager: personaManager,
             runtime: chatRuntime,
             paths: paths,
-            runtimeConfigStore: runtimeConfigStore
+            runtimeConfigStore: runtimeConfigStore,
+            browserAutomationService: browserAutomationService,
+            activityLogStore: activityLogStore
         )
         let taskOrchestrator = TaskOrchestrator(
             taskStore: taskStore,
@@ -94,6 +102,7 @@ final class AppContainer {
             paths: paths,
             appExecutableURL: appExecutableURL,
             browserProfile: browserProfile,
+            browserAutomationService: browserAutomationService,
             browserViewModel: browserViewModel,
             personaManager: personaManager,
             workspaceManager: workspaceManager,

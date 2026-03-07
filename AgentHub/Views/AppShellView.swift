@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct AppShellView: View {
+    private let browserAutomationService: BrowserAutomationService
     @StateObject private var appViewModel = AppViewModel()
     @StateObject private var browserViewModel: BrowserViewModel
     @StateObject private var chatViewModel: ChatViewModel
@@ -9,6 +10,7 @@ struct AppShellView: View {
     @State private var didPerformInitialLoad = false
 
     init(container: AppContainer) {
+        browserAutomationService = container.browserAutomationService
         _browserViewModel = StateObject(wrappedValue: container.browserViewModel)
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(
             chatSessionService: container.chatSessionService,
@@ -24,15 +26,7 @@ struct AppShellView: View {
     }
 
     var body: some View {
-        ChatView(
-            viewModel: chatViewModel,
-            isPanelPresented: appViewModel.isPanelPresented,
-            onTogglePanel: { appViewModel.togglePanel() },
-            onOpenLink: { url in
-                browserViewModel.open(url: url)
-                appViewModel.openBrowser()
-            }
-        )
+        content
         .inspector(isPresented: $appViewModel.isPanelPresented) {
             AssistantPanelView(
                 tasksViewModel: tasksViewModel,
@@ -65,13 +59,10 @@ struct AppShellView: View {
                 }
             )
         }
-        .sheet(isPresented: $appViewModel.isBrowserPresented, onDismiss: {
-            browserViewModel.close()
-        }) {
-            BrowserView(
-                viewModel: browserViewModel,
-                onClose: { appViewModel.closeBrowser() }
-            )
+        .onReceive(browserAutomationService.$pendingConfirmation) { confirmation in
+            if confirmation != nil {
+                appViewModel.openBrowser()
+            }
         }
         .alert("Error", isPresented: Binding(
             get: { combinedErrorMessage != nil },
@@ -93,6 +84,31 @@ struct AppShellView: View {
         chatViewModel.errorMessage ?? tasksViewModel.errorMessage ?? activityViewModel.errorMessage
     }
 
+    private var content: some View {
+        HSplitView {
+            ChatView(
+                viewModel: chatViewModel,
+                isPanelPresented: appViewModel.isPanelPresented,
+                isBrowserPresented: appViewModel.isBrowserPresented,
+                onTogglePanel: { appViewModel.togglePanel() },
+                onToggleBrowser: { appViewModel.toggleBrowser() },
+                onOpenLink: { url in
+                    browserViewModel.open(url: url)
+                    appViewModel.openBrowser()
+                }
+            )
+
+            if appViewModel.isBrowserPresented {
+                BrowserView(
+                    viewModel: browserViewModel,
+                    automationService: browserAutomationService,
+                    onClose: { appViewModel.closeBrowser() }
+                )
+                .frame(minWidth: 420, idealWidth: 520, maxWidth: 680, maxHeight: .infinity)
+            }
+        }
+    }
+
     private func performInitialLoad() {
         tasksViewModel.load()
         activityViewModel.load()
@@ -105,6 +121,9 @@ struct AppShellView: View {
         }
         chatViewModel.onActivityChanged = {
             activityViewModel.load()
+        }
+        chatViewModel.onBrowserRequested = {
+            appViewModel.openBrowser()
         }
         tasksViewModel.onMutation = {
             activityViewModel.load()

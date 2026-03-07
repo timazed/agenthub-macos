@@ -11,6 +11,7 @@ enum MessageSource: String, Codable, Hashable {
     case codexStdout
     case codexStderr
     case taskSystemEvent
+    case browserSystemEvent
 }
 
 struct Message: Identifiable, Codable, Hashable {

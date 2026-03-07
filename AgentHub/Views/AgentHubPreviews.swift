@@ -18,17 +18,20 @@ private enum PreviewFactory {
         let runtime = PreviewCodexRuntime()
         let configStore = AppRuntimeConfigStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
+        let browserAutomationService = BrowserAutomationService()
+        let activityLogStore = ActivityLogStore(paths: paths)
         let chatSessionService = ChatSessionService(
             sessionStore: sessionStore,
             personaManager: personaManager,
             runtime: runtime,
             paths: paths,
-            runtimeConfigStore: configStore
+            runtimeConfigStore: configStore,
+            browserAutomationService: browserAutomationService,
+            activityLogStore: activityLogStore
         )
 
         let taskStore = (try? TaskStore(paths: paths)) ?? fatalTaskStore(paths: paths)
         let taskRunStore = TaskRunStore(paths: paths)
-        let activityLogStore = ActivityLogStore(paths: paths)
         let taskOrchestrator = TaskOrchestrator(
             taskStore: taskStore,
             taskRunStore: taskRunStore,
@@ -40,7 +43,11 @@ private enum PreviewFactory {
             runtimeFactory: { PreviewCodexRuntime() }
         )
 
-        let viewModel = ChatViewModel(chatSessionService: chatSessionService, taskOrchestrator: taskOrchestrator, runtimeConfigStore: configStore)
+        let viewModel = ChatViewModel(
+            chatSessionService: chatSessionService,
+            taskOrchestrator: taskOrchestrator,
+            runtimeConfigStore: configStore
+        )
         viewModel.messages = sampleMessages()
         viewModel.pendingProposal = sampleProposal()
         return viewModel
@@ -174,7 +181,14 @@ private struct ChatSurfacePreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeChatViewModel()
 
     var body: some View {
-        ChatView(viewModel: viewModel, isPanelPresented: false, onTogglePanel: {}, onOpenLink: { _ in })
+        ChatView(
+            viewModel: viewModel,
+            isPanelPresented: false,
+            isBrowserPresented: true,
+            onTogglePanel: {},
+            onToggleBrowser: {},
+            onOpenLink: { _ in }
+        )
             .frame(width: 1120, height: 760)
             .padding()
             .background(Color.black)
@@ -185,7 +199,14 @@ private struct ChatBusyPreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeBusyChatViewModel()
 
     var body: some View {
-        ChatView(viewModel: viewModel, isPanelPresented: true, onTogglePanel: {}, onOpenLink: { _ in })
+        ChatView(
+            viewModel: viewModel,
+            isPanelPresented: true,
+            isBrowserPresented: false,
+            onTogglePanel: {},
+            onToggleBrowser: {},
+            onOpenLink: { _ in }
+        )
             .frame(width: 1120, height: 760)
             .padding()
             .background(Color.black)
@@ -214,9 +235,10 @@ private struct TaskDrawerPreviewHost: View {
 
 private struct BrowserPreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeBrowserViewModel()
+    private let automationService = BrowserAutomationService()
 
     var body: some View {
-        BrowserView(viewModel: viewModel, onClose: {})
+        BrowserView(viewModel: viewModel, automationService: automationService, onClose: {})
             .frame(width: 1120, height: 760)
     }
 }
