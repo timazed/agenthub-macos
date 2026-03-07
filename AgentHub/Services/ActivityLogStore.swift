@@ -50,4 +50,23 @@ final class ActivityLogStore {
             return Array(events.suffix(limit)).reversed()
         }
     }
+
+    func delete(eventId: UUID) throws {
+        try lock.withLock {
+            guard fileManager.fileExists(atPath: paths.activityLogURL.path) else { return }
+            let content = try String(contentsOf: paths.activityLogURL)
+            let events = content.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line -> ActivityEvent? in
+                guard let data = line.data(using: .utf8) else { return nil }
+                return try? decoder.decode(ActivityEvent.self, from: data)
+            }
+            let filtered = events.filter { $0.id != eventId }
+            let output = try filtered
+                .map(encoder.encode)
+                .reduce(into: Data()) { data, line in
+                    data.append(line)
+                    data.append(0x0A)
+                }
+            try output.write(to: paths.activityLogURL, options: [.atomic])
+        }
+    }
 }
