@@ -69,7 +69,7 @@ struct AssistantPanelView: View {
                         onRunNow: { tasksViewModel.runNow(task: task); activityViewModel.load() },
                         onPause: { tasksViewModel.pause(task: task); activityViewModel.load() },
                         onResume: { tasksViewModel.resume(task: task); activityViewModel.load() },
-                        onComplete: { tasksViewModel.complete(task: task); activityViewModel.load() },
+                        onDelete: { tasksViewModel.delete(task: task); activityViewModel.load() },
                         onReinitialize: { tasksViewModel.reinitialize(task: task); activityViewModel.load() }
                     )
                 }
@@ -90,19 +90,9 @@ struct AssistantPanelView: View {
                     .padding(.horizontal, 2)
             } else {
                 ForEach(activityViewModel.events.prefix(20)) { event in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(event.message)
-                            .font(.callout)
-                            .foregroundStyle(.primary)
-                        Text(event.createdAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.primary.opacity(0.06))
+                    ActivityEventRow(
+                        event: event,
+                        onDelete: { activityViewModel.delete(event: event) }
                     )
                 }
             }
@@ -116,7 +106,7 @@ private struct TaskPanelRow: View {
     let onRunNow: () -> Void
     let onPause: () -> Void
     let onResume: () -> Void
-    let onComplete: () -> Void
+    let onDelete: () -> Void
     let onReinitialize: () -> Void
 
     var body: some View {
@@ -152,7 +142,7 @@ private struct TaskPanelRow: View {
                         .buttonStyle(.bordered)
                 }
 
-                Button("Done", action: onComplete)
+                Button("Delete", action: onDelete)
                     .buttonStyle(.bordered)
 
                 if task.state == .error {
@@ -170,6 +160,50 @@ private struct TaskPanelRow: View {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(Color.primary.opacity(0.06), lineWidth: 1)
                 )
+        )
+    }
+}
+
+private struct ActivityEventRow: View {
+    let event: ActivityEvent
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(event.message)
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                    Text(event.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Button(action: onDelete) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.primary.opacity(0.04))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
         )
     }
 }
