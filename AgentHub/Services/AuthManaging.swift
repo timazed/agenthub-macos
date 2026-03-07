@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 protocol AuthManaging {
     var currentProvider: AuthProvider { get }
     var availableProviders: [AuthProvider] { get }

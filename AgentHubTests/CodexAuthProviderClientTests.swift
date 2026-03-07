@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import AgentHub
 
+@MainActor
 struct CodexAuthProviderClientTests {
     @Test
     func refreshStatusMapsRuntimeStateToGenericAuthState() throws {

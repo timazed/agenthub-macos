@@ -27,6 +27,7 @@ final class ProviderRegistry {
         registration(for: provider).makeRuntime()
     }
 
+    @MainActor
     func makeAuthManager(for provider: AuthProvider) -> AuthManaging {
         let runtime = makeRuntime(for: provider)
         let client = registration(for: provider).makeAuthProviderClient(runtime: runtime, paths: paths)

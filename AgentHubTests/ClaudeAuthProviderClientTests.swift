@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import AgentHub
 
+@MainActor
 struct ClaudeAuthProviderClientTests {
     @Test
     func capabilitiesExposeChatOnlySupport() {

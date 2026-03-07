@@ -5,13 +5,13 @@ struct ProviderRegistration {
     let capabilities: ProviderCapabilities
 
     private let runtimeBuilder: () -> AssistantRuntime
-    private let authClientBuilder: (AssistantRuntime, AppPaths) -> AuthProviderClient
+    private let authClientBuilder: @MainActor (AssistantRuntime, AppPaths) -> AuthProviderClient
 
     init(
         provider: AuthProvider,
         capabilities: ProviderCapabilities,
         makeRuntime: @escaping () -> AssistantRuntime,
-        makeAuthProviderClient: @escaping (AssistantRuntime, AppPaths) -> AuthProviderClient
+        makeAuthProviderClient: @escaping @MainActor (AssistantRuntime, AppPaths) -> AuthProviderClient
     ) {
         self.provider = provider
         self.capabilities = capabilities
@@ -23,6 +23,7 @@ struct ProviderRegistration {
         runtimeBuilder()
     }
 
+    @MainActor
     func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
         authClientBuilder(runtime, paths)
     }
