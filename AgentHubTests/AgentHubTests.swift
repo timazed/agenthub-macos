@@ -96,6 +96,26 @@ struct AgentHubTests {
         #expect(try runtimeConfigStore.loadOrCreateDefault().defaultProvider == .codex)
     }
 
+    @Test
+    func currentProviderFallbackDoesNotRewriteStoredProvider() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
+        var config = try runtimeConfigStore.loadOrCreateDefault()
+        config.defaultProvider = .claude
+        try runtimeConfigStore.save(config)
+
+        let registry = ProviderRegistry(
+            paths: paths,
+            runtimeConfigStore: runtimeConfigStore,
+            authStore: AuthStore(paths: paths),
+            factories: [DummyProviderFactory()]
+        )
+
+        #expect(try registry.currentProvider() == .codex)
+        #expect(try runtimeConfigStore.loadOrCreateDefault().defaultProvider == .claude)
+    }
+
 }
 
 private struct DummyRuntime: CodexRuntime {

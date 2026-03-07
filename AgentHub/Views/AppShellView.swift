@@ -17,6 +17,7 @@ struct AppShellView: View {
             chatSessionService: container.chatSessionService,
             taskOrchestrator: container.taskOrchestrator,
             runtimeConfigStore: container.runtimeConfigStore,
+            providerRegistry: container.providerRegistry,
             personaManager: container.personaManager
         ))
         _tasksViewModel = StateObject(wrappedValue: TasksViewModel(

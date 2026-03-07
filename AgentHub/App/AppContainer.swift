@@ -71,7 +71,6 @@ final class AppContainer {
             runtimeConfigStore: runtimeConfigStore,
             authStore: authStore
         )
-        _ = try providerRegistry.normalizeCurrentProviderIfNeeded()
         let authManager = SelectableAuthManager(registry: providerRegistry)
         let chatSessionService = ChatSessionService(
             sessionStore: assistantSessionStore,

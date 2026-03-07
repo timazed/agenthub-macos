@@ -34,7 +34,7 @@ final class ChatSessionService {
     }
 
     func loadMessages() throws -> [Message] {
-        let provider = try runtimeConfigStore.loadOrCreateDefault().defaultProvider
+        let provider = try providerRegistry.currentProvider()
         return try sessionStore.loadMessages(provider: provider)
     }
 
@@ -67,7 +67,7 @@ final class ChatSessionService {
         }
 
         let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
-        let provider = runtimeConfig.defaultProvider
+        let provider = try providerRegistry.currentProvider()
         let authManager = providerRegistry.makeAuthManager(for: provider)
         try authManager.requireAuthenticated()
 

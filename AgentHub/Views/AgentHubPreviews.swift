@@ -47,6 +47,7 @@ private enum PreviewFactory {
             chatSessionService: chatSessionService,
             taskOrchestrator: taskOrchestrator,
             runtimeConfigStore: configStore,
+            providerRegistry: providerRegistry,
             personaManager: personaManager
         )
         viewModel.messages = sampleMessages()
