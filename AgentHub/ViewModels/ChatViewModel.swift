@@ -75,8 +75,8 @@ final class ChatViewModel: ObservableObject {
         isBusy = false
     }
 
-    func confirmPendingProposal() {
-        guard let proposal = pendingProposal else { return }
+    func confirmPendingProposal(_ proposal: TaskProposal? = nil) {
+        guard let proposal = proposal ?? pendingProposal else { return }
         pendingProposal = nil
 
         Task {
