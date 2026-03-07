@@ -14,7 +14,7 @@ final class ChatSessionService {
     private let runtime: CodexRuntime
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
-    private let authService: CodexAuthService
+    private let authManager: AuthManaging
 
     private let stateLock = NSLock()
     private var continuation: AsyncStream<ChatSessionEvent>.Continuation?
@@ -25,14 +25,14 @@ final class ChatSessionService {
         runtime: CodexRuntime,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
-        authService: CodexAuthService
+        authManager: AuthManaging
     ) {
         self.sessionStore = sessionStore
         self.personaManager = personaManager
         self.runtime = runtime
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
-        self.authService = authService
+        self.authManager = authManager
     }
 
     func loadMessages() throws -> [Message] {
@@ -60,7 +60,7 @@ final class ChatSessionService {
 
     func sendUserMessage(_ text: String) async throws {
         defer { finishStream() }
-        try authService.requireAuthenticated()
+        try authManager.requireAuthenticated()
 
         let persona = try personaManager.defaultPersona()
         var session = try sessionStore.loadOrCreateDefault(personaId: persona.id)

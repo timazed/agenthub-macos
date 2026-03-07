@@ -99,7 +99,7 @@ struct CodexLoginGateView: View {
         }
     }
 
-    private func challengeCard(_ challenge: CodexDeviceAuthChallenge) -> some View {
+    private func challengeCard(_ challenge: AuthLoginChallenge) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Browser sign-in")
                 .font(.system(size: 14, weight: .semibold, design: .rounded))

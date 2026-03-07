@@ -1,11 +1,5 @@
 import Foundation
 
-struct CodexDeviceAuthChallenge: Equatable {
-    var verificationURL: URL
-    var userCode: String
-    var expiresInMinutes: Int?
-}
-
 enum CodexLoginCoordinatorError: LocalizedError {
     case loginInProgress
     case loginNotStarted
@@ -48,7 +42,7 @@ private final class LockedChallengeParser: @unchecked Sendable {
     private let lock = NSLock()
     private var parser = ChallengeParser()
 
-    func consume(line: String) -> CodexDeviceAuthChallenge? {
+    func consume(line: String) -> AuthLoginChallenge? {
         lock.lock()
         let challenge = parser.consume(line: line)
         lock.unlock()
@@ -57,28 +51,28 @@ private final class LockedChallengeParser: @unchecked Sendable {
 }
 
 final class CodexLoginCoordinator {
-    private let authService: CodexAuthService
+    private let statusRefresher: () throws -> AuthState
     private let paths: AppPaths
     private let bundle: Bundle
     private let fileManager: FileManager
 
     private let stateLock = NSLock()
     private var currentProcess: Process?
-    private var completionTask: Task<CodexAuthState, Error>?
+    private var completionTask: Task<AuthState, Error>?
 
     init(
-        authService: CodexAuthService,
+        statusRefresher: @escaping () throws -> AuthState,
         paths: AppPaths,
         bundle: Bundle = .main,
         fileManager: FileManager = .default
     ) {
-        self.authService = authService
+        self.statusRefresher = statusRefresher
         self.paths = paths
         self.bundle = bundle
         self.fileManager = fileManager
     }
 
-    func startLogin() async throws -> CodexDeviceAuthChallenge {
+    func startLogin() async throws -> AuthLoginChallenge {
         let codexURL = try locateCodexBinary()
         try paths.prepare(fileManager: fileManager)
 
@@ -101,12 +95,12 @@ final class CodexLoginCoordinator {
         let diagnostics = LockedLines()
         let parser = LockedChallengeParser()
 
-        let challengeTask = Task<CodexDeviceAuthChallenge, Error> {
+        let challengeTask = Task<AuthLoginChallenge, Error> {
             try await withCheckedThrowingContinuation { continuation in
                 let continuationLock = NSLock()
                 var didResolve = false
 
-                let resolve: @Sendable (Result<CodexDeviceAuthChallenge, Error>) -> Void = { result in
+                let resolve: @Sendable (Result<AuthLoginChallenge, Error>) -> Void = { result in
                     continuationLock.lock()
                     defer { continuationLock.unlock() }
                     guard !didResolve else { return }
@@ -154,7 +148,7 @@ final class CodexLoginCoordinator {
             }
         }
 
-        let completionTask = Task<CodexAuthState, Error> {
+        let completionTask = Task<AuthState, Error> {
             let exitCode = await Self.waitForExit(of: process)
             defer { self.clearCurrentProcess() }
 
@@ -165,14 +159,14 @@ final class CodexLoginCoordinator {
                 )
             }
 
-            return try self.authService.refreshStatus()
+            return try self.statusRefresher()
         }
         storeCompletionTask(completionTask)
 
         return try await challengeTask.value
     }
 
-    func waitForCompletion() async throws -> CodexAuthState {
+    func waitForCompletion() async throws -> AuthState {
         guard let task = snapshotCompletionTask() else {
             throw CodexLoginCoordinatorError.loginNotStarted
         }
@@ -190,7 +184,7 @@ final class CodexLoginCoordinator {
         process?.terminate()
     }
 
-    static func parseChallenge(from lines: [String]) -> CodexDeviceAuthChallenge? {
+    static func parseChallenge(from lines: [String]) -> AuthLoginChallenge? {
         var parser = ChallengeParser()
         for line in lines {
             if let challenge = parser.consume(line: stripANSI(from: line)) {
@@ -209,20 +203,20 @@ final class CodexLoginCoordinator {
         currentProcess = process
     }
 
-    private func storeCompletionTask(_ task: Task<CodexAuthState, Error>) {
+    private func storeCompletionTask(_ task: Task<AuthState, Error>) {
         stateLock.lock()
         completionTask = task
         stateLock.unlock()
     }
 
-    private func snapshotCompletionTask() -> Task<CodexAuthState, Error>? {
+    private func snapshotCompletionTask() -> Task<AuthState, Error>? {
         stateLock.lock()
         let task = completionTask
         stateLock.unlock()
         return task
     }
 
-    private func clearCompletionTask(ifMatching task: Task<CodexAuthState, Error>) {
+    private func clearCompletionTask(ifMatching task: Task<AuthState, Error>) {
         stateLock.lock()
         if completionTask == task {
             completionTask = nil
@@ -303,7 +297,7 @@ private struct ChallengeParser {
     var userCode: String?
     var expiresInMinutes: Int?
 
-    mutating func consume(line: String) -> CodexDeviceAuthChallenge? {
+    mutating func consume(line: String) -> AuthLoginChallenge? {
         if verificationURL == nil {
             verificationURL = Self.extractURL(from: line)
         }
@@ -315,7 +309,8 @@ private struct ChallengeParser {
         }
 
         if let verificationURL, let userCode {
-            return CodexDeviceAuthChallenge(
+            return AuthLoginChallenge(
+                provider: .codex,
                 verificationURL: verificationURL,
                 userCode: userCode,
                 expiresInMinutes: expiresInMinutes

@@ -1,0 +1,50 @@
+import Foundation
+import Testing
+@testable import AgentHub
+
+struct CodexAuthProviderClientTests {
+    @Test
+    func refreshStatusMapsRuntimeStateToGenericAuthState() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let client = CodexAuthProviderClient(
+            runtime: StubProviderRuntime(
+                loginStatus: CodexLoginStatusResult(
+                    isAuthenticated: true,
+                    accountEmail: "user@example.com",
+                    message: "Logged in as user@example.com"
+                )
+            ),
+            paths: AppPaths(root: root)
+        )
+
+        let state = try client.refreshStatus()
+
+        #expect(state.provider == .codex)
+        #expect(state.status == .authenticated)
+        #expect(state.accountLabel == "user@example.com")
+    }
+}
+
+private struct StubProviderRuntime: CodexRuntime {
+    var loginStatus: CodexLoginStatusResult
+
+    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+        CodexExecutionResult(threadId: "stub-thread", exitCode: 0, stdout: "", stderr: "")
+    }
+
+    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+        CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
+    }
+
+    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
+        loginStatus
+    }
+
+    func streamEvents() -> AsyncStream<CodexEvent> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func cancelCurrentRun() throws {}
+}

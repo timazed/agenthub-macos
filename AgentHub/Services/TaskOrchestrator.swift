@@ -8,7 +8,7 @@ final class TaskOrchestrator {
     private let workspaceManager: WorkspaceManager
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
-    private let authService: CodexAuthService
+    private let authManager: AuthManaging
     private let runtimeFactory: () -> CodexRuntime
     private let runningLock = NSLock()
     private var runningTaskIDs = Set<UUID>()
@@ -21,7 +21,7 @@ final class TaskOrchestrator {
         workspaceManager: WorkspaceManager,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
-        authService: CodexAuthService,
+        authManager: AuthManaging,
         runtimeFactory: @escaping () -> CodexRuntime
     ) {
         self.taskStore = taskStore
@@ -31,7 +31,7 @@ final class TaskOrchestrator {
         self.workspaceManager = workspaceManager
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
-        self.authService = authService
+        self.authManager = authManager
         self.runtimeFactory = runtimeFactory
     }
 
@@ -93,7 +93,7 @@ final class TaskOrchestrator {
     @discardableResult
     func runTask(taskId: UUID) async throws -> TaskRecord {
         do {
-            try authService.requireAuthenticated()
+            try authManager.requireAuthenticated()
         } catch {
             try? updateTaskForAuthFailure(taskId: taskId, message: error.localizedDescription)
             throw error

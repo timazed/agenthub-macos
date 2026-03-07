@@ -10,9 +10,8 @@ struct AppShellView: View {
 
     init(container: AppContainer) {
         _authViewModel = StateObject(wrappedValue: AuthViewModel(
-            authService: container.authService,
-            loginCoordinator: container.loginCoordinator,
-            initialState: (try? container.authService.loadCachedState()) ?? .default()
+            authManager: container.authManager,
+            initialState: (try? container.authManager.loadCachedState()) ?? .default()
         ))
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(
             chatSessionService: container.chatSessionService,

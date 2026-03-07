@@ -6,18 +6,17 @@ import Testing
 struct AuthViewModelTests {
     @Test
     func startupRefreshMarksAuthenticatedState() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
-        let paths = AppPaths(root: root)
-        let store = CodexAuthStore(paths: paths)
-        let authService = CodexAuthService(
-            store: store,
-            runtime: AuthViewModelStubRuntime(loginStatus: .init(isAuthenticated: true, accountEmail: "user@example.com", message: nil)),
-            paths: paths
-        )
-        let loginCoordinator = CodexLoginCoordinator(authService: authService, paths: paths)
         let viewModel = AuthViewModel(
-            authService: authService,
-            loginCoordinator: loginCoordinator,
+            authManager: AuthViewModelStubManager(
+                refreshedState: AuthState(
+                    provider: .codex,
+                    status: .authenticated,
+                    accountLabel: "user@example.com",
+                    lastValidatedAt: Date(),
+                    failureReason: nil,
+                    updatedAt: Date()
+                )
+            ),
             initialState: .default(),
             openURL: { _ in true }
         )
@@ -25,23 +24,22 @@ struct AuthViewModelTests {
         await viewModel.performStartupCheckIfNeeded()
 
         #expect(viewModel.isAuthenticated)
-        #expect(viewModel.authState.accountEmail == "user@example.com")
+        #expect(viewModel.authState.accountLabel == "user@example.com")
     }
 
     @Test
     func refreshStatusSurfacesUnauthenticatedState() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
-        let paths = AppPaths(root: root)
-        let store = CodexAuthStore(paths: paths)
-        let authService = CodexAuthService(
-            store: store,
-            runtime: AuthViewModelStubRuntime(loginStatus: .init(isAuthenticated: false, accountEmail: nil, message: "Not logged in")),
-            paths: paths
-        )
-        let loginCoordinator = CodexLoginCoordinator(authService: authService, paths: paths)
         let viewModel = AuthViewModel(
-            authService: authService,
-            loginCoordinator: loginCoordinator,
+            authManager: AuthViewModelStubManager(
+                refreshedState: AuthState(
+                    provider: .codex,
+                    status: .unauthenticated,
+                    accountLabel: nil,
+                    lastValidatedAt: nil,
+                    failureReason: "Not logged in",
+                    updatedAt: Date()
+                )
+            ),
             initialState: .default(),
             openURL: { _ in true }
         )
@@ -54,26 +52,35 @@ struct AuthViewModelTests {
     }
 }
 
-private struct AuthViewModelStubRuntime: CodexRuntime {
-    var loginStatus: CodexLoginStatusResult
+private struct AuthViewModelStubManager: AuthManaging {
+    var refreshedState: AuthState
 
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: "stub-thread", exitCode: 0, stdout: "", stderr: "")
+    func loadCachedState() throws -> AuthState {
+        refreshedState
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
+    func refreshStatus() throws -> AuthState {
+        refreshedState
     }
 
-    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
-        loginStatus
-    }
-
-    func streamEvents() -> AsyncStream<CodexEvent> {
-        AsyncStream { continuation in
-            continuation.finish()
+    func requireAuthenticated() throws {
+        if !refreshedState.isAuthenticated {
+            throw AuthManagerError.unauthenticated(refreshedState.failureReason)
         }
     }
 
-    func cancelCurrentRun() throws {}
+    func startLogin() async throws -> AuthLoginChallenge {
+        AuthLoginChallenge(
+            provider: .codex,
+            verificationURL: URL(string: "https://auth.openai.com/codex/device")!,
+            userCode: "ABCD-EFGH",
+            expiresInMinutes: 15
+        )
+    }
+
+    func waitForLoginCompletion() async throws -> AuthState {
+        refreshedState
+    }
+
+    func cancelLogin() {}
 }

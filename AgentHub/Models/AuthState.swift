@@ -1,15 +1,16 @@
 import Foundation
 
-enum CodexAuthenticationStatus: String, Codable, Hashable {
+enum AuthenticationStatus: String, Codable, Hashable {
     case unknown
     case authenticated
     case unauthenticated
     case failed
 }
 
-struct CodexAuthState: Codable, Hashable {
-    var status: CodexAuthenticationStatus
-    var accountEmail: String?
+struct AuthState: Codable, Hashable {
+    var provider: AuthProvider
+    var status: AuthenticationStatus
+    var accountLabel: String?
     var lastValidatedAt: Date?
     var failureReason: String?
     var updatedAt: Date
@@ -18,10 +19,11 @@ struct CodexAuthState: Codable, Hashable {
         status == .authenticated
     }
 
-    static func `default`() -> CodexAuthState {
-        CodexAuthState(
+    static func `default`(provider: AuthProvider = .codex) -> AuthState {
+        AuthState(
+            provider: provider,
             status: .unknown,
-            accountEmail: nil,
+            accountLabel: nil,
             lastValidatedAt: nil,
             failureReason: nil,
             updatedAt: Date()

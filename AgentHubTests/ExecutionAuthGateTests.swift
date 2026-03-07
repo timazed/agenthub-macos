@@ -11,21 +11,16 @@ struct ExecutionAuthGateTests {
         try createDefaultPersona(at: paths)
 
         let runtime = UnauthenticatedRuntime()
-        let authService = CodexAuthService(
-            store: CodexAuthStore(paths: paths),
-            runtime: runtime,
-            paths: paths
-        )
         let service = ChatSessionService(
             sessionStore: AssistantSessionStore(paths: paths),
             personaManager: PersonaManager(paths: paths),
             runtime: runtime,
             paths: paths,
             runtimeConfigStore: AppRuntimeConfigStore(paths: paths),
-            authService: authService
+            authManager: FailingAuthManager()
         )
 
-        await #expect(throws: CodexAuthServiceError.self) {
+        await #expect(throws: AuthManagerError.self) {
             try await service.sendUserMessage("hello")
         }
     }
@@ -57,11 +52,6 @@ struct ExecutionAuthGateTests {
         )
         try taskStore.upsert(task)
 
-        let authService = CodexAuthService(
-            store: CodexAuthStore(paths: paths),
-            runtime: UnauthenticatedRuntime(),
-            paths: paths
-        )
         let orchestrator = TaskOrchestrator(
             taskStore: taskStore,
             taskRunStore: TaskRunStore(paths: paths),
@@ -70,11 +60,11 @@ struct ExecutionAuthGateTests {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: AppRuntimeConfigStore(paths: paths),
-            authService: authService,
+            authManager: FailingAuthManager(),
             runtimeFactory: { UnauthenticatedRuntime() }
         )
 
-        await #expect(throws: CodexAuthServiceError.self) {
+        await #expect(throws: AuthManagerError.self) {
             try await orchestrator.runTask(taskId: task.id)
         }
 
@@ -92,6 +82,30 @@ struct ExecutionAuthGateTests {
             encoding: .utf8
         )
     }
+}
+
+private struct FailingAuthManager: AuthManaging {
+    func loadCachedState() throws -> AuthState {
+        AuthState(provider: .codex, status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
+    }
+
+    func refreshStatus() throws -> AuthState {
+        try loadCachedState()
+    }
+
+    func requireAuthenticated() throws {
+        throw AuthManagerError.unauthenticated("Not logged in")
+    }
+
+    func startLogin() async throws -> AuthLoginChallenge {
+        throw AuthManagerError.unauthenticated("Not logged in")
+    }
+
+    func waitForLoginCompletion() async throws -> AuthState {
+        try loadCachedState()
+    }
+
+    func cancelLogin() {}
 }
 
 private struct UnauthenticatedRuntime: CodexRuntime {

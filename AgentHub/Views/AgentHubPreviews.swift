@@ -17,16 +17,17 @@ private enum PreviewFactory {
         let personaManager = PersonaManager(paths: paths)
         let runtime = PreviewCodexRuntime()
         let configStore = AppRuntimeConfigStore(paths: paths)
-        let authStore = CodexAuthStore(paths: paths)
+        let authStore = AuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
         _ = try? authStore.loadOrCreateDefault()
+        let authManager = makeAuthManager(runtime: runtime, paths: paths, store: authStore)
         let chatSessionService = ChatSessionService(
             sessionStore: sessionStore,
             personaManager: personaManager,
             runtime: runtime,
             paths: paths,
             runtimeConfigStore: configStore,
-            authService: CodexAuthService(store: authStore, runtime: runtime, paths: paths)
+            authManager: authManager
         )
 
         let taskStore = (try? TaskStore(paths: paths)) ?? fatalTaskStore(paths: paths)
@@ -40,7 +41,7 @@ private enum PreviewFactory {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
-            authService: CodexAuthService(store: authStore, runtime: runtime, paths: paths),
+            authManager: authManager,
             runtimeFactory: { PreviewCodexRuntime() }
         )
 
@@ -55,13 +56,13 @@ private enum PreviewFactory {
         let paths = makePaths()
         try? paths.prepare()
 
-        let authStore = CodexAuthStore(paths: paths)
+        let authStore = AuthStore(paths: paths)
         let runtime = PreviewCodexRuntime()
-        let authService = CodexAuthService(store: authStore, runtime: runtime, paths: paths)
-        let loginCoordinator = CodexLoginCoordinator(authService: authService, paths: paths)
-        let state = CodexAuthState(
+        let authManager = makeAuthManager(runtime: runtime, paths: paths, store: authStore)
+        let state = AuthState(
+            provider: .codex,
             status: authenticated ? .authenticated : .unauthenticated,
-            accountEmail: authenticated ? "preview@example.com" : nil,
+            accountLabel: authenticated ? "preview@example.com" : nil,
             lastValidatedAt: authenticated ? Date() : nil,
             failureReason: authenticated ? nil : "Sign in before using AgentHub.",
             updatedAt: Date()
@@ -69,8 +70,7 @@ private enum PreviewFactory {
         try? authStore.save(state)
 
         return AuthViewModel(
-            authService: authService,
-            loginCoordinator: loginCoordinator,
+            authManager: authManager,
             initialState: state,
             openURL: { _ in true }
         )
@@ -94,9 +94,10 @@ private enum PreviewFactory {
         let taskRunStore = TaskRunStore(paths: paths)
         let activityLogStore = ActivityLogStore(paths: paths)
         let configStore = AppRuntimeConfigStore(paths: paths)
-        let authStore = CodexAuthStore(paths: paths)
+        let authStore = AuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
         _ = try? authStore.loadOrCreateDefault()
+        let authManager = makeAuthManager(runtime: PreviewCodexRuntime(), paths: paths, store: authStore)
         let orchestrator = TaskOrchestrator(
             taskStore: taskStore,
             taskRunStore: taskRunStore,
@@ -105,7 +106,7 @@ private enum PreviewFactory {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
-            authService: CodexAuthService(store: authStore, runtime: PreviewCodexRuntime(), paths: paths),
+            authManager: authManager,
             runtimeFactory: { PreviewCodexRuntime() }
         )
         let scheduleRunner = ScheduleRunner(taskStore: taskStore, orchestrator: orchestrator, paths: paths)
@@ -169,6 +170,10 @@ private enum PreviewFactory {
         } catch {
             fatalError("Failed to create preview TaskStore: \(error.localizedDescription)")
         }
+    }
+
+    private static func makeAuthManager(runtime: CodexRuntime, paths: AppPaths, store: AuthStore) -> AuthManaging {
+        AuthManager(store: store, providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths))
     }
 }
 
