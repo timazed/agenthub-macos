@@ -68,7 +68,6 @@ final class AppContainer {
         let activityLogStore = ActivityLogStore(paths: paths)
         let providerRegistry = ProviderRegistry(
             paths: paths,
-            runtimeConfigStore: runtimeConfigStore,
             authStore: authStore
         )
         let authManager = SelectableAuthManager(registry: providerRegistry)

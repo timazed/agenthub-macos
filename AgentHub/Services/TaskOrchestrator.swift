@@ -44,7 +44,7 @@ final class TaskOrchestrator {
     @discardableResult
     func createTask(from proposal: TaskProposal) async throws -> TaskRecord {
         let now = Date()
-        let provider = try providerRegistry.currentProvider()
+        let provider = providerRegistry.currentProvider()
         try ensureTaskSupport(for: provider)
         var task = TaskRecord(
             id: UUID(),

@@ -2,18 +2,15 @@ import Foundation
 
 final class ProviderRegistry {
     private let paths: AppPaths
-    private let runtimeConfigStore: AppRuntimeConfigStore
     private let authStore: AuthStore
     private let registrations: [AuthProvider: ProviderRegistration]
 
     init(
         paths: AppPaths,
-        runtimeConfigStore: AppRuntimeConfigStore,
         authStore: AuthStore,
-        registrations: [ProviderRegistration] = [.codex]
+        registrations: [ProviderRegistration] = [.codex] // NOTE add claude in here as a provider later on
     ) {
         self.paths = paths
-        self.runtimeConfigStore = runtimeConfigStore
         self.authStore = authStore
         self.registrations = Dictionary(uniqueKeysWithValues: registrations.map { ($0.provider, $0) })
     }
@@ -36,31 +33,10 @@ final class ProviderRegistry {
         return AuthManager(store: authStore, providerClient: client)
     }
 
-    func currentProvider() throws -> AuthProvider {
-        let configured = try runtimeConfigStore.loadOrCreateDefault().defaultProvider
-        return availableProviders.contains(configured) ? configured : .codex
-    }
-
-    @discardableResult
-    func setCurrentProvider(_ provider: AuthProvider) throws -> AuthState {
-        guard availableProviders.contains(provider) else {
-            throw AuthManagerError.statusCheckFailed("Unsupported provider: \(provider.displayName)")
+    func currentProvider() -> AuthProvider {
+        guard let provider = availableProviders.first else {
+            fatalError("No providers registered")
         }
-        var config = try runtimeConfigStore.loadOrCreateDefault()
-        config.defaultProvider = provider
-        config.updatedAt = Date()
-        try runtimeConfigStore.save(config)
-        return try makeAuthManager(for: provider).loadCachedState()
-    }
-
-    @discardableResult
-    func normalizeCurrentProviderIfNeeded() throws -> AuthProvider {
-        let provider = try currentProvider()
-        var config = try runtimeConfigStore.loadOrCreateDefault()
-        guard config.defaultProvider != provider else { return provider }
-        config.defaultProvider = provider
-        config.updatedAt = Date()
-        try runtimeConfigStore.save(config)
         return provider
     }
 

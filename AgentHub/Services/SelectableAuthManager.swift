@@ -4,13 +4,18 @@ final class SelectableAuthManager: AuthManaging {
     private let registry: ProviderRegistry
     private let lock = NSLock()
     private var managers: [AuthProvider: AuthManaging] = [:]
+    private var selectedProvider: AuthProvider
 
     init(registry: ProviderRegistry) {
         self.registry = registry
+        self.selectedProvider = registry.currentProvider()
     }
 
     var currentProvider: AuthProvider {
-        (try? registry.currentProvider()) ?? .codex
+        lock.lock()
+        let provider = selectedProvider
+        lock.unlock()
+        return provider
     }
 
     var availableProviders: [AuthProvider] {
@@ -36,7 +41,13 @@ final class SelectableAuthManager: AuthManaging {
 
     @discardableResult
     func selectProvider(_ provider: AuthProvider) throws -> AuthState {
-        let state = try registry.setCurrentProvider(provider)
+        guard registry.availableProviders.contains(provider) else {
+            throw AuthManagerError.statusCheckFailed("Unsupported provider: \(provider.displayName)")
+        }
+        lock.lock()
+        selectedProvider = provider
+        lock.unlock()
+        let state = try manager(for: provider).loadCachedState()
         _ = manager(for: provider)
         return state
     }

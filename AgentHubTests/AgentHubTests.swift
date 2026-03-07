@@ -51,7 +51,6 @@ struct AgentHubTests {
         let authStore = AuthStore(paths: paths)
         let providerRegistry = ProviderRegistry(
             paths: paths,
-            runtimeConfigStore: runtimeConfigStore,
             authStore: authStore,
             registrations: [dummyProviderRegistration]
         )
@@ -76,44 +75,29 @@ struct AgentHubTests {
     }
 
     @Test
-    func providerRegistryFallsBackToCodexWhenStoredProviderIsUnavailable() throws {
+    func providerRegistryUsesOnlyRegisteredProvider() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let paths = AppPaths(root: root)
-        let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
-        var config = try runtimeConfigStore.loadOrCreateDefault()
-        config.defaultProvider = .claude
-        try runtimeConfigStore.save(config)
-
         let registry = ProviderRegistry(
             paths: paths,
-            runtimeConfigStore: runtimeConfigStore,
             authStore: AuthStore(paths: paths),
             registrations: [dummyProviderRegistration]
         )
 
-        #expect(try registry.currentProvider() == .codex)
-        #expect(try registry.normalizeCurrentProviderIfNeeded() == .codex)
-        #expect(try runtimeConfigStore.loadOrCreateDefault().defaultProvider == .codex)
+        #expect(registry.currentProvider() == .codex)
     }
 
     @Test
-    func currentProviderFallbackDoesNotRewriteStoredProvider() throws {
+    func providerRegistryCanUseNonCodexProviderWhenThatIsAllThatIsRegistered() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let paths = AppPaths(root: root)
-        let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
-        var config = try runtimeConfigStore.loadOrCreateDefault()
-        config.defaultProvider = .claude
-        try runtimeConfigStore.save(config)
-
         let registry = ProviderRegistry(
             paths: paths,
-            runtimeConfigStore: runtimeConfigStore,
             authStore: AuthStore(paths: paths),
-            registrations: [dummyProviderRegistration]
+            registrations: [claudeOnlyProviderRegistration]
         )
 
-        #expect(try registry.currentProvider() == .codex)
-        #expect(try runtimeConfigStore.loadOrCreateDefault().defaultProvider == .claude)
+        #expect(registry.currentProvider() == .claude)
     }
 
 }
@@ -148,3 +132,25 @@ private let dummyProviderRegistration = ProviderRegistration(
         CodexAuthProviderClient(runtime: runtime, paths: paths)
     }
 )
+
+private let claudeOnlyProviderRegistration = ProviderRegistration(
+    provider: .claude,
+    capabilities: .available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false),
+    makeRuntime: { DummyRuntime() },
+    makeAuthProviderClient: { _, _ in
+        ClaudeProviderClientStub()
+    }
+)
+
+private struct ClaudeProviderClientStub: AuthProviderClient {
+    let provider: AuthProvider = .claude
+    let capabilities = ProviderCapabilities.available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false)
+
+    func refreshStatus() throws -> AuthState {
+        AuthState(provider: .claude, status: .authenticated, accountLabel: "claude@example.com", lastValidatedAt: Date(), failureReason: nil, updatedAt: Date())
+    }
+
+    func startLogin() async throws -> AuthLoginChallenge? { nil }
+    func waitForLoginCompletion() async throws -> AuthState { try refreshStatus() }
+    func cancelLogin() {}
+}

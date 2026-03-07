@@ -174,7 +174,7 @@ final class ChatViewModel: ObservableObject {
     private func loadRuntimeConfig() {
         do {
             let config = try runtimeConfigStore.loadOrCreateDefault()
-            activeProviderName = try providerRegistry.currentProvider().displayName
+            activeProviderName = providerRegistry.currentProvider().displayName
             activeModel = config.model
             activeReasoning = config.reasoningEffort.displayName
         } catch {

@@ -20,7 +20,6 @@ struct ExecutionAuthGateTests {
             runtimeConfigStore: configStore,
             providerRegistry: ProviderRegistry(
                 paths: paths,
-                runtimeConfigStore: configStore,
                 authStore: authStore,
                 registrations: [makeUnauthenticatedProviderRegistration(runtime: runtime)]
             )
@@ -71,7 +70,6 @@ struct ExecutionAuthGateTests {
             runtimeConfigStore: configStore,
             providerRegistry: ProviderRegistry(
                 paths: paths,
-                runtimeConfigStore: configStore,
                 authStore: authStore,
                 registrations: [makeUnauthenticatedProviderRegistration(runtime: UnauthenticatedRuntime())]
             )
@@ -93,13 +91,9 @@ struct ExecutionAuthGateTests {
         try paths.prepare()
 
         let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
-        var config = try runtimeConfigStore.loadOrCreateDefault()
-        config.defaultProvider = .claude
-        try runtimeConfigStore.save(config)
 
         let providerRegistry = ProviderRegistry(
             paths: paths,
-            runtimeConfigStore: runtimeConfigStore,
             authStore: AuthStore(paths: paths),
             registrations: [claudeChatOnlyProviderRegistration]
         )

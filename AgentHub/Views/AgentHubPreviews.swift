@@ -20,7 +20,7 @@ private enum PreviewFactory {
         let authStore = AuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
         _ = try? authStore.loadOrCreateDefault()
-        let providerRegistry = makeProviderRegistry(runtime: runtime, paths: paths, configStore: configStore, authStore: authStore)
+        let providerRegistry = makeProviderRegistry(runtime: runtime, paths: paths, authStore: authStore)
         let chatSessionService = ChatSessionService(
             sessionStore: sessionStore,
             personaManager: personaManager,
@@ -62,8 +62,7 @@ private enum PreviewFactory {
 
         let authStore = AuthStore(paths: paths)
         let runtime = PreviewCodexRuntime()
-        let configStore = AppRuntimeConfigStore(paths: paths)
-        let authManager = SelectableAuthManager(registry: makeProviderRegistry(runtime: runtime, paths: paths, configStore: configStore, authStore: authStore))
+        let authManager = SelectableAuthManager(registry: makeProviderRegistry(runtime: runtime, paths: paths, authStore: authStore))
         let state = AuthState(
             provider: .codex,
             status: authenticated ? .authenticated : .unauthenticated,
@@ -102,7 +101,7 @@ private enum PreviewFactory {
         let authStore = AuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
         _ = try? authStore.loadOrCreateDefault()
-        let providerRegistry = makeProviderRegistry(runtime: PreviewCodexRuntime(), paths: paths, configStore: configStore, authStore: authStore)
+        let providerRegistry = makeProviderRegistry(runtime: PreviewCodexRuntime(), paths: paths, authStore: authStore)
         let orchestrator = TaskOrchestrator(
             taskStore: taskStore,
             taskRunStore: taskRunStore,
@@ -179,12 +178,10 @@ private enum PreviewFactory {
     private static func makeProviderRegistry(
         runtime: AssistantRuntime,
         paths: AppPaths,
-        configStore: AppRuntimeConfigStore,
         authStore: AuthStore
     ) -> ProviderRegistry {
         ProviderRegistry(
             paths: paths,
-            runtimeConfigStore: configStore,
             authStore: authStore,
             registrations: [
                 ProviderRegistration(
