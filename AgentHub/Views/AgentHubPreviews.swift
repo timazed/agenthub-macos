@@ -46,7 +46,8 @@ private enum PreviewFactory {
         let viewModel = ChatViewModel(
             chatSessionService: chatSessionService,
             taskOrchestrator: taskOrchestrator,
-            runtimeConfigStore: configStore
+            runtimeConfigStore: configStore,
+            personaManager: personaManager
         )
         viewModel.messages = sampleMessages()
         viewModel.pendingProposal = sampleProposal()

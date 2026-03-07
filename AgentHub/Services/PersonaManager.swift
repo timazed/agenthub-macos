@@ -1,6 +1,16 @@
 import Foundation
 
 final class PersonaManager {
+    private struct PersonaProfile: Codable {
+        var name: String
+        var profilePictureURL: String?
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case profilePictureURL = "profilePictureUrl"
+        }
+    }
+
     private let paths: AppPaths
     private let fileManager: FileManager
 
@@ -29,7 +39,13 @@ final class PersonaManager {
             let agentsPath = url.appendingPathComponent("AGENTS.md").path
             guard fileManager.fileExists(atPath: agentsPath) else { return nil }
             let id = url.lastPathComponent
-            return Persona(id: id, name: displayName(from: id), directoryPath: url.path)
+            let profile = loadProfile(for: id)
+            return Persona(
+                id: id,
+                name: profile?.name ?? displayName(from: id),
+                profilePictureURL: profile?.profilePictureURL,
+                directoryPath: url.path
+            )
         }
 
         if personas.isEmpty {
@@ -50,10 +66,20 @@ final class PersonaManager {
 
         let agentsURL = dir.appendingPathComponent("AGENTS.md")
         try normalizeInstructions(instructions).write(to: agentsURL, atomically: true, encoding: .utf8)
-        let nameURL = dir.appendingPathComponent("NAME.txt")
-        try name.trimmingCharacters(in: .whitespacesAndNewlines).write(to: nameURL, atomically: true, encoding: .utf8)
+        try writeProfile(
+            PersonaProfile(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                profilePictureURL: nil
+            ),
+            to: dir
+        )
 
-        return Persona(id: personaId, name: name.trimmingCharacters(in: .whitespacesAndNewlines), directoryPath: dir.path)
+        return Persona(
+            id: personaId,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            profilePictureURL: nil,
+            directoryPath: dir.path
+        )
     }
 
     func updatePersona(personaId: String, name: String, instructions: String) throws {
@@ -64,9 +90,14 @@ final class PersonaManager {
         let agentsURL = dir.appendingPathComponent("AGENTS.md")
         try normalizeInstructions(instructions).write(to: agentsURL, atomically: true, encoding: .utf8)
 
-        // Keep display name separate via NAME.txt for v0 minimal metadata.
-        let nameURL = dir.appendingPathComponent("NAME.txt")
-        try name.trimmingCharacters(in: .whitespacesAndNewlines).write(to: nameURL, atomically: true, encoding: .utf8)
+        let existingProfile = loadProfile(for: safeId)
+        try writeProfile(
+            PersonaProfile(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                profilePictureURL: existingProfile?.profilePictureURL
+            ),
+            to: dir
+        )
     }
 
     func loadInstructions(personaId: String) throws -> String {
@@ -74,7 +105,7 @@ final class PersonaManager {
         guard fileManager.fileExists(atPath: url.path) else {
             throw NSError(domain: "PersonaManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing AGENTS.md for persona \(personaId)"])
         }
-        return try String(contentsOf: url)
+        return try String(contentsOf: url, encoding: .utf8)
     }
 
     func personaDirectory(personaId: String) -> URL {
@@ -88,8 +119,14 @@ final class PersonaManager {
             throw NSError(domain: "PersonaManager", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing AGENTS.md for persona \(personaId)"])
         }
 
-        let name = loadDisplayName(for: personaId) ?? displayName(from: personaId)
-        return Persona(id: personaId, name: name, directoryPath: dir.path)
+        let profile = loadProfile(for: personaId)
+        let name = profile?.name ?? displayName(from: personaId)
+        return Persona(
+            id: personaId,
+            name: name,
+            profilePictureURL: profile?.profilePictureURL,
+            directoryPath: dir.path
+        )
     }
 
     private var defaultInstructions: String {
@@ -128,17 +165,46 @@ final class PersonaManager {
     }
 
     private func displayName(from id: String) -> String {
-        loadDisplayName(for: id) ?? id
+        legacyDisplayName(for: id) ?? id
             .split(separator: "-")
             .map { $0.capitalized }
             .joined(separator: " ")
     }
 
-    private func loadDisplayName(for id: String) -> String? {
+    private func loadProfile(for id: String) -> PersonaProfile? {
+        let directory = paths.personasDirectory
+            .appendingPathComponent(slugify(id), isDirectory: true)
+        let url = directory.appendingPathComponent("profile.json")
+        guard fileManager.fileExists(atPath: url.path) else {
+            return migrateLegacyProfileIfNeeded(for: id, directory: directory)
+        }
+        guard let data = try? Data(contentsOf: url) else {
+            return migrateLegacyProfileIfNeeded(for: id, directory: directory)
+        }
+        guard let profile = try? JSONDecoder().decode(PersonaProfile.self, from: data) else {
+            return migrateLegacyProfileIfNeeded(for: id, directory: directory)
+        }
+        return profile
+    }
+
+    private func writeProfile(_ profile: PersonaProfile, to directory: URL) throws {
+        let url = directory.appendingPathComponent("profile.json")
+        let data = try JSONEncoder().encode(profile)
+        try data.write(to: url, options: .atomic)
+    }
+
+    private func legacyDisplayName(for id: String) -> String? {
         let url = paths.personasDirectory
             .appendingPathComponent(slugify(id), isDirectory: true)
             .appendingPathComponent("NAME.txt")
         guard fileManager.fileExists(atPath: url.path) else { return nil }
-        return try? String(contentsOf: url).trimmingCharacters(in: .whitespacesAndNewlines)
+        return try? String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func migrateLegacyProfileIfNeeded(for id: String, directory: URL) -> PersonaProfile? {
+        guard let legacyName = legacyDisplayName(for: id) else { return nil }
+        let profile = PersonaProfile(name: legacyName, profilePictureURL: nil)
+        try? writeProfile(profile, to: directory)
+        return profile
     }
 }
