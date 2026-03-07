@@ -10,7 +10,7 @@ final class ProviderRegistry {
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
         authStore: AuthStore,
-        registrations: [ProviderRegistration] = [.codex, .claude]
+        registrations: [ProviderRegistration] = [.codex]
     ) {
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
