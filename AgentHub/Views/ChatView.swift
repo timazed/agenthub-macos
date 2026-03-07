@@ -43,7 +43,10 @@ struct ChatView: View {
                             DateSeparator(label: label)
                         case let .message(message):
                             ConversationBubble(message: message)
-                                .id(message.id)
+                                .id(ConversationScrollTarget.message(message.id))
+                        case .thinking:
+                            ConversationThinkingRow()
+                                .id(ConversationScrollTarget.thinking)
                         }
                     }
                 }
@@ -55,6 +58,9 @@ struct ChatView: View {
             .contentMargins(.top, 0, for: .scrollContent)
             .contentMargins(.bottom, 0, for: .scrollContent)
             .onChange(of: viewModel.messages.count) { _, _ in
+                scrollToBottom(proxy: proxy)
+            }
+            .onChange(of: viewModel.isBusy) { _, _ in
                 scrollToBottom(proxy: proxy)
             }
             .onAppear {
@@ -145,19 +151,10 @@ struct ChatView: View {
                             )
                     )
 
-                    Text(viewModel.runtimeDescriptor)
-                        .font(.caption)
-                        .foregroundStyle(Color.secondary.opacity(0.9))
-
-                    if viewModel.isBusy {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color.primary.opacity(0.8))
-                            Text("Thinking")
-                                .font(.caption)
-                                .foregroundStyle(Color.secondary.opacity(0.9))
-                        }
+                    HStack(spacing: 6) {
+                        Text(viewModel.runtimeDescriptor)
+                            .font(.caption)
+                            .foregroundStyle(Color.secondary.opacity(0.9))
                     }
                 }
             }
@@ -227,6 +224,10 @@ struct ChatView: View {
             entries.append(.init(kind: .message(message)))
         }
 
+        if viewModel.isBusy {
+            entries.append(.init(kind: .thinking))
+        }
+
         return entries
     }
 
@@ -242,10 +243,19 @@ struct ChatView: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy) {
-        guard let lastID = viewModel.messages.last?.id else { return }
+        let target: ConversationScrollTarget?
+        if viewModel.isBusy {
+            target = .thinking
+        } else if let lastMessageID = viewModel.messages.last?.id {
+            target = .message(lastMessageID)
+        } else {
+            target = nil
+        }
+
+        guard let target else { return }
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.18)) {
-                proxy.scrollTo(lastID, anchor: .bottom)
+                proxy.scrollTo(target, anchor: .bottom)
             }
         }
     }
@@ -270,14 +280,32 @@ struct ChatView: View {
     }
 }
 
+private enum ConversationScrollTarget: Hashable {
+    case message(UUID)
+    case thinking
+}
+
 private struct ConversationEntry: Identifiable {
     enum Kind {
         case separator(String)
         case message(Message)
+        case thinking
     }
 
-    let id = UUID()
+    let id: String
     let kind: Kind
+
+    init(kind: Kind) {
+        self.kind = kind
+        switch kind {
+        case let .separator(label):
+            id = "separator-\(label)"
+        case let .message(message):
+            id = "message-\(message.id.uuidString)"
+        case .thinking:
+            id = "thinking"
+        }
+    }
 }
 
 private struct DateSeparator: View {
@@ -354,6 +382,16 @@ private struct ConversationBubble: View {
     }
 }
 
+private struct ConversationThinkingRow: View {
+    var body: some View {
+        HStack {
+            ThinkingStatusText()
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct CircleIconButton: View {
     @Environment(\.colorScheme) private var colorScheme
     let systemName: String
@@ -370,6 +408,48 @@ private struct CircleIconButton: View {
                 .clipShape(Circle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct ThinkingStatusText: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var shimmerOffset: CGFloat = -1.2
+
+    var body: some View {
+        let text = Text("Thinking...")
+            .font(.caption)
+
+        text
+            .foregroundStyle(baseColor)
+            .overlay {
+                GeometryReader { geometry in
+                    LinearGradient(
+                        colors: [.clear, highlightColor, .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geometry.size.width * 0.85)
+                    .offset(x: shimmerOffset * geometry.size.width)
+                    .mask(
+                        text.foregroundStyle(.white)
+                    )
+                }
+                .allowsHitTesting(false)
+            }
+            .onAppear {
+                shimmerOffset = -1.2
+                withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) {
+                    shimmerOffset = 1.2
+                }
+            }
+    }
+
+    private var baseColor: Color {
+        Color.secondary.opacity(colorScheme == .dark ? 0.86 : 0.82)
+    }
+
+    private var highlightColor: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.95 : 0.72)
     }
 }
 
