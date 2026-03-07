@@ -27,6 +27,7 @@ struct AppShellView: View {
             isPanelPresented: appViewModel.isPanelPresented,
             onTogglePanel: { appViewModel.togglePanel() }
         )
+        .frame(minWidth: 400)
         .inspector(isPresented: $appViewModel.isPanelPresented) {
             AssistantPanelView(
                 tasksViewModel: tasksViewModel,
