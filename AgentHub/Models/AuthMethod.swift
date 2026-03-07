@@ -1,12 +1,15 @@
 import Foundation
 
 enum AuthMethod: String, Codable, CaseIterable, Hashable {
+    case browser
     case deviceCode
     case apiKey
     case externalSetup
 
     var displayName: String {
         switch self {
+        case .browser:
+            return "Browser"
         case .deviceCode:
             return "Device Code"
         case .apiKey:

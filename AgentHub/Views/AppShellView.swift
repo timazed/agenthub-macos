@@ -63,11 +63,7 @@ struct AppShellView: View {
                             performInitialLoadIfNeeded()
                         }
                     },
-                    onCancelLogin: { authViewModel.cancelLogin() },
-                    onOpenSecuritySettings: {
-                        guard let url = authViewModel.securitySettingsURL else { return }
-                        _ = NSWorkspace.shared.open(url)
-                    }
+                    onCancelLogin: { authViewModel.cancelLogin() }
                 )
                 .frame(minWidth: 400)
             }
@@ -120,27 +116,29 @@ struct AppShellView: View {
             Text(combinedErrorMessage ?? "Unknown error")
         })
         .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Picker("Provider", selection: Binding(
-                    get: { authViewModel.currentProvider },
-                    set: { newValue in
-                        guard newValue != authViewModel.currentProvider else { return }
-                        didPerformInitialLoad = false
-                        Task {
-                            await authViewModel.selectProvider(newValue)
-                            chatViewModel.load()
-                            tasksViewModel.load()
-                            activityViewModel.load()
-                            performInitialLoadIfNeeded()
+            if authViewModel.availableProviders.count > 1 {
+                ToolbarItem(placement: .automatic) {
+                    Picker("Provider", selection: Binding(
+                        get: { authViewModel.currentProvider },
+                        set: { newValue in
+                            guard newValue != authViewModel.currentProvider else { return }
+                            didPerformInitialLoad = false
+                            Task {
+                                await authViewModel.selectProvider(newValue)
+                                chatViewModel.load()
+                                tasksViewModel.load()
+                                activityViewModel.load()
+                                performInitialLoadIfNeeded()
+                            }
+                        }
+                    )) {
+                        ForEach(authViewModel.availableProviders, id: \.self) { provider in
+                            Text(provider.displayName).tag(provider)
                         }
                     }
-                )) {
-                    ForEach(authViewModel.availableProviders, id: \.self) { provider in
-                        Text(provider.displayName).tag(provider)
-                    }
+                    .pickerStyle(.menu)
+                    .disabled(authViewModel.isBusy)
                 }
-                .pickerStyle(.menu)
-                .disabled(authViewModel.isBusy)
             }
         }
     }

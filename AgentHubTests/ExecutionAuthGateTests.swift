@@ -145,7 +145,7 @@ struct ExecutionAuthGateTests {
 private struct FailingAuthManager: AuthManaging {
     var currentProvider: AuthProvider { .codex }
     var availableProviders: [AuthProvider] { [.codex] }
-    var capabilities: ProviderCapabilities { .available(authMethods: [.deviceCode]) }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.browser]) }
 
     func loadCachedState() throws -> AuthState {
         AuthState(provider: .codex, status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
@@ -198,7 +198,7 @@ private struct UnauthenticatedRuntime: CodexRuntime {
 
 private struct UnauthenticatedProviderClient: AuthProviderClient {
     let provider: AuthProvider = .codex
-    let capabilities = ProviderCapabilities.available(authMethods: [.deviceCode])
+    let capabilities = ProviderCapabilities.available(authMethods: [.browser])
 
     func refreshStatus() throws -> AuthState {
         AuthState(provider: .codex, status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
@@ -219,7 +219,7 @@ private struct UnauthenticatedProviderFactory: ProviderFactory {
     let runtime: AssistantRuntime
 
     var provider: AuthProvider { .codex }
-    var capabilities: ProviderCapabilities { .available(authMethods: [.deviceCode]) }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.browser]) }
 
     func makeRuntime() -> AssistantRuntime {
         runtime

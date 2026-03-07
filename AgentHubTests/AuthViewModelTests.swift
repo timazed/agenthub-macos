@@ -31,7 +31,7 @@ struct AuthViewModelTests {
     func refreshStatusSurfacesUnauthenticatedState() async throws {
         let viewModel = AuthViewModel(
             authManager: AuthViewModelStubManager(
-                capabilities: .available(authMethods: [.deviceCode]),
+                capabilities: .available(authMethods: [.browser]),
                 refreshedState: AuthState(
                     provider: .codex,
                     status: .unauthenticated,
@@ -75,11 +75,57 @@ struct AuthViewModelTests {
         #expect(viewModel.canUseApp)
         #expect(viewModel.statusTitle == "Claude is ready")
     }
+
+    @Test
+    func beginLoginWithoutChallengeShowsBrowserWaitingState() async throws {
+        let viewModel = AuthViewModel(
+            authManager: AuthViewModelStubManager(
+                capabilities: .available(authMethods: [.browser]),
+                refreshedState: AuthState(
+                    provider: .codex,
+                    status: .authenticated,
+                    accountLabel: "user@example.com",
+                    lastValidatedAt: Date(),
+                    failureReason: nil,
+                    updatedAt: Date()
+                ),
+                challenge: nil,
+                loginDelayNanoseconds: 50_000_000
+            ),
+            initialState: .default(),
+            openURL: { _ in
+                Issue.record("Browser login without a challenge should not request an app-managed URL open.")
+                return true
+            }
+        )
+
+        let task = Task {
+            await viewModel.beginLogin()
+        }
+
+        await Task.yield()
+
+        #expect(viewModel.isAwaitingBrowserCompletion)
+        #expect(viewModel.showsBrowserWaitingCard)
+        #expect(viewModel.statusMessage.contains("Finish signing in in your browser"))
+
+        await task.value
+
+        #expect(viewModel.authState.status == .authenticated)
+        #expect(!viewModel.isAwaitingBrowserCompletion)
+    }
 }
 
 private struct AuthViewModelStubManager: AuthManaging {
-    var capabilities: ProviderCapabilities = .available(authMethods: [.deviceCode])
+    var capabilities: ProviderCapabilities = .available(authMethods: [.browser])
     var refreshedState: AuthState
+    var challenge: AuthLoginChallenge? = AuthLoginChallenge(
+        provider: .codex,
+        verificationURL: URL(string: "https://auth.openai.com/codex/device")!,
+        userCode: "ABCD-EFGH",
+        expiresInMinutes: 15
+    )
+    var loginDelayNanoseconds: UInt64 = 0
 
     var currentProvider: AuthProvider { refreshedState.provider }
     var availableProviders: [AuthProvider] { [.codex, .claude] }
@@ -110,16 +156,14 @@ private struct AuthViewModelStubManager: AuthManaging {
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {
-        AuthLoginChallenge(
-            provider: refreshedState.provider,
-            verificationURL: URL(string: "https://auth.openai.com/codex/device")!,
-            userCode: "ABCD-EFGH",
-            expiresInMinutes: 15
-        )
+        challenge
     }
 
     func waitForLoginCompletion() async throws -> AuthState {
-        refreshedState
+        if loginDelayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: loginDelayNanoseconds)
+        }
+        return refreshedState
     }
 
     func cancelLogin() {}

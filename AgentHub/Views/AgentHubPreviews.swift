@@ -194,7 +194,7 @@ private struct PreviewCodexProviderFactory: ProviderFactory {
     let runtime: AssistantRuntime
 
     var provider: AuthProvider { .codex }
-    var capabilities: ProviderCapabilities { .available(authMethods: [.deviceCode]) }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.browser]) }
 
     func makeRuntime() -> AssistantRuntime {
         runtime
@@ -262,8 +262,7 @@ private struct LoginGatePreviewHost: View {
             onSelectProvider: { _ in },
             onStartLogin: {},
             onRetryStatus: {},
-            onCancelLogin: {},
-            onOpenSecuritySettings: {}
+            onCancelLogin: {}
         )
         .frame(width: 1120, height: 760)
     }

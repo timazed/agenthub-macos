@@ -6,7 +6,6 @@ struct CodexLoginGateView: View {
     let onStartLogin: () -> Void
     let onRetryStatus: () -> Void
     let onCancelLogin: () -> Void
-    let onOpenSecuritySettings: () -> Void
 
     var body: some View {
         ZStack {
@@ -41,24 +40,26 @@ struct CodexLoginGateView: View {
                         .frame(maxWidth: 520)
                 }
 
-                Picker("Provider", selection: Binding(
-                    get: { viewModel.currentProvider },
-                    set: onSelectProvider
-                )) {
-                    ForEach(viewModel.availableProviders, id: \.self) { provider in
-                        Text(provider.displayName).tag(provider)
+                if viewModel.availableProviders.count > 1 {
+                    Picker("Provider", selection: Binding(
+                        get: { viewModel.currentProvider },
+                        set: onSelectProvider
+                    )) {
+                        ForEach(viewModel.availableProviders, id: \.self) { provider in
+                            Text(provider.displayName).tag(provider)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 320)
+                    .disabled(viewModel.isBusy)
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 320)
-                .disabled(viewModel.isBusy)
 
                 if let challenge = viewModel.currentChallenge {
                     challengeCard(challenge)
                 }
 
-                if viewModel.showsDeviceAuthorizationHelp {
-                    deviceAuthorizationHelpCard
+                if viewModel.showsBrowserWaitingCard {
+                    browserWaitingCard
                 }
 
                 VStack(spacing: 12) {
@@ -79,11 +80,6 @@ struct CodexLoginGateView: View {
 
                         if viewModel.isAwaitingBrowserCompletion {
                             Button("Cancel", action: onCancelLogin)
-                                .buttonStyle(.bordered)
-                        }
-
-                        if viewModel.showsDeviceAuthorizationHelp {
-                            Button("Open ChatGPT", action: onOpenSecuritySettings)
                                 .buttonStyle(.bordered)
                         }
                     }
@@ -156,13 +152,13 @@ struct CodexLoginGateView: View {
         )
     }
 
-    private var deviceAuthorizationHelpCard: some View {
+    private var browserWaitingCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Device authorization required")
+            Text("Complete sign-in in your browser")
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
 
-            Text("Codex device login is disabled for this account. Open ChatGPT, go to Settings > Security, enable device code authorization for Codex, then return here and try again.")
+            Text("Codex opened a browser-based sign-in flow. Finish the login in the browser window, then return here once the page confirms you are signed in.")
                 .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundStyle(Color.white.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
@@ -171,10 +167,10 @@ struct CodexLoginGateView: View {
         .frame(maxWidth: 520, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(red: 0.18, green: 0.10, blue: 0.10))
+                .fill(Color.black.opacity(0.28))
                 .overlay(
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color(red: 0.72, green: 0.28, blue: 0.28), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
     }

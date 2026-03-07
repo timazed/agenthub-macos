@@ -2,7 +2,7 @@ import Foundation
 
 final class CodexAuthProviderClient: AuthProviderClient {
     let provider: AuthProvider = .codex
-    let capabilities = ProviderCapabilities.available(authMethods: [.deviceCode])
+    let capabilities = ProviderCapabilities.available(authMethods: [.browser])
 
     private let runtime: AssistantRuntime
     private let paths: AppPaths

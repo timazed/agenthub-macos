@@ -10,7 +10,7 @@ final class ProviderRegistry {
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
         authStore: AuthStore,
-        factories: [ProviderFactory] = [CodexProviderFactory(), ClaudeProviderFactory()]
+        factories: [ProviderFactory] = [CodexProviderFactory()]
     ) {
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
@@ -37,7 +37,8 @@ final class ProviderRegistry {
     }
 
     func currentProvider() throws -> AuthProvider {
-        try runtimeConfigStore.loadOrCreateDefault().defaultProvider
+        let configured = try runtimeConfigStore.loadOrCreateDefault().defaultProvider
+        return availableProviders.contains(configured) ? configured : .codex
     }
 
     @discardableResult
@@ -50,6 +51,17 @@ final class ProviderRegistry {
         config.updatedAt = Date()
         try runtimeConfigStore.save(config)
         return try makeAuthManager(for: provider).loadCachedState()
+    }
+
+    @discardableResult
+    func normalizeCurrentProviderIfNeeded() throws -> AuthProvider {
+        let provider = try currentProvider()
+        var config = try runtimeConfigStore.loadOrCreateDefault()
+        guard config.defaultProvider != provider else { return provider }
+        config.defaultProvider = provider
+        config.updatedAt = Date()
+        try runtimeConfigStore.save(config)
+        return provider
     }
 
     private func factory(for provider: AuthProvider) -> ProviderFactory {

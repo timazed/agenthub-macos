@@ -76,6 +76,9 @@ final class AuthViewModel: ObservableObject {
         if currentChallenge != nil {
             return "Open the browser sign-in page, then enter the one-time code below to finish connecting \(providerDisplayName)."
         }
+        if isAwaitingBrowserCompletion {
+            return "Finish signing in in your browser. AgentHub will continue as soon as \(providerDisplayName) reports that login is complete."
+        }
         if isCheckingStatus {
             return "Validating whether the bundled \(providerDisplayName) CLI can run commands with your account."
         }
@@ -115,12 +118,8 @@ final class AuthViewModel: ObservableObject {
         return "Get started with \(providerDisplayName)"
     }
 
-    var showsDeviceAuthorizationHelp: Bool {
-        authState.provider == .codex && normalizedFailureText.contains("enable device code authorization")
-    }
-
-    var securitySettingsURL: URL? {
-        authState.provider == .codex ? URL(string: "https://chatgpt.com/") : nil
+    var showsBrowserWaitingCard: Bool {
+        isAwaitingBrowserCompletion && currentChallenge == nil
     }
 
     func performStartupCheckIfNeeded() async {
@@ -211,14 +210,7 @@ final class AuthViewModel: ObservableObject {
         isAwaitingBrowserCompletion = false
     }
 
-    private var normalizedFailureText: String {
-        (errorMessage ?? authState.failureReason ?? "").lowercased()
-    }
-
     private func presentableErrorMessage(from message: String) -> String {
-        if authState.provider == .codex && message.lowercased().contains("enable device code authorization") {
-            return "Enable device code authorization for Codex in ChatGPT Settings > Security, then try again."
-        }
         return message
     }
 }

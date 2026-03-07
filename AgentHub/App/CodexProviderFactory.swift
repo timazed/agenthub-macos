@@ -2,7 +2,7 @@ import Foundation
 
 struct CodexProviderFactory: ProviderFactory {
     let provider: AuthProvider = .codex
-    let capabilities = ProviderCapabilities.available(authMethods: [.deviceCode])
+    let capabilities = ProviderCapabilities.available(authMethods: [.browser])
 
     func makeRuntime() -> AssistantRuntime {
         CodexCLIRuntime()

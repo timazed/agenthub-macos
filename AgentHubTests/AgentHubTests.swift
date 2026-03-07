@@ -75,6 +75,27 @@ struct AgentHubTests {
         #expect(abs(interval!.timeIntervalSince(now) - 1800) < 1)
     }
 
+    @Test
+    func providerRegistryFallsBackToCodexWhenStoredProviderIsUnavailable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
+        var config = try runtimeConfigStore.loadOrCreateDefault()
+        config.defaultProvider = .claude
+        try runtimeConfigStore.save(config)
+
+        let registry = ProviderRegistry(
+            paths: paths,
+            runtimeConfigStore: runtimeConfigStore,
+            authStore: AuthStore(paths: paths),
+            factories: [DummyProviderFactory()]
+        )
+
+        #expect(try registry.currentProvider() == .codex)
+        #expect(try registry.normalizeCurrentProviderIfNeeded() == .codex)
+        #expect(try runtimeConfigStore.loadOrCreateDefault().defaultProvider == .codex)
+    }
+
 }
 
 private struct DummyRuntime: CodexRuntime {
@@ -101,7 +122,7 @@ private struct DummyRuntime: CodexRuntime {
 
 private struct DummyProviderFactory: ProviderFactory {
     var provider: AuthProvider { .codex }
-    var capabilities: ProviderCapabilities { .available(authMethods: [.deviceCode]) }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.browser]) }
 
     func makeRuntime() -> AssistantRuntime {
         DummyRuntime()
