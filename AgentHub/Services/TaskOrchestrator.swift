@@ -194,14 +194,16 @@ final class TaskOrchestrator {
         return updated
     }
 
-    @discardableResult
-    func completeTask(taskId: UUID) throws -> TaskRecord {
-        let updated = try taskStore.update(taskId: taskId) { current in
-            current.state = .completed
-            current.nextRun = nil
+    func deleteTask(taskId: UUID) throws {
+        runningLock.lock()
+        let isRunning = runningTaskIDs.contains(taskId)
+        runningLock.unlock()
+
+        guard !isRunning else {
+            throw NSError(domain: "TaskOrchestrator", code: 3, userInfo: [NSLocalizedDescriptionKey: "Stop the task before deleting it"])
         }
-        try activityLogStore.append(ActivityEvent(id: UUID(), taskId: updated.id, kind: .taskCompleted, message: "\(updated.title) completed", createdAt: Date()))
-        return updated
+
+        try taskStore.delete(taskId: taskId)
     }
 
     @discardableResult
@@ -217,37 +219,8 @@ final class TaskOrchestrator {
     }
 
     func computeNextRun(after now: Date, scheduleType: TaskScheduleType, scheduleValue: String) -> Date? {
-        switch scheduleType {
-        case .manual:
-            return nil
-        case .intervalMinutes:
-            let minutes = max(1, Int(scheduleValue) ?? 1)
-            return Calendar.current.date(byAdding: .minute, value: minutes, to: now)
-        case .dailyAtHHMM:
-            let parts = scheduleValue.split(separator: ":")
-            guard parts.count == 2,
-                  let hour = Int(parts[0]),
-                  let minute = Int(parts[1]),
-                  (0...23).contains(hour),
-                  (0...59).contains(minute) else {
-                return nil
-            }
-
-            var components = Calendar.current.dateComponents([.year, .month, .day], from: now)
-            components.hour = hour
-            components.minute = minute
-            components.second = 0
-
-            guard var candidate = Calendar.current.date(from: components) else {
-                return nil
-            }
-
-            if candidate <= now {
-                candidate = Calendar.current.date(byAdding: .day, value: 1, to: candidate) ?? candidate
-            }
-
-            return candidate
-        }
+        TaskScheduleConfiguration(scheduleType: scheduleType, scheduleValue: scheduleValue)
+            .nextRun(after: now)
     }
 
     private func classifyState(from result: CodexExecutionResult) -> TaskState {

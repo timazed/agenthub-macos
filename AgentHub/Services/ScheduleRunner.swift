@@ -56,6 +56,18 @@ final class ScheduleRunner {
             return
         }
 
+        let config = TaskScheduleConfiguration(scheduleType: task.scheduleType, scheduleValue: task.scheduleValue)
+        if !config.runsEveryDay {
+            try? unloadLaunchAgent(taskId: task.id)
+            inAppScheduler.schedule(task: task) { [weak self] taskId in
+                Task {
+                    _ = try? await self?.orchestrator.runTask(taskId: taskId)
+                }
+            }
+            try log("sync_task_finish task_id=\(task.id.uuidString) mode=inapp")
+            return
+        }
+
         do {
             try log("sync_task_start task_id=\(task.id.uuidString) schedule=\(task.scheduleType.rawValue):\(task.scheduleValue)")
             try installLaunchAgent(task: task, appExecutableURL: appExecutableURL)
@@ -123,6 +135,7 @@ final class ScheduleRunner {
     }
 
     private func launchAgentPlist(task: TaskRecord, appExecutableURL: URL) throws -> [String: Any] {
+        let config = TaskScheduleConfiguration(scheduleType: task.scheduleType, scheduleValue: task.scheduleValue)
         var plist: [String: Any] = [
             "Label": launchAgentLabel(taskId: task.id),
             "ProgramArguments": [appExecutableURL.path, "--run-task", task.id.uuidString],
@@ -135,18 +148,13 @@ final class ScheduleRunner {
         case .manual:
             break
         case .intervalMinutes:
-            let minutes = max(1, Int(task.scheduleValue) ?? 1)
+            let minutes = max(1, config.intervalMinutes ?? 1)
             plist["StartInterval"] = minutes * 60
         case .dailyAtHHMM:
-            let parts = task.scheduleValue.split(separator: ":")
-            guard parts.count == 2,
-                  let hour = Int(parts[0]),
-                  let minute = Int(parts[1]),
-                  (0...23).contains(hour),
-                  (0...59).contains(minute) else {
+            guard let dailyTime = config.dailyTime else {
                 throw NSError(domain: "ScheduleRunner", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid daily HH:mm schedule"])
             }
-            plist["StartCalendarInterval"] = ["Hour": hour, "Minute": minute]
+            plist["StartCalendarInterval"] = ["Hour": dailyTime.hour, "Minute": dailyTime.minute]
         }
 
         return plist
@@ -222,21 +230,24 @@ private final class InAppTaskScheduler {
     func schedule(task: TaskRecord, onFire: @escaping (UUID) -> Void) {
         unschedule(taskId: task.id)
         guard task.state == .scheduled else { return }
+        let config = TaskScheduleConfiguration(scheduleType: task.scheduleType, scheduleValue: task.scheduleValue)
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
         switch task.scheduleType {
         case .manual:
             return
         case .intervalMinutes:
-            let minutes = max(1, Int(task.scheduleValue) ?? 1)
+            let minutes = max(1, config.intervalMinutes ?? 1)
             let seconds = TimeInterval(minutes * 60)
-            timer.schedule(deadline: .now() + seconds, repeating: seconds)
+            let initialDelay = max(config.nextRun(after: Date())?.timeIntervalSinceNow ?? seconds, 1)
+            timer.schedule(deadline: .now() + initialDelay, repeating: seconds)
         case .dailyAtHHMM:
-            guard let delay = nextDelay(hhmm: task.scheduleValue) else { return }
+            guard let delay = nextDelay(scheduleType: task.scheduleType, scheduleValue: task.scheduleValue) else { return }
             timer.schedule(deadline: .now() + delay, repeating: 24 * 60 * 60)
         }
 
-        timer.setEventHandler { [taskID = task.id] in
+        timer.setEventHandler { [taskID = task.id, config] in
+            guard config.includes(Date()) else { return }
             onFire(taskID)
         }
 
@@ -250,29 +261,11 @@ private final class InAppTaskScheduler {
         }
     }
 
-    private func nextDelay(hhmm: String) -> TimeInterval? {
-        let parts = hhmm.split(separator: ":")
-        guard parts.count == 2,
-              let hour = Int(parts[0]),
-              let minute = Int(parts[1]),
-              (0...23).contains(hour),
-              (0...59).contains(minute) else {
+    private func nextDelay(scheduleType: TaskScheduleType, scheduleValue: String) -> TimeInterval? {
+        let config = TaskScheduleConfiguration(scheduleType: scheduleType, scheduleValue: scheduleValue)
+        guard let nextRun = config.nextRun(after: Date()) else {
             return nil
         }
-
-        var target = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        target.hour = hour
-        target.minute = minute
-        target.second = 0
-
-        guard var date = Calendar.current.date(from: target) else {
-            return nil
-        }
-
-        if date <= Date() {
-            date = Calendar.current.date(byAdding: .day, value: 1, to: date) ?? date
-        }
-
-        return date.timeIntervalSinceNow
+        return nextRun.timeIntervalSinceNow
     }
 }

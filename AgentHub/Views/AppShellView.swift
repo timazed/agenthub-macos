@@ -16,7 +16,8 @@ struct AppShellView: View {
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(
             chatSessionService: container.chatSessionService,
             taskOrchestrator: container.taskOrchestrator,
-            runtimeConfigStore: container.runtimeConfigStore
+            runtimeConfigStore: container.runtimeConfigStore,
+            personaManager: container.personaManager
         ))
         _tasksViewModel = StateObject(wrappedValue: TasksViewModel(
             taskOrchestrator: container.taskOrchestrator,
@@ -36,6 +37,7 @@ struct AppShellView: View {
                     isInputEnabled: true,
                     blockedMessage: nil
                 )
+                .frame(minWidth: 400)
             } else {
                 CodexLoginGateView(
                     viewModel: authViewModel,
@@ -57,6 +59,7 @@ struct AppShellView: View {
                         _ = NSWorkspace.shared.open(url)
                     }
                 )
+                .frame(minWidth: 400)
             }
         }
         .inspector(isPresented: $appViewModel.isPanelPresented) {

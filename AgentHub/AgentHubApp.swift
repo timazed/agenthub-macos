@@ -31,10 +31,11 @@ struct AgentHubApp: App {
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .toolbar(removing: .title)
-            .frame(minWidth: 700, minHeight: 450)
+            .frame(minWidth: 800, minHeight: 800)
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
+        .defaultSize(width: 800, height: 800)
     }
 }
 
@@ -100,17 +101,15 @@ private final class AppBootstrap: ObservableObject {
 }
 
 private struct LaunchStateView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let title: String
     let message: String
 
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [
-                    Color.black.opacity(0.94),
-                    Color(red: 0.05, green: 0.06, blue: 0.09),
-                    Color.black.opacity(0.97)
-                ],
+                colors: backgroundGradientColors,
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -119,48 +118,38 @@ private struct LaunchStateView: View {
             VStack(spacing: 10) {
                 ProgressView()
                     .controlSize(.small)
-                    .tint(.white.opacity(0.82))
+                    .tint(Color.primary.opacity(0.82))
 
                 Text(title)
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(Color.primary.opacity(0.92))
 
                 Text(message)
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(Color.secondary.opacity(0.9))
             }
             .padding(28)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06), lineWidth: 1)
             )
         }
-        .frame(minWidth: 700, minHeight: 450)
+        .frame(minWidth: 700, minHeight: 700)
     }
-}
 
-
-struct TestView: View {
-    var body: some View {
-//        NavigationSplitView {
-//            List {
-//                Label("Messages", systemImage: "blubble.left.fill" )
-//            }
-//            .listStyle(.sidebar)
-//        } detail: {
-//            Text("content")
-//        }
-        VStack {
-            Text("Test")
+    private var backgroundGradientColors: [Color] {
+        if colorScheme == .dark {
+            return [
+                .black,
+                Color(red: 0.05, green: 0.06, blue: 0.09),
+                .black
+            ]
         }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Spacer()
-            }
-        }
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .toolbar(removing: .title)
-        .frame(minWidth: 700, minHeight: 450)
+        return [
+            .white,
+            Color(red: 0.95, green: 0.97, blue: 1.0),
+            .white
+        ]
     }
 }

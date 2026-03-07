@@ -20,4 +20,14 @@ final class ActivityLogViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
+
+    func delete(event: ActivityEvent) {
+        do {
+            try store.delete(eventId: event.id)
+            events.removeAll { $0.id == event.id }
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 }
