@@ -10,10 +10,13 @@ final class ChatViewModel: ObservableObject {
     @Published var pendingProposal: TaskProposal?
     @Published private(set) var activeModel = "gpt-5.4"
     @Published private(set) var activeReasoning = "Medium"
+    @Published private(set) var agentName = "Agent"
+    @Published private(set) var agentProfilePictureURL: String?
 
     private let chatSessionService: ChatSessionService
     private let taskOrchestrator: TaskOrchestrator
     private let runtimeConfigStore: AppRuntimeConfigStore
+    private let personaManager: PersonaManager
 
     private var streamTask: Task<Void, Never>?
     private var streamingMessageID: UUID?
@@ -28,16 +31,20 @@ final class ChatViewModel: ObservableObject {
     init(
         chatSessionService: ChatSessionService,
         taskOrchestrator: TaskOrchestrator,
-        runtimeConfigStore: AppRuntimeConfigStore
+        runtimeConfigStore: AppRuntimeConfigStore,
+        personaManager: PersonaManager
     ) {
         self.chatSessionService = chatSessionService
         self.taskOrchestrator = taskOrchestrator
         self.runtimeConfigStore = runtimeConfigStore
+        self.personaManager = personaManager
         loadRuntimeConfig()
+        loadPersonaProfile()
     }
 
     func load() {
         loadRuntimeConfig()
+        loadPersonaProfile()
         do {
             messages = try chatSessionService.loadMessages()
             errorMessage = nil
@@ -167,6 +174,19 @@ final class ChatViewModel: ObservableObject {
             activeReasoning = config.reasoningEffort.displayName
         } catch {
             debugLog("runtime_config_failed \(error.localizedDescription)")
+        }
+    }
+
+    private func loadPersonaProfile() {
+        do {
+            let persona = try personaManager.defaultPersona()
+            let trimmedName = persona.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            agentName = trimmedName.isEmpty ? "Agent" : trimmedName
+            agentProfilePictureURL = persona.profilePictureURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            agentName = "Agent"
+            agentProfilePictureURL = nil
+            debugLog("persona_profile_failed \(error.localizedDescription)")
         }
     }
 
