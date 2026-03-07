@@ -37,12 +37,6 @@ final class AssistantSessionStore {
                 return try loadUnlocked(provider: provider)
             }
 
-            if provider == .codex, fileManager.fileExists(atPath: paths.legacyAssistantMetadataURL.path) {
-                let legacy = try loadLegacyUnlocked()
-                try saveUnlocked(legacy)
-                return legacy
-            }
-
             let now = Date()
             let session = AssistantSession(
                 id: UUID(),
@@ -70,9 +64,6 @@ final class AssistantSessionStore {
             if fileManager.fileExists(atPath: transcriptURL.path) {
                 return try readMessages(from: transcriptURL)
             }
-            if provider == .codex, fileManager.fileExists(atPath: paths.legacyAssistantTranscriptURL.path) {
-                return try readMessages(from: paths.legacyAssistantTranscriptURL)
-            }
             return []
         }
     }
@@ -85,11 +76,6 @@ final class AssistantSessionStore {
 
     private func loadUnlocked(provider: AuthProvider) throws -> AssistantSession {
         let data = try Data(contentsOf: paths.assistantMetadataURL(for: provider))
-        return try decoder.decode(AssistantSession.self, from: data)
-    }
-
-    private func loadLegacyUnlocked() throws -> AssistantSession {
-        let data = try Data(contentsOf: paths.legacyAssistantMetadataURL)
         return try decoder.decode(AssistantSession.self, from: data)
     }
 

@@ -82,18 +82,6 @@ struct AppPaths {
         mainAssistantDirectory(for: provider).appendingPathComponent("transcript.ndjson")
     }
 
-    var legacyAssistantMetadataURL: URL {
-        assistantDirectory
-            .appendingPathComponent("main-session", isDirectory: true)
-            .appendingPathComponent("metadata.json")
-    }
-
-    var legacyAssistantTranscriptURL: URL {
-        assistantDirectory
-            .appendingPathComponent("main-session", isDirectory: true)
-            .appendingPathComponent("transcript.ndjson")
-    }
-
     static func defaultRoot() -> URL {
         userHomeURL().appendingPathComponent(".agenthub", isDirectory: true)
     }
