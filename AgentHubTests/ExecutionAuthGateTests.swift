@@ -11,13 +11,19 @@ struct ExecutionAuthGateTests {
         try createDefaultPersona(at: paths)
 
         let runtime = UnauthenticatedRuntime()
+        let configStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = AuthStore(paths: paths)
         let service = ChatSessionService(
             sessionStore: AssistantSessionStore(paths: paths),
             personaManager: PersonaManager(paths: paths),
-            runtime: runtime,
             paths: paths,
-            runtimeConfigStore: AppRuntimeConfigStore(paths: paths),
-            authManager: FailingAuthManager()
+            runtimeConfigStore: configStore,
+            providerRegistry: ProviderRegistry(
+                paths: paths,
+                runtimeConfigStore: configStore,
+                authStore: authStore,
+                factories: [UnauthenticatedProviderFactory(runtime: runtime)]
+            )
         )
 
         await #expect(throws: AuthManagerError.self) {
@@ -40,7 +46,8 @@ struct ExecutionAuthGateTests {
             scheduleType: .manual,
             scheduleValue: "",
             state: .scheduled,
-            codexThreadId: nil,
+            provider: .codex,
+            providerThreadID: nil,
             personaId: "default",
             runtimeMode: .chatOnly,
             repoPath: nil,
@@ -52,6 +59,8 @@ struct ExecutionAuthGateTests {
         )
         try taskStore.upsert(task)
 
+        let configStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = AuthStore(paths: paths)
         let orchestrator = TaskOrchestrator(
             taskStore: taskStore,
             taskRunStore: TaskRunStore(paths: paths),
@@ -59,9 +68,13 @@ struct ExecutionAuthGateTests {
             personaManager: PersonaManager(paths: paths),
             workspaceManager: WorkspaceManager(),
             paths: paths,
-            runtimeConfigStore: AppRuntimeConfigStore(paths: paths),
-            authManager: FailingAuthManager(),
-            runtimeFactory: { UnauthenticatedRuntime() }
+            runtimeConfigStore: configStore,
+            providerRegistry: ProviderRegistry(
+                paths: paths,
+                runtimeConfigStore: configStore,
+                authStore: authStore,
+                factories: [UnauthenticatedProviderFactory(runtime: UnauthenticatedRuntime())]
+            )
         )
 
         await #expect(throws: AuthManagerError.self) {
@@ -71,6 +84,51 @@ struct ExecutionAuthGateTests {
         let updated = try taskStore.find(taskId: task.id)
         #expect(updated?.state == .error)
         #expect(updated?.lastError == "Not logged in")
+    }
+
+    @Test
+    func createTaskFailsWhenProviderDoesNotSupportTasks() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        try paths.prepare()
+
+        let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
+        var config = try runtimeConfigStore.loadOrCreateDefault()
+        config.defaultProvider = .claude
+        try runtimeConfigStore.save(config)
+
+        let providerRegistry = ProviderRegistry(
+            paths: paths,
+            runtimeConfigStore: runtimeConfigStore,
+            authStore: AuthStore(paths: paths),
+            factories: [ClaudeChatOnlyProviderFactory()]
+        )
+
+        let orchestrator = TaskOrchestrator(
+            taskStore: try TaskStore(paths: paths),
+            taskRunStore: TaskRunStore(paths: paths),
+            activityLogStore: ActivityLogStore(paths: paths),
+            personaManager: PersonaManager(paths: paths),
+            workspaceManager: WorkspaceManager(),
+            paths: paths,
+            runtimeConfigStore: runtimeConfigStore,
+            providerRegistry: providerRegistry
+        )
+
+        await #expect(throws: NSError.self) {
+            try await orchestrator.createTask(
+                from: TaskProposal(
+                    id: UUID(),
+                    title: "Claude task",
+                    instructions: "Do something",
+                    scheduleType: .manual,
+                    scheduleValue: "",
+                    runtimeMode: .chatOnly,
+                    repoPath: nil,
+                    runNow: false
+                )
+            )
+        }
     }
 
     private func createDefaultPersona(at paths: AppPaths) throws {
@@ -85,6 +143,10 @@ struct ExecutionAuthGateTests {
 }
 
 private struct FailingAuthManager: AuthManaging {
+    var currentProvider: AuthProvider { .codex }
+    var availableProviders: [AuthProvider] { [.codex] }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.deviceCode]) }
+
     func loadCachedState() throws -> AuthState {
         AuthState(provider: .codex, status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
     }
@@ -97,7 +159,11 @@ private struct FailingAuthManager: AuthManaging {
         throw AuthManagerError.unauthenticated("Not logged in")
     }
 
-    func startLogin() async throws -> AuthLoginChallenge {
+    func selectProvider(_ provider: AuthProvider) throws -> AuthState {
+        try loadCachedState()
+    }
+
+    func startLogin() async throws -> AuthLoginChallenge? {
         throw AuthManagerError.unauthenticated("Not logged in")
     }
 
@@ -119,6 +185,88 @@ private struct UnauthenticatedRuntime: CodexRuntime {
 
     func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
         CodexLoginStatusResult(isAuthenticated: false, accountEmail: nil, message: "Not logged in")
+    }
+
+    func streamEvents() -> AsyncStream<CodexEvent> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func cancelCurrentRun() throws {}
+}
+
+private struct UnauthenticatedProviderClient: AuthProviderClient {
+    let provider: AuthProvider = .codex
+    let capabilities = ProviderCapabilities.available(authMethods: [.deviceCode])
+
+    func refreshStatus() throws -> AuthState {
+        AuthState(provider: .codex, status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
+    }
+
+    func startLogin() async throws -> AuthLoginChallenge? {
+        throw AuthManagerError.unauthenticated("Not logged in")
+    }
+
+    func waitForLoginCompletion() async throws -> AuthState {
+        try refreshStatus()
+    }
+
+    func cancelLogin() {}
+}
+
+private struct UnauthenticatedProviderFactory: ProviderFactory {
+    let runtime: AssistantRuntime
+
+    var provider: AuthProvider { .codex }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.deviceCode]) }
+
+    func makeRuntime() -> AssistantRuntime {
+        runtime
+    }
+
+    func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
+        UnauthenticatedProviderClient()
+    }
+}
+
+private struct ClaudeChatOnlyProviderFactory: ProviderFactory {
+    var provider: AuthProvider { .claude }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false) }
+
+    func makeRuntime() -> AssistantRuntime {
+        ClaudeChatOnlyRuntime()
+    }
+
+    func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
+        ClaudeProviderClientStub()
+    }
+}
+
+private struct ClaudeProviderClientStub: AuthProviderClient {
+    let provider: AuthProvider = .claude
+    let capabilities = ProviderCapabilities.available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false)
+
+    func refreshStatus() throws -> AuthState {
+        AuthState(provider: .claude, status: .authenticated, accountLabel: "claude@example.com", lastValidatedAt: Date(), failureReason: nil, updatedAt: Date())
+    }
+
+    func startLogin() async throws -> AuthLoginChallenge? { nil }
+    func waitForLoginCompletion() async throws -> AuthState { try refreshStatus() }
+    func cancelLogin() {}
+}
+
+private struct ClaudeChatOnlyRuntime: CodexRuntime {
+    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+        CodexExecutionResult(threadId: "claude-thread", exitCode: 0, stdout: "", stderr: "")
+    }
+
+    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+        CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
+    }
+
+    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
+        CodexLoginStatusResult(isAuthenticated: true, accountEmail: "claude@example.com", message: nil)
     }
 
     func streamEvents() -> AsyncStream<CodexEvent> {

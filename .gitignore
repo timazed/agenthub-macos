@@ -107,6 +107,7 @@ iOSInjectionProject/
 Pods/
 
 AgentHub/Resources/codex/codex
+AgentHub/Resources/claude/claude
 .deriveddata/
 
 # End of https://www.gitignore.io/api/xcode,swift

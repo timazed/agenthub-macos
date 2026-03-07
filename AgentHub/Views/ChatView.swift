@@ -173,9 +173,9 @@ struct ChatView: View {
                     ComposerTextView(
                         text: $viewModel.inputText,
                         calculatedHeight: $composerHeight,
-                        isEnabled: !viewModel.isBusy && isInputEnabled,
                         placeholder: "Ask me to do anything (one off or repeatable)",
                         colorScheme: colorScheme,
+                        isEnabled: !viewModel.isBusy && isInputEnabled,
                         onSubmit: { viewModel.sendCurrentInput() }
                     )
                     .frame(height: composerHeight)

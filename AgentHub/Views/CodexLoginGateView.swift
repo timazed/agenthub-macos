@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CodexLoginGateView: View {
     @ObservedObject var viewModel: AuthViewModel
+    let onSelectProvider: (AuthProvider) -> Void
     let onStartLogin: () -> Void
     let onRetryStatus: () -> Void
     let onCancelLogin: () -> Void
@@ -40,6 +41,18 @@ struct CodexLoginGateView: View {
                         .frame(maxWidth: 520)
                 }
 
+                Picker("Provider", selection: Binding(
+                    get: { viewModel.currentProvider },
+                    set: onSelectProvider
+                )) {
+                    ForEach(viewModel.availableProviders, id: \.self) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 320)
+                .disabled(viewModel.isBusy)
+
                 if let challenge = viewModel.currentChallenge {
                     challengeCard(challenge)
                 }
@@ -57,7 +70,7 @@ struct CodexLoginGateView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(viewModel.isBusy)
+                    .disabled(viewModel.isBusy || !viewModel.canStartLogin)
 
                     HStack(spacing: 12) {
                         Button("Check again", action: onRetryStatus)

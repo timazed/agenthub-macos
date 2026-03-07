@@ -20,14 +20,13 @@ private enum PreviewFactory {
         let authStore = AuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
         _ = try? authStore.loadOrCreateDefault()
-        let authManager = makeAuthManager(runtime: runtime, paths: paths, store: authStore)
+        let providerRegistry = makeProviderRegistry(runtime: runtime, paths: paths, configStore: configStore, authStore: authStore)
         let chatSessionService = ChatSessionService(
             sessionStore: sessionStore,
             personaManager: personaManager,
-            runtime: runtime,
             paths: paths,
             runtimeConfigStore: configStore,
-            authManager: authManager
+            providerRegistry: providerRegistry
         )
 
         let taskStore = (try? TaskStore(paths: paths)) ?? fatalTaskStore(paths: paths)
@@ -41,8 +40,7 @@ private enum PreviewFactory {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
-            authManager: authManager,
-            runtimeFactory: { PreviewCodexRuntime() }
+            providerRegistry: providerRegistry
         )
 
         let viewModel = ChatViewModel(
@@ -63,7 +61,8 @@ private enum PreviewFactory {
 
         let authStore = AuthStore(paths: paths)
         let runtime = PreviewCodexRuntime()
-        let authManager = makeAuthManager(runtime: runtime, paths: paths, store: authStore)
+        let configStore = AppRuntimeConfigStore(paths: paths)
+        let authManager = SelectableAuthManager(registry: makeProviderRegistry(runtime: runtime, paths: paths, configStore: configStore, authStore: authStore))
         let state = AuthState(
             provider: .codex,
             status: authenticated ? .authenticated : .unauthenticated,
@@ -102,7 +101,7 @@ private enum PreviewFactory {
         let authStore = AuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
         _ = try? authStore.loadOrCreateDefault()
-        let authManager = makeAuthManager(runtime: PreviewCodexRuntime(), paths: paths, store: authStore)
+        let providerRegistry = makeProviderRegistry(runtime: PreviewCodexRuntime(), paths: paths, configStore: configStore, authStore: authStore)
         let orchestrator = TaskOrchestrator(
             taskStore: taskStore,
             taskRunStore: taskRunStore,
@@ -111,8 +110,7 @@ private enum PreviewFactory {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
-            authManager: authManager,
-            runtimeFactory: { PreviewCodexRuntime() }
+            providerRegistry: providerRegistry
         )
         let scheduleRunner = ScheduleRunner(taskStore: taskStore, orchestrator: orchestrator, paths: paths)
         let viewModel = TasksViewModel(taskOrchestrator: orchestrator, scheduleRunner: scheduleRunner, appExecutableURL: URL(fileURLWithPath: "/Applications/AgentHub.app/Contents/MacOS/AgentHub"))
@@ -140,10 +138,10 @@ private enum PreviewFactory {
     static func sampleTasks() -> [TaskRecord] {
         let now = Date()
         return [
-            TaskRecord(id: UUID(), title: "Morning briefing", instructions: "Check calendar, unread messages, and open tasks. Return a concise summary.", scheduleType: .dailyAtHHMM, scheduleValue: "08:00", state: .scheduled, codexThreadId: "thread-1", personaId: "default", runtimeMode: .chatOnly, repoPath: nil, createdAt: now, updatedAt: now, lastRun: Calendar.current.date(byAdding: .day, value: -1, to: now), nextRun: Calendar.current.date(byAdding: .hour, value: 9, to: now), lastError: nil),
-            TaskRecord(id: UUID(), title: "Rental monitor", instructions: "Scan Bondi rentals under budget and report only changes.", scheduleType: .intervalMinutes, scheduleValue: "120", state: .needsInput, codexThreadId: "thread-2", personaId: "default", runtimeMode: .chatOnly, repoPath: nil, createdAt: now, updatedAt: now, lastRun: Calendar.current.date(byAdding: .hour, value: -3, to: now), nextRun: Calendar.current.date(byAdding: .hour, value: 2, to: now), lastError: "Needs suburb clarification"),
-            TaskRecord(id: UUID(), title: "Trip checklist", instructions: "Keep a lightweight travel checklist and nudge when anything is missing.", scheduleType: .manual, scheduleValue: "", state: .paused, codexThreadId: nil, personaId: "default", runtimeMode: .chatOnly, repoPath: nil, createdAt: now, updatedAt: now, lastRun: nil, nextRun: nil, lastError: nil),
-            TaskRecord(id: UUID(), title: "Invoice follow-up", instructions: "Track unpaid invoices and report only overdue items.", scheduleType: .dailyAtHHMM, scheduleValue: "15:30", state: .error, codexThreadId: "thread-3", personaId: "default", runtimeMode: .chatOnly, repoPath: nil, createdAt: now, updatedAt: now, lastRun: Calendar.current.date(byAdding: .day, value: -2, to: now), nextRun: nil, lastError: "Remote source unavailable")
+            TaskRecord(id: UUID(), title: "Morning briefing", instructions: "Check calendar, unread messages, and open tasks. Return a concise summary.", scheduleType: .dailyAtHHMM, scheduleValue: "08:00", state: .scheduled, provider: .codex, providerThreadID: "thread-1", personaId: "default", runtimeMode: .chatOnly, repoPath: nil, createdAt: now, updatedAt: now, lastRun: Calendar.current.date(byAdding: .day, value: -1, to: now), nextRun: Calendar.current.date(byAdding: .hour, value: 9, to: now), lastError: nil),
+            TaskRecord(id: UUID(), title: "Rental monitor", instructions: "Scan Bondi rentals under budget and report only changes.", scheduleType: .intervalMinutes, scheduleValue: "120", state: .needsInput, provider: .codex, providerThreadID: "thread-2", personaId: "default", runtimeMode: .chatOnly, repoPath: nil, createdAt: now, updatedAt: now, lastRun: Calendar.current.date(byAdding: .hour, value: -3, to: now), nextRun: Calendar.current.date(byAdding: .hour, value: 2, to: now), lastError: "Needs suburb clarification"),
+            TaskRecord(id: UUID(), title: "Trip checklist", instructions: "Keep a lightweight travel checklist and nudge when anything is missing.", scheduleType: .manual, scheduleValue: "", state: .paused, provider: .codex, providerThreadID: nil, personaId: "default", runtimeMode: .chatOnly, repoPath: nil, createdAt: now, updatedAt: now, lastRun: nil, nextRun: nil, lastError: nil),
+            TaskRecord(id: UUID(), title: "Invoice follow-up", instructions: "Track unpaid invoices and report only overdue items.", scheduleType: .dailyAtHHMM, scheduleValue: "15:30", state: .error, provider: .codex, providerThreadID: "thread-3", personaId: "default", runtimeMode: .chatOnly, repoPath: nil, createdAt: now, updatedAt: now, lastRun: Calendar.current.date(byAdding: .day, value: -2, to: now), nextRun: nil, lastError: "Remote source unavailable")
         ]
     }
 
@@ -177,8 +175,33 @@ private enum PreviewFactory {
         }
     }
 
-    private static func makeAuthManager(runtime: CodexRuntime, paths: AppPaths, store: AuthStore) -> AuthManaging {
-        AuthManager(store: store, providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths))
+    private static func makeProviderRegistry(
+        runtime: AssistantRuntime,
+        paths: AppPaths,
+        configStore: AppRuntimeConfigStore,
+        authStore: AuthStore
+    ) -> ProviderRegistry {
+        ProviderRegistry(
+            paths: paths,
+            runtimeConfigStore: configStore,
+            authStore: authStore,
+            factories: [PreviewCodexProviderFactory(runtime: runtime)]
+        )
+    }
+}
+
+private struct PreviewCodexProviderFactory: ProviderFactory {
+    let runtime: AssistantRuntime
+
+    var provider: AuthProvider { .codex }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.deviceCode]) }
+
+    func makeRuntime() -> AssistantRuntime {
+        runtime
+    }
+
+    func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
+        CodexAuthProviderClient(runtime: runtime, paths: paths)
     }
 }
 
@@ -236,6 +259,7 @@ private struct LoginGatePreviewHost: View {
     var body: some View {
         CodexLoginGateView(
             viewModel: viewModel,
+            onSelectProvider: { _ in },
             onStartLogin: {},
             onRetryStatus: {},
             onCancelLogin: {},

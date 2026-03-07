@@ -29,7 +29,7 @@ struct AppShellView: View {
 
     var body: some View {
         Group {
-            if authViewModel.isAuthenticated {
+            if authViewModel.canUseApp {
                 ChatView(
                     viewModel: chatViewModel,
                     isPanelPresented: appViewModel.isPanelPresented,
@@ -41,6 +41,16 @@ struct AppShellView: View {
             } else {
                 CodexLoginGateView(
                     viewModel: authViewModel,
+                    onSelectProvider: { provider in
+                        didPerformInitialLoad = false
+                        Task {
+                            await authViewModel.selectProvider(provider)
+                            chatViewModel.load()
+                            tasksViewModel.load()
+                            activityViewModel.load()
+                            performInitialLoadIfNeeded()
+                        }
+                    },
                     onStartLogin: {
                         Task {
                             await authViewModel.beginLogin()
@@ -84,6 +94,7 @@ struct AppShellView: View {
         }) {
             TaskEditorSheetView(
                 task: appViewModel.editingTask,
+                defaultProvider: authViewModel.currentProvider,
                 onSave: { task, isNew in
                     tasksViewModel.save(task: task, isNew: isNew)
                     appViewModel.closeEditor()
@@ -108,6 +119,30 @@ struct AppShellView: View {
         }, message: {
             Text(combinedErrorMessage ?? "Unknown error")
         })
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Picker("Provider", selection: Binding(
+                    get: { authViewModel.currentProvider },
+                    set: { newValue in
+                        guard newValue != authViewModel.currentProvider else { return }
+                        didPerformInitialLoad = false
+                        Task {
+                            await authViewModel.selectProvider(newValue)
+                            chatViewModel.load()
+                            tasksViewModel.load()
+                            activityViewModel.load()
+                            performInitialLoadIfNeeded()
+                        }
+                    }
+                )) {
+                    ForEach(authViewModel.availableProviders, id: \.self) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(authViewModel.isBusy)
+            }
+        }
     }
 
     private var combinedErrorMessage: String? {
@@ -115,7 +150,7 @@ struct AppShellView: View {
     }
 
     private func performInitialLoadIfNeeded() {
-        guard authViewModel.isAuthenticated, !didPerformInitialLoad else { return }
+        guard authViewModel.canUseApp, !didPerformInitialLoad else { return }
         didPerformInitialLoad = true
         tasksViewModel.load()
         activityViewModel.load()

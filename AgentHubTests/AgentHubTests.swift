@@ -23,7 +23,8 @@ struct AgentHubTests {
             scheduleType: .dailyAtHHMM,
             scheduleValue: "08:00",
             state: .scheduled,
-            codexThreadId: "thread-123",
+            provider: .codex,
+            providerThreadID: "thread-123",
             personaId: "default",
             runtimeMode: .chatOnly,
             repoPath: nil,
@@ -38,7 +39,7 @@ struct AgentHubTests {
         let loaded = try store.load()
 
         #expect(loaded.count == 1)
-        #expect(loaded.first?.codexThreadId == "thread-123")
+        #expect(loaded.first?.providerThreadID == "thread-123")
         #expect(loaded.first?.title == "Bondi rentals")
     }
 
@@ -48,7 +49,12 @@ struct AgentHubTests {
         let paths = AppPaths(root: root)
         let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
         let authStore = AuthStore(paths: paths)
-        let authManager = AuthManager(store: authStore, providerClient: CodexAuthProviderClient(runtime: DummyRuntime(), paths: paths))
+        let providerRegistry = ProviderRegistry(
+            paths: paths,
+            runtimeConfigStore: runtimeConfigStore,
+            authStore: authStore,
+            factories: [DummyProviderFactory()]
+        )
         let orchestrator = TaskOrchestrator(
             taskStore: try TaskStore(paths: paths),
             taskRunStore: TaskRunStore(paths: paths),
@@ -57,8 +63,7 @@ struct AgentHubTests {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
-            authManager: authManager,
-            runtimeFactory: { DummyRuntime() }
+            providerRegistry: providerRegistry
         )
 
         let now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -92,4 +97,17 @@ private struct DummyRuntime: CodexRuntime {
     }
 
     func cancelCurrentRun() throws {}
+}
+
+private struct DummyProviderFactory: ProviderFactory {
+    var provider: AuthProvider { .codex }
+    var capabilities: ProviderCapabilities { .available(authMethods: [.deviceCode]) }
+
+    func makeRuntime() -> AssistantRuntime {
+        DummyRuntime()
+    }
+
+    func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
+        CodexAuthProviderClient(runtime: runtime, paths: paths)
+    }
 }

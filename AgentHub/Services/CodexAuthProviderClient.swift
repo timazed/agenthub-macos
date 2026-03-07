@@ -2,13 +2,14 @@ import Foundation
 
 final class CodexAuthProviderClient: AuthProviderClient {
     let provider: AuthProvider = .codex
+    let capabilities = ProviderCapabilities.available(authMethods: [.deviceCode])
 
-    private let runtime: CodexRuntime
+    private let runtime: AssistantRuntime
     private let paths: AppPaths
     private let loginCoordinator: CodexLoginCoordinator
 
     init(
-        runtime: CodexRuntime,
+        runtime: AssistantRuntime,
         paths: AppPaths,
         bundle: Bundle = .main,
         fileManager: FileManager = .default
@@ -47,7 +48,7 @@ final class CodexAuthProviderClient: AuthProviderClient {
         )
     }
 
-    func startLogin() async throws -> AuthLoginChallenge {
+    func startLogin() async throws -> AuthLoginChallenge? {
         try await loginCoordinator.startLogin()
     }
 

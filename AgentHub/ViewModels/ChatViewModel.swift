@@ -10,6 +10,7 @@ final class ChatViewModel: ObservableObject {
     @Published var pendingProposal: TaskProposal?
     @Published private(set) var activeModel = "gpt-5.4"
     @Published private(set) var activeReasoning = "Medium"
+    @Published private(set) var activeProviderName = AuthProvider.codex.displayName
     @Published private(set) var agentName = "Agent"
     @Published private(set) var agentProfilePictureURL: String?
 
@@ -25,7 +26,7 @@ final class ChatViewModel: ObservableObject {
     var onActivityChanged: (() -> Void)?
 
     var runtimeDescriptor: String {
-        "\(activeModel) · \(activeReasoning) reasoning"
+        "\(activeProviderName) · \(activeModel) · \(activeReasoning) reasoning"
     }
 
     init(
@@ -170,6 +171,7 @@ final class ChatViewModel: ObservableObject {
     private func loadRuntimeConfig() {
         do {
             let config = try runtimeConfigStore.loadOrCreateDefault()
+            activeProviderName = config.defaultProvider.displayName
             activeModel = config.model
             activeReasoning = config.reasoningEffort.displayName
         } catch {

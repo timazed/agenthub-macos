@@ -9,9 +9,10 @@ struct AuthLoginChallenge: Equatable {
 
 protocol AuthProviderClient {
     var provider: AuthProvider { get }
+    var capabilities: ProviderCapabilities { get }
 
     func refreshStatus() throws -> AuthState
-    func startLogin() async throws -> AuthLoginChallenge
+    func startLogin() async throws -> AuthLoginChallenge?
     func waitForLoginCompletion() async throws -> AuthState
     func cancelLogin()
 }

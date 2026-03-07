@@ -23,6 +23,18 @@ final class AuthManager: AuthManaging {
         self.providerClient = providerClient
     }
 
+    var currentProvider: AuthProvider {
+        providerClient.provider
+    }
+
+    var availableProviders: [AuthProvider] {
+        [providerClient.provider]
+    }
+
+    var capabilities: ProviderCapabilities {
+        providerClient.capabilities
+    }
+
     func loadCachedState() throws -> AuthState {
         try store.loadOrCreateDefault(provider: providerClient.provider)
     }
@@ -65,7 +77,15 @@ final class AuthManager: AuthManaging {
         }
     }
 
-    func startLogin() async throws -> AuthLoginChallenge {
+    @discardableResult
+    func selectProvider(_ provider: AuthProvider) throws -> AuthState {
+        guard provider == providerClient.provider else {
+            throw AuthManagerError.statusCheckFailed("Unsupported provider: \(provider.displayName)")
+        }
+        return try loadCachedState()
+    }
+
+    func startLogin() async throws -> AuthLoginChallenge? {
         try await providerClient.startLogin()
     }
 

@@ -60,6 +60,7 @@ struct AuthManagerTests {
 
 private struct StubAuthProviderClient: AuthProviderClient {
     let provider: AuthProvider = .codex
+    let capabilities = ProviderCapabilities.available(authMethods: [.deviceCode])
     var refreshedState: AuthState
     var challenge: AuthLoginChallenge = AuthLoginChallenge(
         provider: .codex,
@@ -72,7 +73,7 @@ private struct StubAuthProviderClient: AuthProviderClient {
         refreshedState
     }
 
-    func startLogin() async throws -> AuthLoginChallenge {
+    func startLogin() async throws -> AuthLoginChallenge? {
         challenge
     }
 

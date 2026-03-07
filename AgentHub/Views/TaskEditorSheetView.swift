@@ -12,7 +12,12 @@ struct TaskEditorSheetView: View {
     let onCancel: () -> Void
     private let headerHeight: CGFloat = 86
 
-    init(task: TaskRecord?, onSave: @escaping (TaskRecord, Bool) -> Void, onCancel: @escaping () -> Void) {
+    init(
+        task: TaskRecord?,
+        defaultProvider: AuthProvider = .codex,
+        onSave: @escaping (TaskRecord, Bool) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
         let now = Date()
         let value = task ?? TaskRecord(
             id: UUID(),
@@ -21,7 +26,8 @@ struct TaskEditorSheetView: View {
             scheduleType: .manual,
             scheduleValue: "",
             state: .scheduled,
-            codexThreadId: nil,
+            provider: defaultProvider,
+            providerThreadID: nil,
             personaId: "default",
             runtimeMode: .chatOnly,
             repoPath: nil,
