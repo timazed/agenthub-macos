@@ -186,23 +186,17 @@ private enum PreviewFactory {
             paths: paths,
             runtimeConfigStore: configStore,
             authStore: authStore,
-            factories: [PreviewCodexProviderFactory(runtime: runtime)]
+            registrations: [
+                ProviderRegistration(
+                    provider: .codex,
+                    capabilities: .available(authMethods: [.browser]),
+                    makeRuntime: { runtime },
+                    makeAuthProviderClient: { runtime, paths in
+                        CodexAuthProviderClient(runtime: runtime, paths: paths)
+                    }
+                )
+            ]
         )
-    }
-}
-
-private struct PreviewCodexProviderFactory: ProviderFactory {
-    let runtime: AssistantRuntime
-
-    var provider: AuthProvider { .codex }
-    var capabilities: ProviderCapabilities { .available(authMethods: [.browser]) }
-
-    func makeRuntime() -> AssistantRuntime {
-        runtime
-    }
-
-    func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
-        CodexAuthProviderClient(runtime: runtime, paths: paths)
     }
 }
 

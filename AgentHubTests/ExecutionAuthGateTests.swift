@@ -22,7 +22,7 @@ struct ExecutionAuthGateTests {
                 paths: paths,
                 runtimeConfigStore: configStore,
                 authStore: authStore,
-                factories: [UnauthenticatedProviderFactory(runtime: runtime)]
+                registrations: [makeUnauthenticatedProviderRegistration(runtime: runtime)]
             )
         )
 
@@ -73,7 +73,7 @@ struct ExecutionAuthGateTests {
                 paths: paths,
                 runtimeConfigStore: configStore,
                 authStore: authStore,
-                factories: [UnauthenticatedProviderFactory(runtime: UnauthenticatedRuntime())]
+                registrations: [makeUnauthenticatedProviderRegistration(runtime: UnauthenticatedRuntime())]
             )
         )
 
@@ -101,7 +101,7 @@ struct ExecutionAuthGateTests {
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
             authStore: AuthStore(paths: paths),
-            factories: [ClaudeChatOnlyProviderFactory()]
+            registrations: [claudeChatOnlyProviderRegistration]
         )
 
         let orchestrator = TaskOrchestrator(
@@ -215,33 +215,25 @@ private struct UnauthenticatedProviderClient: AuthProviderClient {
     func cancelLogin() {}
 }
 
-private struct UnauthenticatedProviderFactory: ProviderFactory {
-    let runtime: AssistantRuntime
-
-    var provider: AuthProvider { .codex }
-    var capabilities: ProviderCapabilities { .available(authMethods: [.browser]) }
-
-    func makeRuntime() -> AssistantRuntime {
-        runtime
-    }
-
-    func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
-        UnauthenticatedProviderClient()
-    }
+private func makeUnauthenticatedProviderRegistration(runtime: AssistantRuntime) -> ProviderRegistration {
+    ProviderRegistration(
+        provider: .codex,
+        capabilities: .available(authMethods: [.browser]),
+        makeRuntime: { runtime },
+        makeAuthProviderClient: { _, _ in
+            UnauthenticatedProviderClient()
+        }
+    )
 }
 
-private struct ClaudeChatOnlyProviderFactory: ProviderFactory {
-    var provider: AuthProvider { .claude }
-    var capabilities: ProviderCapabilities { .available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false) }
-
-    func makeRuntime() -> AssistantRuntime {
-        ClaudeChatOnlyRuntime()
-    }
-
-    func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
+private let claudeChatOnlyProviderRegistration = ProviderRegistration(
+    provider: .claude,
+    capabilities: .available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false),
+    makeRuntime: { ClaudeChatOnlyRuntime() },
+    makeAuthProviderClient: { _, _ in
         ClaudeProviderClientStub()
     }
-}
+)
 
 private struct ClaudeProviderClientStub: AuthProviderClient {
     let provider: AuthProvider = .claude

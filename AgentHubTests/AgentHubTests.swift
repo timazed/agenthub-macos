@@ -53,7 +53,7 @@ struct AgentHubTests {
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
             authStore: authStore,
-            factories: [DummyProviderFactory()]
+            registrations: [dummyProviderRegistration]
         )
         let orchestrator = TaskOrchestrator(
             taskStore: try TaskStore(paths: paths),
@@ -88,7 +88,7 @@ struct AgentHubTests {
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
             authStore: AuthStore(paths: paths),
-            factories: [DummyProviderFactory()]
+            registrations: [dummyProviderRegistration]
         )
 
         #expect(try registry.currentProvider() == .codex)
@@ -109,7 +109,7 @@ struct AgentHubTests {
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
             authStore: AuthStore(paths: paths),
-            factories: [DummyProviderFactory()]
+            registrations: [dummyProviderRegistration]
         )
 
         #expect(try registry.currentProvider() == .codex)
@@ -140,15 +140,11 @@ private struct DummyRuntime: CodexRuntime {
     func cancelCurrentRun() throws {}
 }
 
-private struct DummyProviderFactory: ProviderFactory {
-    var provider: AuthProvider { .codex }
-    var capabilities: ProviderCapabilities { .available(authMethods: [.browser]) }
-
-    func makeRuntime() -> AssistantRuntime {
-        DummyRuntime()
-    }
-
-    func makeAuthProviderClient(runtime: AssistantRuntime, paths: AppPaths) -> AuthProviderClient {
+private let dummyProviderRegistration = ProviderRegistration(
+    provider: .codex,
+    capabilities: .available(authMethods: [.browser]),
+    makeRuntime: { DummyRuntime() },
+    makeAuthProviderClient: { runtime, paths in
         CodexAuthProviderClient(runtime: runtime, paths: paths)
     }
-}
+)
