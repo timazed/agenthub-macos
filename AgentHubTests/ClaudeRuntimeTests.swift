@@ -8,7 +8,7 @@ struct ClaudeRuntimeTests {
         let args = ClaudeRuntime.buildArguments(
             prompt: "Hello",
             command: .startNewThread("session-123"),
-            config: CodexLaunchConfig(
+            config: AssistantLaunchConfig(
                 agentHomeDirectory: "/tmp/persona",
                 codexHome: "/tmp/codex",
                 runtimeMode: .chatOnly,
@@ -30,7 +30,7 @@ struct ClaudeRuntimeTests {
         let args = ClaudeRuntime.buildArguments(
             prompt: "Hello again",
             command: .resume("session-456"),
-            config: CodexLaunchConfig(
+            config: AssistantLaunchConfig(
                 agentHomeDirectory: "/tmp/persona",
                 codexHome: "/tmp/codex",
                 runtimeMode: .chatOnly,

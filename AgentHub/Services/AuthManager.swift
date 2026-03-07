@@ -45,7 +45,7 @@ final class AuthManager: AuthManaging {
             let state = try providerClient.refreshStatus()
             try store.save(state)
             return state
-        } catch let error as CodexRuntimeError {
+        } catch let error as AssistantRuntimeError {
             let state = AuthState(
                 provider: providerClient.provider,
                 status: .failed,

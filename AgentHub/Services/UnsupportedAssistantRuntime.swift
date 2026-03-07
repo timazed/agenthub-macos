@@ -4,23 +4,23 @@ struct UnsupportedAssistantRuntime: AssistantRuntime {
     let provider: AuthProvider
     let message: String
 
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
         throw AssistantRuntimeError.launchFailed(message)
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
         throw AssistantRuntimeError.launchFailed(message)
     }
 
-    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
-        CodexLoginStatusResult(
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
+        AssistantLoginStatusResult(
             isAuthenticated: false,
             accountEmail: nil,
             message: message
         )
     }
 
-    func streamEvents() -> AsyncStream<CodexEvent> {
+    func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
             continuation.finish()
         }

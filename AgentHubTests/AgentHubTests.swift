@@ -102,20 +102,20 @@ struct AgentHubTests {
 
 }
 
-private struct DummyRuntime: CodexRuntime {
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: "dummy", exitCode: 0, stdout: "", stderr: "")
+private struct DummyRuntime: AssistantRuntime {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: "dummy", exitCode: 0, stdout: "", stderr: "")
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
     }
 
-    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
-        CodexLoginStatusResult(isAuthenticated: true, accountEmail: nil, message: nil)
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
+        AssistantLoginStatusResult(isAuthenticated: true, accountEmail: nil, message: nil)
     }
 
-    func streamEvents() -> AsyncStream<CodexEvent> {
+    func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
             continuation.finish()
         }

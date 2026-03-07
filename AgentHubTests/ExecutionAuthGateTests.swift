@@ -168,20 +168,20 @@ private struct FailingAuthManager: AuthManaging {
     func cancelLogin() {}
 }
 
-private struct UnauthenticatedRuntime: CodexRuntime {
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: nil, exitCode: 1, stdout: "", stderr: "Not logged in")
+private struct UnauthenticatedRuntime: AssistantRuntime {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: nil, exitCode: 1, stdout: "", stderr: "Not logged in")
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: threadId, exitCode: 1, stdout: "", stderr: "Not logged in")
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: threadId, exitCode: 1, stdout: "", stderr: "Not logged in")
     }
 
-    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
-        CodexLoginStatusResult(isAuthenticated: false, accountEmail: nil, message: "Not logged in")
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
+        AssistantLoginStatusResult(isAuthenticated: false, accountEmail: nil, message: "Not logged in")
     }
 
-    func streamEvents() -> AsyncStream<CodexEvent> {
+    func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
             continuation.finish()
         }
@@ -242,20 +242,20 @@ private struct ClaudeProviderClientStub: AuthProviderClient {
     func cancelLogin() {}
 }
 
-private struct ClaudeChatOnlyRuntime: CodexRuntime {
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: "claude-thread", exitCode: 0, stdout: "", stderr: "")
+private struct ClaudeChatOnlyRuntime: AssistantRuntime {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: "claude-thread", exitCode: 0, stdout: "", stderr: "")
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
     }
 
-    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
-        CodexLoginStatusResult(isAuthenticated: true, accountEmail: "claude@example.com", message: nil)
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
+        AssistantLoginStatusResult(isAuthenticated: true, accountEmail: "claude@example.com", message: nil)
     }
 
-    func streamEvents() -> AsyncStream<CodexEvent> {
+    func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
             continuation.finish()
         }

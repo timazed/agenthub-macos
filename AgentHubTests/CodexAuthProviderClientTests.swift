@@ -8,7 +8,7 @@ struct CodexAuthProviderClientTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let client = CodexAuthProviderClient(
             runtime: StubProviderRuntime(
-                loginStatus: CodexLoginStatusResult(
+                loginStatus: AssistantLoginStatusResult(
                     isAuthenticated: true,
                     accountEmail: "user@example.com",
                     message: "Logged in as user@example.com"
@@ -25,22 +25,22 @@ struct CodexAuthProviderClientTests {
     }
 }
 
-private struct StubProviderRuntime: CodexRuntime {
-    var loginStatus: CodexLoginStatusResult
+private struct StubProviderRuntime: AssistantRuntime {
+    var loginStatus: AssistantLoginStatusResult
 
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: "stub-thread", exitCode: 0, stdout: "", stderr: "")
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: "stub-thread", exitCode: 0, stdout: "", stderr: "")
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
     }
 
-    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
         loginStatus
     }
 
-    func streamEvents() -> AsyncStream<CodexEvent> {
+    func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
             continuation.finish()
         }

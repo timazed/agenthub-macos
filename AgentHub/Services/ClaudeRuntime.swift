@@ -27,7 +27,7 @@ final class ClaudeRuntime: AssistantRuntime {
         }
     }
 
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
         try validate(config: config)
         let sessionID = UUID().uuidString.lowercased()
         return try await execute(
@@ -38,7 +38,7 @@ final class ClaudeRuntime: AssistantRuntime {
         )
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
         try validate(config: config)
         return try await execute(
             prompt: prompt,
@@ -48,7 +48,7 @@ final class ClaudeRuntime: AssistantRuntime {
         )
     }
 
-    func checkLoginStatus(codexHome: String) throws -> CodexLoginStatusResult {
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
         let claudeURL = try locateClaudeBinary()
         let claudeHomeURL = URL(fileURLWithPath: codexHome, isDirectory: true)
         try fileManager.createDirectory(at: claudeHomeURL, withIntermediateDirectories: true)
@@ -83,7 +83,7 @@ final class ClaudeRuntime: AssistantRuntime {
             )
         }
 
-        return CodexLoginStatusResult(
+        return AssistantLoginStatusResult(
             isAuthenticated: response.loggedIn,
             accountEmail: response.accountEmail ?? response.email,
             message: response.loggedIn ? nil : "Sign in to Claude to continue."
@@ -112,8 +112,8 @@ final class ClaudeRuntime: AssistantRuntime {
         prompt: String,
         threadID: String,
         command: Command,
-        config: CodexLaunchConfig
-    ) async throws -> CodexExecutionResult {
+        config: AssistantLaunchConfig
+    ) async throws -> AssistantExecutionResult {
         let claudeURL = try locateClaudeBinary()
         let personaInstructions = try loadPersonaInstructions(from: config.agentHomeDirectory)
         try fileManager.createDirectory(at: URL(fileURLWithPath: config.codexHome, isDirectory: true), withIntermediateDirectories: true)
@@ -142,9 +142,9 @@ final class ClaudeRuntime: AssistantRuntime {
         prompt: String,
         threadID: String,
         command: Command,
-        config: CodexLaunchConfig,
+        config: AssistantLaunchConfig,
         personaInstructions: String
-    ) throws -> CodexExecutionResult {
+    ) throws -> AssistantExecutionResult {
         let process = Process()
         process.executableURL = claudeURL
         process.arguments = Self.buildArguments(
@@ -236,7 +236,7 @@ final class ClaudeRuntime: AssistantRuntime {
         emit(.completed(exitCode))
         finishStream()
 
-        return CodexExecutionResult(
+        return AssistantExecutionResult(
             threadId: threadID,
             exitCode: exitCode,
             stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -244,7 +244,7 @@ final class ClaudeRuntime: AssistantRuntime {
         )
     }
 
-    private func validate(config: CodexLaunchConfig) throws {
+    private func validate(config: AssistantLaunchConfig) throws {
         _ = try loadPersonaInstructions(from: config.agentHomeDirectory)
 
         if config.runtimeMode == .task {
@@ -263,7 +263,7 @@ final class ClaudeRuntime: AssistantRuntime {
     static func buildArguments(
         prompt: String,
         command: Command,
-        config: CodexLaunchConfig,
+        config: AssistantLaunchConfig,
         personaInstructions: String
     ) -> [String] {
         var args = [

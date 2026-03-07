@@ -84,7 +84,7 @@ final class ChatSessionService {
         )
         try sessionStore.appendMessage(userMessage, provider: provider)
 
-        let launchConfig = CodexLaunchConfig(
+        let launchConfig = AssistantLaunchConfig(
             agentHomeDirectory: persona.directoryPath,
             codexHome: paths.root.path,
             runtimeMode: .chatOnly,
@@ -123,7 +123,7 @@ final class ChatSessionService {
             }
         }
 
-        let result: CodexExecutionResult
+        let result: AssistantExecutionResult
         if let threadId = session.providerThreadID {
             result = try await runtime.resumeThread(threadId: threadId, prompt: prompt, config: launchConfig)
         } else {

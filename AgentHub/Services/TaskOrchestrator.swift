@@ -124,7 +124,7 @@ final class TaskOrchestrator {
         let persona = try personaManager.defaultPersona()
         let repoPath = try workspaceManager.validateExternalDirectory(path: task.externalDirectoryPath, for: task.runtimeMode)
         let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
-        let launchConfig = CodexLaunchConfig(
+        let launchConfig = AssistantLaunchConfig(
             agentHomeDirectory: persona.directoryPath,
             codexHome: paths.root.path,
             runtimeMode: task.runtimeMode,
@@ -136,7 +136,7 @@ final class TaskOrchestrator {
 
         let runtime = providerRegistry.makeRuntime(for: task.provider)
         let prompt: String
-        let result: CodexExecutionResult
+        let result: AssistantExecutionResult
         let startedAt = Date()
 
         if let threadId = task.providerThreadID {
@@ -230,7 +230,7 @@ final class TaskOrchestrator {
             .nextRun(after: now)
     }
 
-    private func classifyState(from result: CodexExecutionResult) -> TaskState {
+    private func classifyState(from result: AssistantExecutionResult) -> TaskState {
         if result.exitCode != 0 {
             return .error
         }
@@ -245,7 +245,7 @@ final class TaskOrchestrator {
         return .scheduled
     }
 
-    private func activityMessage(for task: TaskRecord, result: CodexExecutionResult) -> String {
+    private func activityMessage(for task: TaskRecord, result: AssistantExecutionResult) -> String {
         if task.state == .needsInput {
             return "\(task.title) needs input"
         }

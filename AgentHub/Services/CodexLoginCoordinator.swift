@@ -89,7 +89,7 @@ final class CodexLoginCoordinator {
             do {
                 try process.run()
             } catch {
-                throw CodexRuntimeError.launchFailed(String(describing: error))
+                throw AssistantRuntimeError.launchFailed(String(describing: error))
             }
 
             process.waitUntilExit()
@@ -185,7 +185,7 @@ final class CodexLoginCoordinator {
             return workspaceCandidate
         }
 
-        throw CodexRuntimeError.binaryNotFound
+        throw AssistantRuntimeError.binaryNotFound
     }
 
     private static func stripANSI(from text: String) -> String {
