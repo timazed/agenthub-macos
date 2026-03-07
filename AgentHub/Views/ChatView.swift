@@ -9,6 +9,8 @@ struct ChatView: View {
     let onTogglePanel: () -> Void
 
     @State private var composerHeight: CGFloat = ComposerMetrics.minTextHeight
+    @State private var isModelMenuPresented = false
+    @State private var isReasoningMenuPresented = false
 
     private let topOverlayHeight: CGFloat = 100
     private let bottomOverlayHeight: CGFloat = 120
@@ -142,12 +144,6 @@ struct ChatView: View {
                                     .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08), lineWidth: 1)
                             )
                     )
-
-                    HStack(spacing: 6) {
-                        Text(viewModel.runtimeDescriptor)
-                            .font(.caption)
-                            .foregroundStyle(Color.secondary.opacity(0.9))
-                    }
                 }
             }
             .buttonStyle(.plain)
@@ -167,6 +163,43 @@ struct ChatView: View {
             }
 
             HStack(alignment: .center, spacing: 8) {
+                Button {
+                    isReasoningMenuPresented = false
+                    isModelMenuPresented.toggle()
+                } label: {
+                    BrainMenuButton(diameter: ComposerMetrics.controlHeight)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isBusy)
+                .popover(isPresented: $isModelMenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
+                    ModelPickerPopover(
+                        models: viewModel.supportedModels,
+                        activeModel: viewModel.activeModel,
+                        onSelect: { model in
+                            viewModel.setActiveModel(model)
+                            isModelMenuPresented = false
+                        }
+                    )
+                }
+
+                Button {
+                    isModelMenuPresented = false
+                    isReasoningMenuPresented.toggle()
+                } label: {
+                    ReasoningMenuButton(diameter: ComposerMetrics.controlHeight)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isBusy)
+                .popover(isPresented: $isReasoningMenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
+                    ReasoningPickerPopover(
+                        activeReasoning: viewModel.activeReasoning,
+                        onSelect: { reasoning in
+                            viewModel.setActiveReasoning(reasoning)
+                            isReasoningMenuPresented = false
+                        }
+                    )
+                }
+
                 HStack(alignment: .center, spacing: 8) {
                     ComposerTextView(
                         text: $viewModel.inputText,
@@ -443,21 +476,165 @@ private struct ConversationThinkingRow: View {
 }
 
 private struct CircleIconButton: View {
-    @Environment(\.colorScheme) private var colorScheme
     let systemName: String
     let diameter: CGFloat
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Color.primary.opacity(colorScheme == .dark ? 0.92 : 0.82))
-                .frame(width: diameter, height: diameter)
-                .liquidGlass()
-                .clipShape(Circle())
+            CircleGlassButton(diameter: diameter) {
+                Image(systemName: systemName)
+                    .font(.body.weight(.semibold))
+            }
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct BrainMenuButton: View {
+    let diameter: CGFloat
+
+    var body: some View {
+        CircleIconLabelButton(label: "🧠", diameter: diameter)
+    }
+}
+
+private struct ReasoningMenuButton: View {
+    let diameter: CGFloat
+
+    var body: some View {
+        CircleIconLabelButton(label: "🤔", diameter: diameter)
+    }
+}
+
+private struct CircleIconLabelButton: View {
+    let label: String
+    let diameter: CGFloat
+
+    var body: some View {
+        CircleGlassButton(diameter: diameter) {
+            Text(label)
+                .font(.system(size: 20))
+        }
+    }
+}
+
+private struct CircleGlassButton<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let diameter: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .foregroundStyle(Color.primary.opacity(colorScheme == .dark ? 0.92 : 0.82))
+            .frame(width: diameter, height: diameter)
+            .liquidGlass()
+            .clipShape(Circle())
+    }
+}
+
+private struct ModelPickerPopover: View {
+    let models: [SupportedModel]
+    let activeModel: String
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Switch Model")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.secondary)
+                .padding(.bottom, 4)
+
+            ForEach(models) { model in
+                Button {
+                    onSelect(model.id)
+                } label: {
+                    PickerOptionRow(isSelected: model.id == activeModel) {
+                        Text(model.displayName)
+                            .font(.body)
+                    } trailing: {
+                        if model.id == activeModel {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .frame(width: 240)
+    }
+}
+
+private struct ReasoningPickerPopover: View {
+    let activeReasoning: String
+    let onSelect: (ReasoningEffort) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Reasoning")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.secondary)
+                .padding(.bottom, 4)
+
+            ForEach(ReasoningEffort.allCases, id: \.self) { reasoning in
+                Button {
+                    onSelect(reasoning)
+                } label: {
+                    PickerOptionRow(isSelected: reasoning.displayName == activeReasoning) {
+                        Text(reasoning.displayName)
+                            .font(.body)
+                    } trailing: {
+                        if reasoning.displayName == activeReasoning {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .frame(width: 220)
+    }
+}
+
+private struct PickerOptionRow<Leading: View, Trailing: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
+    let isSelected: Bool
+    @ViewBuilder let leading: () -> Leading
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 10) {
+            leading()
+            Spacer(minLength: 16)
+            trailing()
+        }
+        .foregroundStyle(Color.primary.opacity(0.92))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(backgroundColor)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+
+    private var backgroundColor: Color {
+        if isHovered {
+            return Color.primary.opacity(colorScheme == .dark ? 0.18 : 0.12)
+        }
+        if isSelected {
+            return Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08)
+        }
+        return .clear
     }
 }
 

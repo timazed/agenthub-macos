@@ -24,8 +24,17 @@ final class ChatViewModel: ObservableObject {
     var onTasksChanged: (() -> Void)?
     var onActivityChanged: (() -> Void)?
 
-    var runtimeDescriptor: String {
-        "\(activeModel) · \(activeReasoning) reasoning"
+    var headerDescriptor: String {
+        "\(activeReasoning) reasoning"
+    }
+
+    var supportedModels: [SupportedModel] {
+        if AppRuntimeConfig.supportedModels.contains(where: { $0.id.caseInsensitiveCompare(activeModel) == .orderedSame }) {
+            return AppRuntimeConfig.supportedModels
+        }
+        return AppRuntimeConfig.supportedModels + [
+            SupportedModel(id: activeModel, displayName: SupportedModel.displayName(for: activeModel))
+        ]
     }
 
     init(
@@ -99,6 +108,34 @@ final class ChatViewModel: ObservableObject {
 
     func dismissPendingProposal() {
         pendingProposal = nil
+    }
+
+    func setActiveModel(_ model: String) {
+        guard model != activeModel else { return }
+
+        do {
+            var config = try runtimeConfigStore.loadOrCreateDefault()
+            config.model = model
+            config.updatedAt = Date()
+            try runtimeConfigStore.save(config)
+            activeModel = model
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setActiveReasoning(_ reasoning: ReasoningEffort) {
+        guard reasoning.displayName != activeReasoning else { return }
+
+        do {
+            var config = try runtimeConfigStore.loadOrCreateDefault()
+            config.reasoningEffort = reasoning
+            config.updatedAt = Date()
+            try runtimeConfigStore.save(config)
+            activeReasoning = reasoning.displayName
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func send(text: String) async {
