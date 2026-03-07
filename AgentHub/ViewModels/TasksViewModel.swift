@@ -132,9 +132,9 @@ final class TasksViewModel: ObservableObject {
         }
     }
 
-    func complete(task: TaskRecord) {
+    func delete(task: TaskRecord) {
         do {
-            _ = try taskOrchestrator.completeTask(taskId: task.id)
+            try taskOrchestrator.deleteTask(taskId: task.id)
             load()
             reconcileSchedulesDeferred()
             onMutation?()
