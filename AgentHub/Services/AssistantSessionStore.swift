@@ -1,5 +1,10 @@
 import Foundation
 
+extension Notification.Name {
+    static let assistantTranscriptDidChange = Notification.Name("AssistantTranscriptDidChange")
+    static let assistantExternalRunStateDidChange = Notification.Name("AssistantExternalRunStateDidChange")
+}
+
 final class AssistantSessionStore {
     private let paths: AppPaths
     private let fileManager: FileManager
@@ -68,6 +73,7 @@ final class AssistantSessionStore {
         try lock.withLock {
             try append(message: message, to: paths.assistantTranscriptURL)
         }
+        NotificationCenter.default.post(name: .assistantTranscriptDidChange, object: nil)
     }
 
     private func loadUnlocked() throws -> AssistantSession {

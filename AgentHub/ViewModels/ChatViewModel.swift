@@ -12,11 +12,14 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var activeReasoning = "Medium"
     @Published private(set) var agentName = "Agent"
     @Published private(set) var agentProfilePictureURL: String?
+    @Published private(set) var isExternalRunActive = false
 
     private let chatSessionService: ChatSessionService
     private let taskOrchestrator: TaskOrchestrator
     private let runtimeConfigStore: AppRuntimeConfigStore
     private let personaManager: PersonaManager
+    private var transcriptObserver: NSObjectProtocol?
+    private var externalRunObserver: NSObjectProtocol?
 
     private var streamTask: Task<Void, Never>?
     private var streamingMessageID: UUID?
@@ -26,6 +29,10 @@ final class ChatViewModel: ObservableObject {
 
     var headerDescriptor: String {
         "\(activeReasoning) reasoning"
+    }
+
+    var isThinking: Bool {
+        isBusy || isExternalRunActive
     }
 
     var supportedModels: [SupportedModel] {
@@ -47,6 +54,25 @@ final class ChatViewModel: ObservableObject {
         self.taskOrchestrator = taskOrchestrator
         self.runtimeConfigStore = runtimeConfigStore
         self.personaManager = personaManager
+        transcriptObserver = NotificationCenter.default.addObserver(
+            forName: .assistantTranscriptDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.reloadMessages()
+            }
+        }
+        externalRunObserver = NotificationCenter.default.addObserver(
+            forName: .assistantExternalRunStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let isActive = notification.userInfo?["isActive"] as? Bool ?? false
+            Task { @MainActor [weak self] in
+                self?.isExternalRunActive = isActive
+            }
+        }
         loadRuntimeConfig()
         loadPersonaProfile()
     }
@@ -54,12 +80,7 @@ final class ChatViewModel: ObservableObject {
     func load() {
         loadRuntimeConfig()
         loadPersonaProfile()
-        do {
-            messages = try chatSessionService.loadMessages()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        reloadMessages()
     }
 
     func sendCurrentInput() {
@@ -230,5 +251,23 @@ final class ChatViewModel: ObservableObject {
     private func debugLog(_ message: String) {
         let line = "[AgentHub][ChatViewModel] \(message)"
         print(line)
+    }
+
+    private func reloadMessages() {
+        do {
+            messages = try chatSessionService.loadMessages()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    deinit {
+        if let transcriptObserver {
+            NotificationCenter.default.removeObserver(transcriptObserver)
+        }
+        if let externalRunObserver {
+            NotificationCenter.default.removeObserver(externalRunObserver)
+        }
     }
 }

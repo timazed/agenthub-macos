@@ -40,6 +40,10 @@ struct AppPaths {
         stateDirectory.appendingPathComponent("codex-auth-state.json")
     }
 
+    var iMessageIntegrationConfigURL: URL {
+        stateDirectory.appendingPathComponent("imessage-integration-config.json")
+    }
+
     var historyFileURL: URL {
         root.appendingPathComponent("history.jsonl")
     }
