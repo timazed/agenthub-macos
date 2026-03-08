@@ -17,13 +17,15 @@ private enum PreviewFactory {
         let personaManager = PersonaManager(paths: paths)
         let runtime = PreviewCodexRuntime()
         let configStore = AppRuntimeConfigStore(paths: paths)
+        let browserController = ChromiumBrowserController()
         _ = try? configStore.loadOrCreateDefault()
         let chatSessionService = ChatSessionService(
             sessionStore: sessionStore,
             personaManager: personaManager,
             runtime: runtime,
             paths: paths,
-            runtimeConfigStore: configStore
+            runtimeConfigStore: configStore,
+            browserControllerProvider: { browserController }
         )
 
         let taskStore = (try? TaskStore(paths: paths)) ?? fatalTaskStore(paths: paths)

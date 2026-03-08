@@ -102,6 +102,7 @@
 				2206394A2F58FDC7001A14A6 /* Sources */,
 				2206394B2F58FDC7001A14A6 /* Frameworks */,
 				2206394C2F58FDC7001A14A6 /* Resources */,
+				9A1F4D0C4D4D4D4D00000001 /* Bundle Chromium Runtime */,
 			);
 			buildRules = (
 			);
@@ -230,6 +231,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		9A1F4D0C4D4D4D4D00000001 /* Bundle Chromium Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle Chromium Runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Chromium Embedded Framework.framework",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/chrome_100_percent.pak",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nFRAMEWORK_SOURCE=\"${PROJECT_DIR}/Vendor/CEF/${CONFIGURATION}/Chromium Embedded Framework.framework\"\nFRAMEWORK_DEST=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/Chromium Embedded Framework.framework\"\nFRAMEWORK_VERSION_DIR=\"${FRAMEWORK_DEST}/Versions/A\"\nRESOURCE_SOURCE=\"${PROJECT_DIR}/Vendor/CEF/${CONFIGURATION}/Chromium Embedded Framework.framework/Resources\"\nRESOURCE_DEST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nSIGNING_IDENTITY=\"${EXPANDED_CODE_SIGN_IDENTITY:--}\"\nAPP_EXECUTABLE=\"${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}\"\nFRAMEWORKS_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nHELPER_FRAMEWORK_LOAD_PATH='@executable_path/../../../Chromium Embedded Framework.framework/Chromium Embedded Framework'\nMAIN_FRAMEWORK_LOAD_PATH='@executable_path/../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework'\nmkdir -p \"${FRAMEWORKS_DIR}\"\nrm -rf \"${FRAMEWORK_DEST}\" \"${FRAMEWORKS_DIR}/${PRODUCT_NAME} Helper.app\" \"${FRAMEWORKS_DIR}/${PRODUCT_NAME} Helper (Alerts).app\" \"${FRAMEWORKS_DIR}/${PRODUCT_NAME} Helper (GPU).app\" \"${FRAMEWORKS_DIR}/${PRODUCT_NAME} Helper (Plugin).app\" \"${FRAMEWORKS_DIR}/${PRODUCT_NAME} Helper (Renderer).app\"\nmkdir -p \"${FRAMEWORK_VERSION_DIR}\"\nditto \"${FRAMEWORK_SOURCE}/Chromium Embedded Framework\" \"${FRAMEWORK_VERSION_DIR}/Chromium Embedded Framework\"\nditto \"${FRAMEWORK_SOURCE}/Resources\" \"${FRAMEWORK_VERSION_DIR}/Resources\"\nif [ -d \"${FRAMEWORK_SOURCE}/Libraries\" ]; then\n  ditto \"${FRAMEWORK_SOURCE}/Libraries\" \"${FRAMEWORK_VERSION_DIR}/Libraries\"\nfi\n(\n  cd \"${FRAMEWORK_DEST}\"\n  ln -sfn A Versions/Current\n  ln -sfn \"Versions/Current/Chromium Embedded Framework\" \"Chromium Embedded Framework\"\n  ln -sfn Versions/Current/Resources Resources\n  if [ -d \"${FRAMEWORK_VERSION_DIR}/Libraries\" ]; then\n    ln -sfn Versions/Current/Libraries Libraries\n  fi\n)\ncreate_helper_app() {\n  HELPER_NAME=\"$1\"\n  BUNDLE_SUFFIX=\"$2\"\n  HELPER_APP_DIR=\"${FRAMEWORKS_DIR}/${HELPER_NAME}.app\"\n  HELPER_EXECUTABLE_DIR=\"${HELPER_APP_DIR}/Contents/MacOS\"\n  HELPER_EXECUTABLE=\"${HELPER_EXECUTABLE_DIR}/${HELPER_NAME}\"\n  HELPER_INFO_PLIST=\"${HELPER_APP_DIR}/Contents/Info.plist\"\n  mkdir -p \"${HELPER_EXECUTABLE_DIR}\"\n  cp \"${APP_EXECUTABLE}\" \"${HELPER_EXECUTABLE}\"\n  install_name_tool -change \"${MAIN_FRAMEWORK_LOAD_PATH}\" \"${HELPER_FRAMEWORK_LOAD_PATH}\" \"${HELPER_EXECUTABLE}\"\n  cat > \"${HELPER_INFO_PLIST}\" <<EOF\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>CFBundleDevelopmentRegion</key>\n  <string>en</string>\n  <key>CFBundleDisplayName</key>\n  <string>${HELPER_NAME}</string>\n  <key>CFBundleExecutable</key>\n  <string>${HELPER_NAME}</string>\n  <key>CFBundleIdentifier</key>\n  <string>${PRODUCT_BUNDLE_IDENTIFIER}.helper${BUNDLE_SUFFIX}</string>\n  <key>CFBundleInfoDictionaryVersion</key>\n  <string>6.0</string>\n  <key>CFBundleName</key>\n  <string>${HELPER_NAME}</string>\n  <key>CFBundlePackageType</key>\n  <string>APPL</string>\n  <key>CFBundleSignature</key>\n  <string>????</string>\n  <key>CFBundleVersion</key>\n  <string>${CURRENT_PROJECT_VERSION}</string>\n  <key>CFBundleShortVersionString</key>\n  <string>${MARKETING_VERSION}</string>\n  <key>LSFileQuarantineEnabled</key>\n  <true/>\n  <key>LSMinimumSystemVersion</key>\n  <string>${MACOSX_DEPLOYMENT_TARGET}</string>\n  <key>LSUIElement</key>\n  <string>1</string>\n  <key>NSSupportsAutomaticGraphicsSwitching</key>\n  <true/>\n</dict>\n</plist>\nEOF\n  codesign --force --sign \"${SIGNING_IDENTITY}\" --timestamp=none \"${HELPER_EXECUTABLE}\"\n  codesign --force --sign \"${SIGNING_IDENTITY}\" --timestamp=none \"${HELPER_APP_DIR}\"\n}\nif [ -d \"${FRAMEWORK_VERSION_DIR}/Libraries\" ]; then\n  find \"${FRAMEWORK_VERSION_DIR}/Libraries\" -type f -exec codesign --force --sign \"${SIGNING_IDENTITY}\" --timestamp=none {} \\;\nfi\ncodesign --force --sign \"${SIGNING_IDENTITY}\" --timestamp=none \"${FRAMEWORK_VERSION_DIR}/Chromium Embedded Framework\"\ncodesign --force --sign \"${SIGNING_IDENTITY}\" --timestamp=none \"${FRAMEWORK_DEST}\"\ncreate_helper_app \"${PRODUCT_NAME} Helper\" \"\"\ncreate_helper_app \"${PRODUCT_NAME} Helper (Alerts)\" \".alerts\"\ncreate_helper_app \"${PRODUCT_NAME} Helper (GPU)\" \".gpu\"\ncreate_helper_app \"${PRODUCT_NAME} Helper (Plugin)\" \".plugin\"\ncreate_helper_app \"${PRODUCT_NAME} Helper (Renderer)\" \".renderer\"\nditto \"${RESOURCE_SOURCE}\" \"${RESOURCE_DEST}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		2206394A2F58FDC7001A14A6 /* Sources */ = {
@@ -403,13 +427,35 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/CEF/$(CONFIGURATION)",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/CEF",
+				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_CFLAGS = (
+					"$(inherited)",
+					"-DCEF_API_VERSION=13601",
+				);
+				OTHER_CPLUSPLUSFLAGS = (
+					"$(inherited)",
+					"-DCEF_API_VERSION=13601",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					"\"Chromium Embedded Framework\"",
+					"$(PROJECT_DIR)/Vendor/CEF/WrapperBuild/libcef_dll_wrapper/Release/libcef_dll_wrapper.a",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = au.com.roseadvisory.AgentHub;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -417,6 +463,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "AgentHub/AgentHub-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -436,13 +483,35 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/CEF/$(CONFIGURATION)",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/CEF",
+				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_CFLAGS = (
+					"$(inherited)",
+					"-DCEF_API_VERSION=13601",
+				);
+				OTHER_CPLUSPLUSFLAGS = (
+					"$(inherited)",
+					"-DCEF_API_VERSION=13601",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					"\"Chromium Embedded Framework\"",
+					"$(PROJECT_DIR)/Vendor/CEF/WrapperBuild/libcef_dll_wrapper/Release/libcef_dll_wrapper.a",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = au.com.roseadvisory.AgentHub;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -450,6 +519,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "AgentHub/AgentHub-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};

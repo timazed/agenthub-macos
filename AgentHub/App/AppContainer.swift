@@ -1,5 +1,10 @@
 import Foundation
 
+private final class BrowserControllerStore {
+    @MainActor
+    lazy var controller = ChromiumBrowserController()
+}
+
 final class AppContainer {
     let paths: AppPaths
     let appExecutableURL: URL
@@ -14,6 +19,7 @@ final class AppContainer {
     let chatSessionService: ChatSessionService
     let taskOrchestrator: TaskOrchestrator
     let scheduleRunner: ScheduleRunner
+    private let browserControllerStore: BrowserControllerStore
 
     private init(
         paths: AppPaths,
@@ -28,7 +34,8 @@ final class AppContainer {
         chatRuntime: CodexRuntime,
         chatSessionService: ChatSessionService,
         taskOrchestrator: TaskOrchestrator,
-        scheduleRunner: ScheduleRunner
+        scheduleRunner: ScheduleRunner,
+        browserControllerStore: BrowserControllerStore
     ) {
         self.paths = paths
         self.appExecutableURL = appExecutableURL
@@ -43,6 +50,12 @@ final class AppContainer {
         self.chatSessionService = chatSessionService
         self.taskOrchestrator = taskOrchestrator
         self.scheduleRunner = scheduleRunner
+        self.browserControllerStore = browserControllerStore
+    }
+
+    @MainActor
+    var browserController: ChromiumBrowserController {
+        browserControllerStore.controller
     }
 
     static func makeDefault() throws -> AppContainer {
@@ -58,13 +71,15 @@ final class AppContainer {
         let taskStore = try TaskStore(paths: paths)
         let taskRunStore = TaskRunStore(paths: paths)
         let activityLogStore = ActivityLogStore(paths: paths)
+        let browserControllerStore = BrowserControllerStore()
         let chatRuntime = CodexCLIRuntime()
         let chatSessionService = ChatSessionService(
             sessionStore: assistantSessionStore,
             personaManager: personaManager,
             runtime: chatRuntime,
             paths: paths,
-            runtimeConfigStore: runtimeConfigStore
+            runtimeConfigStore: runtimeConfigStore,
+            browserControllerProvider: { browserControllerStore.controller }
         )
         let taskOrchestrator = TaskOrchestrator(
             taskStore: taskStore,
@@ -95,7 +110,8 @@ final class AppContainer {
             chatRuntime: chatRuntime,
             chatSessionService: chatSessionService,
             taskOrchestrator: taskOrchestrator,
-            scheduleRunner: scheduleRunner
+            scheduleRunner: scheduleRunner,
+            browserControllerStore: browserControllerStore
         )
     }
 

@@ -43,6 +43,7 @@ struct AgentHubTests {
     }
 
     @Test
+    @MainActor
     func computeNextRunSupportsManualAndInterval() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let paths = AppPaths(root: root)
@@ -53,16 +54,62 @@ struct AgentHubTests {
             personaManager: PersonaManager(paths: paths),
             workspaceManager: WorkspaceManager(),
             paths: paths,
+            runtimeConfigStore: AppRuntimeConfigStore(paths: paths),
             runtimeFactory: { DummyRuntime() }
         )
 
         let now = Date(timeIntervalSince1970: 1_700_000_000)
-        let manual = orchestrator.computeNextRun(after: now, scheduleType: .manual, scheduleValue: "")
-        let interval = orchestrator.computeNextRun(after: now, scheduleType: .intervalMinutes, scheduleValue: "30")
+        let manual = orchestrator.computeNextRun(after: now, scheduleType: TaskScheduleType.manual, scheduleValue: "")
+        let interval = orchestrator.computeNextRun(after: now, scheduleType: TaskScheduleType.intervalMinutes, scheduleValue: "30")
 
         #expect(manual == nil)
         #expect(interval != nil)
         #expect(abs(interval!.timeIntervalSince(now) - 1800) < 1)
+    }
+
+    @Test
+    func browserRetryProbeIndicatesInteractivePageResponse() throws {
+        let probe = ChromiumRetryProbe(
+            url: "https://www.opentable.com/sake-house",
+            title: "Sake House By Hikari - OpenTable",
+            readyState: "complete",
+            visibleResultCount: 2,
+            hasDialog: false
+        )
+
+        #expect(probe.indicatesPageResponse)
+    }
+
+    @Test
+    func restaurantSearchRequestDefaultsMatchPrototypeInputs() throws {
+        let request = ChromiumRestaurantSearchRequest.opentableDefault
+
+        #expect(request.siteURL == "https://www.opentable.com")
+        #expect(request.query == "Sake House By Hikari Culver City")
+        #expect(request.venueName == "Sake House By Hikari")
+        #expect(request.locationHint == "Culver City")
+    }
+
+    @Test
+    func openTableBookingIntentParsesVenueAndLocation() throws {
+        let intent = ChatBrowserIntent.parse("make a reservation for me on opentable. Sake House By Hikari. culver city. march 8. 7pm. 2 people.")
+
+        #expect(intent != nil)
+        #expect(intent?.bookingRequested == true)
+        #expect(intent?.request.siteURL == "https://www.opentable.com")
+        #expect(intent?.request.venueName == "Sake House By Hikari")
+        #expect(intent?.request.locationHint == "culver city")
+        #expect(intent?.request.query == "Sake House By Hikari culver city")
+    }
+
+    @Test
+    func openTableNavigationIntentParsesVenueAndLocation() throws {
+        let intent = ChatBrowserIntent.parse("navigate to the Sake House By Hikari. culver city. page on open table")
+
+        #expect(intent != nil)
+        #expect(intent?.bookingRequested == false)
+        #expect(intent?.request.venueName == "Sake House By Hikari")
+        #expect(intent?.request.locationHint == "culver city")
     }
 
 }

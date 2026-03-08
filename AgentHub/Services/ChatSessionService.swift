@@ -8,28 +8,147 @@ enum ChatSessionEvent {
     case failed(String)
 }
 
+struct ChatBrowserIntent: Equatable {
+    enum Kind: Equatable {
+        case openTableRestaurantSearch
+    }
+
+    let kind: Kind
+    let request: ChromiumRestaurantSearchRequest
+    let bookingRequested: Bool
+
+    nonisolated static func parse(_ text: String) -> ChatBrowserIntent? {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = normalized.lowercased()
+        guard lowered.contains("opentable") || lowered.contains("open table") else {
+            return nil
+        }
+
+        let bookingRequested = ["reservation", "reserve", "book", "booking"].contains { lowered.contains($0) }
+        let segments = normalized
+            .split(whereSeparator: { ".!?\n".contains($0) })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let venueAndLocation = extractVenueAndLocation(from: segments, fullText: normalized)
+        guard let venueName = venueAndLocation.venueName, !venueName.isEmpty else {
+            return nil
+        }
+
+        let locationHint = venueAndLocation.locationHint
+        let query = [venueName, locationHint]
+            .compactMap { value -> String? in
+                guard let value else { return nil }
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .joined(separator: " ")
+
+        return ChatBrowserIntent(
+            kind: .openTableRestaurantSearch,
+            request: ChromiumRestaurantSearchRequest(
+                siteURL: "https://www.opentable.com",
+                query: query,
+                venueName: venueName,
+                locationHint: locationHint
+            ),
+            bookingRequested: bookingRequested
+        )
+    }
+
+    private nonisolated static func extractVenueAndLocation(from segments: [String], fullText: String) -> (venueName: String?, locationHint: String?) {
+        var cleanedSegments = segments
+            .map(cleanSegment)
+            .filter { !$0.isEmpty }
+
+        if cleanedSegments.isEmpty {
+            cleanedSegments = [cleanSegment(fullText)].filter { !$0.isEmpty }
+        }
+
+        let venueName = cleanedSegments.first
+        let locationHint = cleanedSegments.dropFirst().first
+        return (venueName, locationHint)
+    }
+
+    private nonisolated static func cleanSegment(_ raw: String) -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let removalPatterns = [
+            #"(?i)\bopen\s*table\b"#,
+            #"(?i)\bmake\s+a\s+reservation\s+for\s+me\b"#,
+            #"(?i)\bbook\s+(?:me\s+)?(?:a\s+)?reservation\b"#,
+            #"(?i)\bnavigate\s+to\b"#,
+            #"(?i)\bopen\b"#,
+            #"(?i)\bfind\b"#,
+            #"(?i)\bshow\s+me\b"#,
+            #"(?i)\bgo\s+to\b"#,
+            #"(?i)\bpage\b"#,
+            #"(?i)\bfor\s+me\b"#,
+            #"(?i)\bon\b$"#
+        ]
+
+        for pattern in removalPatterns {
+            value = value.replacingOccurrences(
+                of: pattern,
+                with: " ",
+                options: .regularExpression
+            )
+        }
+
+        value = value
+            .replacingOccurrences(of: #"(?i)\bthe\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\b\d+\s+people\b"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\b\d+\s*(?:am|pm)\b"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\b(?:today|tomorrow)\b"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\b\d{1,2}(?:st|nd|rd|th)?\b"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ,.-").union(.whitespacesAndNewlines))
+
+        let lowered = value.lowercased()
+        if lowered.isEmpty {
+            return ""
+        }
+        if ["on", "at", "for"].contains(lowered) {
+            return ""
+        }
+        if lowered.contains("reservation") || lowered.contains("book") {
+            return ""
+        }
+        if lowered == "opentable" || lowered == "open table" {
+            return ""
+        }
+        return value
+    }
+}
+
 final class ChatSessionService {
     private let sessionStore: AssistantSessionStore
     private let personaManager: PersonaManager
     private let runtime: CodexRuntime
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
+    private let browserControllerProvider: @MainActor () -> ChromiumBrowserController
 
     private let stateLock = NSLock()
-    private var continuation: AsyncStream<ChatSessionEvent>.Continuation?
+    private nonisolated(unsafe) var continuation: AsyncStream<ChatSessionEvent>.Continuation?
 
     init(
         sessionStore: AssistantSessionStore,
         personaManager: PersonaManager,
         runtime: CodexRuntime,
         paths: AppPaths,
-        runtimeConfigStore: AppRuntimeConfigStore
+        runtimeConfigStore: AppRuntimeConfigStore,
+        browserControllerProvider: @escaping @MainActor () -> ChromiumBrowserController
     ) {
         self.sessionStore = sessionStore
         self.personaManager = personaManager
         self.runtime = runtime
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
+        self.browserControllerProvider = browserControllerProvider
     }
 
     func loadMessages() throws -> [Message] {
@@ -70,6 +189,14 @@ final class ChatSessionService {
             createdAt: Date()
         )
         try sessionStore.appendMessage(userMessage)
+
+        if let browserIntent = ChatBrowserIntent.parse(text) {
+            try await handleBrowserIntent(browserIntent, session: &session)
+            session.updatedAt = Date()
+            try sessionStore.save(session)
+            emit(.completed)
+            return
+        }
 
         let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
         let launchConfig = CodexLaunchConfig(
@@ -148,6 +275,36 @@ final class ChatSessionService {
         emit(.completed)
     }
 
+    private func handleBrowserIntent(_ intent: ChatBrowserIntent, session: inout AssistantSession) async throws {
+        let browserController = await MainActor.run { browserControllerProvider() }
+        emit(.assistantDelta("Using the embedded Chromium browser to search OpenTable for \(intent.request.venueName)."))
+
+        let result = try await browserController.runRestaurantSearchFlow(request: intent.request) { [weak self] message in
+            self?.emit(.assistantDelta(message))
+        }
+
+        let finalText: String
+        if intent.bookingRequested {
+            finalText = """
+            I opened the exact OpenTable page for \(result.venueName)\(formattedLocationSuffix(result.locationHint)) in the embedded Chromium browser. This chat path is now using the Chromium controller for the venue search and page navigation; reservation selection itself still needs a dedicated controller step on top of the restaurant page.
+            """
+        } else {
+            finalText = """
+            I opened the exact OpenTable page for \(result.venueName)\(formattedLocationSuffix(result.locationHint)) in the embedded Chromium browser.
+            """
+        }
+
+        let assistantMessage = Message(
+            id: UUID(),
+            sessionId: session.id,
+            role: .assistant,
+            text: finalText,
+            source: .codexStdout,
+            createdAt: Date()
+        )
+        try sessionStore.appendMessage(assistantMessage)
+    }
+
     private func buildChatPrompt(userText: String) -> String {
         """
         FORMAT INSTRUCTION:
@@ -208,6 +365,14 @@ final class ChatSessionService {
         self.continuation = nil
         stateLock.unlock()
         continuation?.finish()
+    }
+
+    private func formattedLocationSuffix(_ locationHint: String?) -> String {
+        guard let locationHint,
+              !locationHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ""
+        }
+        return " in \(locationHint)"
     }
 }
 

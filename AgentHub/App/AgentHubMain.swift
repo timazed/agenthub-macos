@@ -4,6 +4,11 @@ import SwiftUI
 @main
 enum AgentHubMain {
     static func main() {
+        let cefExitCode = AHChromiumMaybeRunSubprocess(CommandLine.argc, CommandLine.unsafeArgv)
+        if cefExitCode >= 0 {
+            Foundation.exit(cefExitCode)
+        }
+
         let args = CommandLine.arguments
         appendStartupLog("argv=\(args.joined(separator: " "))")
 
@@ -22,6 +27,7 @@ enum AgentHubMain {
         }
 
         appendStartupLog("entry=gui")
+        AHChromiumInstallApplicationClass()
         AgentHubApp.main()
     }
 

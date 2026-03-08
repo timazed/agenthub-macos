@@ -5,8 +5,10 @@ struct AppShellView: View {
     @StateObject private var chatViewModel: ChatViewModel
     @StateObject private var tasksViewModel: TasksViewModel
     @StateObject private var activityViewModel: ActivityLogViewModel
+    @StateObject private var browserController: ChromiumBrowserController
     @State private var didPerformInitialLoad = false
 
+    @MainActor
     init(container: AppContainer) {
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(
             chatSessionService: container.chatSessionService,
@@ -20,24 +22,16 @@ struct AppShellView: View {
             appExecutableURL: container.appExecutableURL
         ))
         _activityViewModel = StateObject(wrappedValue: ActivityLogViewModel(store: container.activityLogStore))
+        _browserController = StateObject(wrappedValue: container.browserController)
     }
 
     var body: some View {
-        ChatView(
-            viewModel: chatViewModel,
-            isPanelPresented: appViewModel.isPanelPresented,
-            onTogglePanel: { appViewModel.togglePanel() }
-        )
-        .frame(minWidth: 400)
-        .inspector(isPresented: $appViewModel.isPanelPresented) {
-            AssistantPanelView(
-                tasksViewModel: tasksViewModel,
-                activityViewModel: activityViewModel,
-                onClose: { appViewModel.isPanelPresented = false },
-                onAddTask: { appViewModel.openEditor(for: nil) },
-                onEditTask: { task in appViewModel.openEditor(for: task) }
-            )
-            .inspectorColumnWidth(min: 320, ideal: 392, max: 480)
+        HSplitView {
+            assistantWorkspace
+                .frame(minWidth: 360, idealWidth: 560)
+
+            ChromiumPrototypePane(controller: browserController)
+                .frame(minWidth: 340, idealWidth: 480, maxWidth: .infinity)
         }
         .task {
             guard !didPerformInitialLoad else { return }
@@ -75,6 +69,25 @@ struct AppShellView: View {
         }, message: {
             Text(combinedErrorMessage ?? "Unknown error")
         })
+    }
+
+    private var assistantWorkspace: some View {
+        ChatView(
+            viewModel: chatViewModel,
+            isPanelPresented: appViewModel.isPanelPresented,
+            onTogglePanel: { appViewModel.togglePanel() }
+        )
+        .frame(minWidth: 360)
+        .inspector(isPresented: $appViewModel.isPanelPresented) {
+            AssistantPanelView(
+                tasksViewModel: tasksViewModel,
+                activityViewModel: activityViewModel,
+                onClose: { appViewModel.isPanelPresented = false },
+                onAddTask: { appViewModel.openEditor(for: nil) },
+                onEditTask: { task in appViewModel.openEditor(for: task) }
+            )
+            .inspectorColumnWidth(min: 320, ideal: 392, max: 480)
+        }
     }
 
     private var combinedErrorMessage: String? {
