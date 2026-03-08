@@ -36,11 +36,7 @@ struct AppPaths {
         stateDirectory.appendingPathComponent("runtime-config.json")
     }
 
-    var authStateURL: URL {
-        stateDirectory.appendingPathComponent("auth-state.json")
-    }
-
-    var legacyCodexAuthStateURL: URL {
+    var codexAuthStateURL: URL {
         stateDirectory.appendingPathComponent("codex-auth-state.json")
     }
 

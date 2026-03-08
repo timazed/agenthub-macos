@@ -53,7 +53,6 @@ struct AgentHubTests {
             store: authStore,
             providerClient: StubAuthProviderClient(
                 refreshedState: AuthState(
-                    provider: .codex,
                     status: .authenticated,
                     accountLabel: "user@example.com",
                     lastValidatedAt: Date(),

@@ -18,7 +18,6 @@ final class CodexAuthProviderClient: AuthProviderClient {
                 let result = try runtime.checkLoginStatus(codexHome: paths.root.path)
                 let now = Date()
                 return AuthState(
-                    provider: .codex,
                     status: result.isAuthenticated ? .authenticated : .unauthenticated,
                     accountLabel: result.accountEmail,
                     lastValidatedAt: result.isAuthenticated ? now : nil,
@@ -36,7 +35,6 @@ final class CodexAuthProviderClient: AuthProviderClient {
         let result = try runtime.checkLoginStatus(codexHome: paths.root.path)
         let now = Date()
         return AuthState(
-            provider: .codex,
             status: result.isAuthenticated ? .authenticated : .unauthenticated,
             accountLabel: result.accountEmail,
             lastValidatedAt: result.isAuthenticated ? now : nil,

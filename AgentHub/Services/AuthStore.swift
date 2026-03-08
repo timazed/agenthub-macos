@@ -26,14 +26,8 @@ final class AuthStore {
     func loadOrCreateDefault() throws -> AuthState {
         try lock.withLock {
             try paths.prepare(fileManager: fileManager)
-            if fileManager.fileExists(atPath: paths.authStateURL.path) {
+            if fileManager.fileExists(atPath: paths.codexAuthStateURL.path) {
                 return try loadUnlocked()
-            }
-
-            if fileManager.fileExists(atPath: paths.legacyCodexAuthStateURL.path) {
-                let state = try loadLegacyUnlocked()
-                try saveUnlocked(state)
-                return state
             }
 
             let state = AuthState.default()
@@ -55,34 +49,13 @@ final class AuthStore {
     }
 
     private func loadUnlocked() throws -> AuthState {
-        let data = try Data(contentsOf: paths.authStateURL)
+        let data = try Data(contentsOf: paths.codexAuthStateURL)
         return try decoder.decode(AuthState.self, from: data)
-    }
-
-    private func loadLegacyUnlocked() throws -> AuthState {
-        let data = try Data(contentsOf: paths.legacyCodexAuthStateURL)
-        let legacy = try decoder.decode(LegacyCodexAuthState.self, from: data)
-        return AuthState(
-            provider: .codex,
-            status: legacy.status,
-            accountLabel: legacy.accountEmail,
-            lastValidatedAt: legacy.lastValidatedAt,
-            failureReason: legacy.failureReason,
-            updatedAt: legacy.updatedAt
-        )
     }
 
     private func saveUnlocked(_ state: AuthState) throws {
         try paths.prepare(fileManager: fileManager)
         let data = try encoder.encode(state)
-        try data.write(to: paths.authStateURL, options: [.atomic])
+        try data.write(to: paths.codexAuthStateURL, options: [.atomic])
     }
-}
-
-private struct LegacyCodexAuthState: Codable {
-    var status: AuthenticationStatus
-    var accountEmail: String?
-    var lastValidatedAt: Date?
-    var failureReason: String?
-    var updatedAt: Date
 }

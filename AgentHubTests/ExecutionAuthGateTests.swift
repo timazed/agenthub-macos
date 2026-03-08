@@ -88,7 +88,7 @@ struct ExecutionAuthGateTests {
 
 private struct FailingAuthManager: AuthManaging {
     func loadCachedState() throws -> AuthState {
-        AuthState(provider: .codex, status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
+        AuthState(status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
     }
 
     func refreshStatus() throws -> AuthState {

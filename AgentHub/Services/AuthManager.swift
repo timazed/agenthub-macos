@@ -35,7 +35,6 @@ final class AuthManager: AuthManaging {
             return state
         } catch let error as AssistantRuntimeError {
             let state = AuthState(
-                provider: .codex,
                 status: .failed,
                 accountLabel: nil,
                 lastValidatedAt: nil,
@@ -46,7 +45,6 @@ final class AuthManager: AuthManaging {
             throw AuthManagerError.statusCheckFailed(error.localizedDescription)
         } catch {
             let state = AuthState(
-                provider: .codex,
                 status: .failed,
                 accountLabel: nil,
                 lastValidatedAt: nil,

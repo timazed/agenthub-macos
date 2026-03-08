@@ -8,7 +8,6 @@ enum AuthenticationStatus: String, Codable, Hashable {
 }
 
 struct AuthState: Codable, Hashable {
-    var provider: AuthProvider
     var status: AuthenticationStatus
     var accountLabel: String?
     var lastValidatedAt: Date?
@@ -19,9 +18,8 @@ struct AuthState: Codable, Hashable {
         status == .authenticated
     }
 
-    static func `default`(provider: AuthProvider = .codex) -> AuthState {
+    static func `default`() -> AuthState {
         AuthState(
-            provider: provider,
             status: .unknown,
             accountLabel: nil,
             lastValidatedAt: nil,

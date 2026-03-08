@@ -13,7 +13,6 @@ struct AuthManagerTests {
             store: store,
             providerClient: StubAuthProviderClient(
                 refreshedState: AuthState(
-                    provider: .codex,
                     status: .authenticated,
                     accountLabel: "user@example.com",
                     lastValidatedAt: Date(timeIntervalSince1970: 1_700_000_200),
@@ -39,7 +38,6 @@ struct AuthManagerTests {
             store: store,
             providerClient: StubAuthProviderClient(
                 refreshedState: AuthState(
-                    provider: .codex,
                     status: .unauthenticated,
                     accountLabel: nil,
                     lastValidatedAt: nil,
@@ -62,7 +60,6 @@ struct AuthManagerTests {
 private struct StubAuthProviderClient: AuthProviderClient {
     var refreshedState: AuthState
     var challenge: AuthLoginChallenge = AuthLoginChallenge(
-        provider: .codex,
         verificationURL: URL(string: "https://auth.openai.com/codex/device")!,
         userCode: "ABCD-EFGH",
         expiresInMinutes: 15

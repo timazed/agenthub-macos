@@ -1,7 +1,6 @@
 import Foundation
 
 struct AuthLoginChallenge: Equatable {
-    var provider: AuthProvider
     var verificationURL: URL
     var userCode: String
     var expiresInMinutes: Int?

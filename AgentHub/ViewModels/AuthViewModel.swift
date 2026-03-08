@@ -35,40 +35,40 @@ final class AuthViewModel: ObservableObject {
 
     var statusTitle: String {
         if isCheckingStatus {
-            return "Checking \(providerDisplayName) login"
+            return "Checking Codex login"
         }
         switch authState.status {
         case .authenticated:
-            return "\(providerDisplayName) is ready"
+            return "Codex is ready"
         case .failed:
-            return "\(providerDisplayName) login check failed"
+            return "Codex login check failed"
         case .unauthenticated, .unknown:
-            return "Get started with \(providerDisplayName)"
+            return "Get started with Codex"
         }
     }
 
     var statusMessage: String {
         if currentChallenge != nil {
-            return "Open the browser sign-in page, then enter the one-time code below to finish connecting \(providerDisplayName)."
+            return "Open the browser sign-in page, then enter the one-time code below to finish connecting Codex."
         }
         if isAwaitingBrowserCompletion {
-            return "Finish signing in in your browser. AgentHub will continue as soon as \(providerDisplayName) reports that login is complete."
+            return "Finish signing in in your browser. AgentHub will continue as soon as Codex reports that login is complete."
         }
         if isCheckingStatus {
-            return "Validating whether the bundled \(providerDisplayName) CLI can run commands with your account."
+            return "Validating whether the bundled Codex CLI can run commands with your account."
         }
         switch authState.status {
         case .authenticated:
             if let accountLabel {
                 return "Signed in as \(accountLabel)."
             }
-            return "Your \(providerDisplayName) account is authenticated."
+            return "Your Codex account is authenticated."
         case .failed:
-            return authState.failureReason ?? "AgentHub could not validate \(providerDisplayName) login."
+            return authState.failureReason ?? "AgentHub could not validate Codex login."
         case .unauthenticated:
             return "Sign in before using chat or background tasks."
         case .unknown:
-            return "AgentHub needs a \(providerDisplayName) login before it can run commands."
+            return "AgentHub needs a Codex login before it can run commands."
         }
     }
 
@@ -76,12 +76,8 @@ final class AuthViewModel: ObservableObject {
         authState.accountLabel
     }
 
-    var providerDisplayName: String {
-        authState.provider.displayName
-    }
-
     var primaryButtonTitle: String {
-        isBusy ? "Working…" : "Get started with \(providerDisplayName)"
+        isBusy ? "Working…" : "Get started with Codex"
     }
 
     var showsBrowserWaitingCard: Bool {

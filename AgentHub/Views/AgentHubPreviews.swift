@@ -71,7 +71,6 @@ private enum PreviewFactory {
             providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths)
         )
         let state = AuthState(
-            provider: .codex,
             status: authenticated ? .authenticated : .unauthenticated,
             accountLabel: authenticated ? "preview@example.com" : nil,
             lastValidatedAt: authenticated ? Date() : nil,

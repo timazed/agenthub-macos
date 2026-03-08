@@ -20,7 +20,6 @@ struct CodexAuthProviderClientTests {
 
         let state = try client.refreshStatus()
 
-        #expect(state.provider == .codex)
         #expect(state.status == .authenticated)
         #expect(state.accountLabel == "user@example.com")
     }
