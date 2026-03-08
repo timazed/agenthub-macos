@@ -7,7 +7,9 @@ struct CodexLoginGateView: View {
     let onCancelLogin: () -> Void
     let onUseDefaultPersonality: () -> Void
     let onSavePersonality: (String) -> Void
+    let onSaveAgentName: (String) -> Void
     @State private var personalityDraft = ""
+    @State private var agentNameDraft = ""
 
     var body: some View {
         ZStack {
@@ -50,9 +52,12 @@ struct CodexLoginGateView: View {
                     browserWaitingCard
                 }
 
-                if viewModel.currentStep == .persona {
+                switch viewModel.currentStep {
+                case .persona:
                     personaStepCard
-                } else {
+                case .name:
+                    nameStepCard
+                default:
                     authActions
                 }
 
@@ -77,10 +82,10 @@ struct CodexLoginGateView: View {
             .padding(24)
         }
         .onAppear {
-            seedPersonalityDraftIfNeeded()
+            seedDraftsIfNeeded()
         }
         .onChange(of: viewModel.currentStep) { _, _ in
-            seedPersonalityDraftIfNeeded()
+            seedDraftsIfNeeded()
         }
     }
 
@@ -215,10 +220,52 @@ struct CodexLoginGateView: View {
         .frame(maxWidth: 520, alignment: .leading)
     }
 
-    private func seedPersonalityDraftIfNeeded() {
-        guard viewModel.currentStep == .persona else { return }
-        if personalityDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            personalityDraft = viewModel.defaultPersonalityText
+    private var nameStepCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Assistant name")
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.72))
+
+            TextField("Default", text: $agentNameDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.black.opacity(0.28))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
+
+            Text("This name is used as the display name for your default assistant in chat.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.62))
+
+            Button("Continue") {
+                onSaveAgentName(agentNameDraft)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(agentNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .frame(maxWidth: 520, alignment: .leading)
+    }
+
+    private func seedDraftsIfNeeded() {
+        switch viewModel.currentStep {
+        case .persona:
+            if personalityDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                personalityDraft = viewModel.defaultPersonalityText
+            }
+        case .name:
+            if agentNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                agentNameDraft = viewModel.defaultAgentName
+            }
+        default:
+            break
         }
     }
 }

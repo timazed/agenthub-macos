@@ -63,6 +63,10 @@ struct AppShellView: View {
                     onSavePersonality: { personality in
                         authViewModel.savePersonality(personality)
                         performInitialLoadIfNeeded()
+                    },
+                    onSaveAgentName: { name in
+                        authViewModel.saveAgentName(name)
+                        performInitialLoadIfNeeded()
                     }
                 )
                 .frame(minWidth: 400)

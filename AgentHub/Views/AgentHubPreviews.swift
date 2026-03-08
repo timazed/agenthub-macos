@@ -82,6 +82,7 @@ private enum PreviewFactory {
         try? authStore.save(state)
         let onboardingState = OnboardingState(
             hasCompletedOnboarding: onboardingComplete,
+            hasCompletedNameStep: onboardingComplete,
             selectedPersonaId: onboardingComplete ? "default" : nil,
             personalitySource: onboardingComplete ? .default : nil,
             updatedAt: Date()
@@ -256,7 +257,8 @@ private struct LoginGatePreviewHost: View {
             onRetryStatus: {},
             onCancelLogin: {},
             onUseDefaultPersonality: {},
-            onSavePersonality: { _ in }
+            onSavePersonality: { _ in },
+            onSaveAgentName: { _ in }
         )
         .frame(width: 1120, height: 760)
     }
@@ -272,7 +274,8 @@ private struct PersonaGatePreviewHost: View {
             onRetryStatus: {},
             onCancelLogin: {},
             onUseDefaultPersonality: {},
-            onSavePersonality: { _ in }
+            onSavePersonality: { _ in },
+            onSaveAgentName: { _ in }
         )
         .frame(width: 1120, height: 760)
     }

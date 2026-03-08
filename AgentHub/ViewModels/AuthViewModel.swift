@@ -55,7 +55,7 @@ final class AuthViewModel: ObservableObject {
         if isStartingLogin || isAwaitingBrowserCompletion || currentChallenge != nil {
             return "Get started with Codex"
         }
-        if currentStep == .persona {
+        if currentStep == .persona || currentStep == .name {
             return "Set up your assistant"
         }
         switch authState.status {
@@ -80,6 +80,9 @@ final class AuthViewModel: ObservableObject {
         }
         if currentStep == .persona {
             return "One more step: confirm the default assistant personality before entering AgentHub."
+        }
+        if currentStep == .name {
+            return "Last step: choose what AgentHub should call your default assistant."
         }
         switch authState.status {
         case .authenticated:
@@ -110,6 +113,10 @@ final class AuthViewModel: ObservableObject {
 
     var defaultPersonalityText: String {
         onboardingManager.defaultPersonalityText()
+    }
+
+    var defaultAgentName: String {
+        onboardingManager.defaultAgentName()
     }
 
     func performStartupCheckIfNeeded() async {
@@ -189,6 +196,17 @@ final class AuthViewModel: ObservableObject {
 
     func savePersonality(_ personality: String) {
         savePersonality(personality, source: .custom)
+    }
+
+    func saveAgentName(_ name: String) {
+        guard currentStep == .name else { return }
+
+        do {
+            onboardingState = try onboardingManager.completeNameStep(name: name, onboardingState: onboardingState)
+            errorMessage = nil
+        } catch {
+            errorMessage = presentableErrorMessage(from: error.localizedDescription)
+        }
     }
 
     private func presentableErrorMessage(from message: String) -> String {

@@ -9,7 +9,7 @@ final class OnboardingManager {
     init(
         store: OnboardingStore,
         personaManager: PersonaManager,
-        onboardingSteps: [OnboardingStep] = [.codexAuth, .persona]
+        onboardingSteps: [OnboardingStep] = [.codexAuth, .persona, .name]
     ) {
         self.store = store
         self.personaManager = personaManager
@@ -28,11 +28,19 @@ final class OnboardingManager {
         personaManager.defaultPersonalityText()
     }
 
+    func defaultAgentName() -> String {
+        personaManager.defaultAgentName()
+    }
+
     func completePersonaStep(personality: String, source: PersonalitySource) throws -> OnboardingState {
-        _ = try personaManager.upsertDefaultPersona(personality: personality)
+        _ = try personaManager.upsertDefaultPersona(
+            name: personaManager.defaultAgentName(),
+            instructions: personality
+        )
 
         let state = OnboardingState(
-            hasCompletedOnboarding: true,
+            hasCompletedOnboarding: false,
+            hasCompletedNameStep: false,
             selectedPersonaId: "default",
             personalitySource: source,
             updatedAt: Date()
@@ -41,7 +49,23 @@ final class OnboardingManager {
         return state
     }
 
+    func completeNameStep(name: String, onboardingState: OnboardingState) throws -> OnboardingState {
+        try personaManager.updateDefaultPersonaName(name)
+
+        let state = OnboardingState(
+            hasCompletedOnboarding: true,
+            hasCompletedNameStep: true,
+            selectedPersonaId: onboardingState.selectedPersonaId ?? "default",
+            personalitySource: onboardingState.personalitySource,
+            updatedAt: Date()
+        )
+        try store.save(state)
+        return state
+    }
+
     func currentStep(authState: AuthState, onboardingState: OnboardingState) -> OnboardingStep? {
+        let hasCompletedNameStep = onboardingState.hasCompletedNameStep ?? onboardingState.hasCompletedOnboarding
+
         for step in onboardingSteps {
             switch step {
             case .codexAuth:
@@ -49,11 +73,15 @@ final class OnboardingManager {
                     return step
                 }
             case .persona:
-                if authState.isAuthenticated && !onboardingState.hasCompletedOnboarding {
+                if authState.isAuthenticated && onboardingState.personalitySource == nil {
                     return step
                 }
             case .name:
-                continue
+                if authState.isAuthenticated
+                    && onboardingState.personalitySource != nil
+                    && !hasCompletedNameStep {
+                    return step
+                }
             }
         }
 

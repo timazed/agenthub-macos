@@ -27,15 +27,31 @@ final class PersonaManager {
         defaultInstructions
     }
 
-    func upsertDefaultPersona(personality: String) throws -> Persona {
-        let instructions = renderDefaultInstructions(personality: personality)
+    func defaultAgentName() -> String {
+        (try? defaultPersona().name).flatMap { name in
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        } ?? "Default"
+    }
+
+    func upsertDefaultPersona(name: String, instructions: String) throws -> Persona {
+        let trimmedName = normalizeName(name, fallback: defaultAgentName())
 
         if (try? validatePersona(personaId: "default")) != nil {
-            try updatePersona(personaId: "default", name: "Default", instructions: instructions)
+            try updatePersona(personaId: "default", name: trimmedName, instructions: instructions)
             return try validatePersona(personaId: "default")
         }
 
-        return try createPersona(name: "Default", instructions: instructions)
+        return try createPersona(name: trimmedName, instructions: instructions)
+    }
+
+    func updateDefaultPersonaName(_ name: String) throws {
+        let instructions = try loadInstructions(personaId: "default")
+        try updatePersona(
+            personaId: "default",
+            name: normalizeName(name, fallback: defaultAgentName()),
+            instructions: instructions
+        )
     }
 
     func list() throws -> [Persona] {
@@ -146,30 +162,8 @@ final class PersonaManager {
 
     private var defaultInstructions: String {
         """
-        Be concise unless the user asks for depth.
+        You are a concise, accurate assistant.
         Prioritize correctness and actionable output.
-        Ask clarifying questions only when ambiguity would change the result.
-        Keep a pragmatic, grounded tone.
-        """
-    }
-
-    private func renderDefaultInstructions(personality: String) -> String {
-        let normalizedPersonality = personality.trimmingCharacters(in: .whitespacesAndNewlines)
-        let personalityBlock = normalizedPersonality.isEmpty ? defaultInstructions : normalizedPersonality
-
-        return """
-        You are AgentHub's default assistant.
-        Follow the product and safety instructions in this file.
-
-        PERSONALITY:
-        \(personalityBlock)
-
-        DEFAULT BEHAVIOR:
-        - Be concise unless the user asks for depth.
-        - Prefer actionable output over long framing.
-        - Prioritize correctness and actionable output.
-        - Ask clarifying questions only when ambiguity would change the result.
-        - Keep a pragmatic, grounded tone.
         """
     }
 
@@ -188,6 +182,11 @@ final class PersonaManager {
     private func normalizeInstructions(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? defaultInstructions : trimmed + "\n"
+    }
+
+    private func normalizeName(_ value: String, fallback: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     private func slugify(_ text: String) -> String {
