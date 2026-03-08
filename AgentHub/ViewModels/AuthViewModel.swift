@@ -4,6 +4,14 @@ import Foundation
 
 @MainActor
 final class AuthViewModel: ObservableObject {
+    struct OnboardingPresentation: Equatable {
+        let eyebrow: String
+        let title: String
+        let message: String
+        let currentStepNumber: Int
+        let totalSteps: Int
+    }
+
     @Published private(set) var authState: AuthState
     @Published private(set) var onboardingState: OnboardingState
     @Published private(set) var currentChallenge: AuthLoginChallenge?
@@ -117,6 +125,39 @@ final class AuthViewModel: ObservableObject {
 
     var defaultAgentName: String {
         onboardingManager.defaultAgentName()
+    }
+
+    var onboardingPresentation: OnboardingPresentation? {
+        guard let step = currentStep, let progress = onboardingManager.progress(for: step) else {
+            return nil
+        }
+
+        switch step {
+        case .codexAuth:
+            return OnboardingPresentation(
+                eyebrow: "Step \(progress.current) of \(progress.total)",
+                title: "Connect Codex to unlock AgentHub",
+                message: "Sign in once and AgentHub can move from setup into your assistant home with chat and background work ready.",
+                currentStepNumber: progress.current,
+                totalSteps: progress.total
+            )
+        case .persona:
+            return OnboardingPresentation(
+                eyebrow: "Step \(progress.current) of \(progress.total)",
+                title: "Shape the assistant you want to work with",
+                message: "Set the default instructions for the assistant that will power chat and scheduled work from the moment you enter the app.",
+                currentStepNumber: progress.current,
+                totalSteps: progress.total
+            )
+        case .name:
+            return OnboardingPresentation(
+                eyebrow: "Step \(progress.current) of \(progress.total)",
+                title: "Name the assistant before you enter home",
+                message: "Choose the display name that carries into the main coordinator flow so the handoff feels intentional instead of generic.",
+                currentStepNumber: progress.current,
+                totalSteps: progress.total
+            )
+        }
     }
 
     func performStartupCheckIfNeeded() async {

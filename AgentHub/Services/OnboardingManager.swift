@@ -1,6 +1,11 @@
 import Foundation
 
 final class OnboardingManager {
+    struct Progress: Equatable {
+        let current: Int
+        let total: Int
+    }
+
     let onboardingSteps: [OnboardingStep]
 
     private let store: OnboardingStore
@@ -30,6 +35,13 @@ final class OnboardingManager {
 
     func defaultAgentName() -> String {
         personaManager.defaultAgentName()
+    }
+
+    func progress(for step: OnboardingStep?) -> Progress? {
+        guard let step, let index = onboardingSteps.firstIndex(of: step) else {
+            return nil
+        }
+        return Progress(current: index + 1, total: onboardingSteps.count)
     }
 
     func completePersonaStep(personality: String, source: PersonalitySource) throws -> OnboardingState {
