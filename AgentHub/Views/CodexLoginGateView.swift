@@ -5,6 +5,14 @@ struct CodexLoginGateView: View {
     let onStartLogin: () -> Void
     let onRetryStatus: () -> Void
     let onCancelLogin: () -> Void
+    let onUseDefaultPersonality: () -> Void
+    let onSavePersonality: (String) -> Void
+    @State private var personalityDraft = """
+    Be concise unless the user asks for depth.
+    Prioritize correctness and actionable output.
+    Ask clarifying questions only when ambiguity would change the result.
+    Keep a pragmatic, grounded tone.
+    """
 
     var body: some View {
         ZStack {
@@ -47,29 +55,11 @@ struct CodexLoginGateView: View {
                     browserWaitingCard
                 }
 
-                VStack(spacing: 12) {
-                    Button(action: onStartLogin) {
-                        Text(viewModel.primaryButtonTitle)
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(viewModel.isBusy)
-
-                    HStack(spacing: 12) {
-                        Button("Check again", action: onRetryStatus)
-                            .buttonStyle(.bordered)
-                            .disabled(viewModel.isBusy)
-
-                        if viewModel.isAwaitingBrowserCompletion {
-                            Button("Cancel", action: onCancelLogin)
-                                .buttonStyle(.bordered)
-                        }
-                    }
+                if viewModel.currentStep == .persona {
+                    personaStepCard
+                } else {
+                    authActions
                 }
-                .frame(maxWidth: 360)
 
                 if let errorMessage = viewModel.errorMessage {
                     Text(errorMessage)
@@ -91,6 +81,32 @@ struct CodexLoginGateView: View {
             )
             .padding(24)
         }
+    }
+
+    private var authActions: some View {
+        VStack(spacing: 12) {
+            Button(action: onStartLogin) {
+                Text(viewModel.primaryButtonTitle)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(viewModel.isBusy)
+
+            HStack(spacing: 12) {
+                Button("Check again", action: onRetryStatus)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.isBusy)
+
+                if viewModel.isAwaitingBrowserCompletion {
+                    Button("Cancel", action: onCancelLogin)
+                        .buttonStyle(.bordered)
+                }
+            }
+        }
+        .frame(maxWidth: 360)
     }
 
     private func challengeCard(_ challenge: AuthLoginChallenge) -> some View {
@@ -158,5 +174,43 @@ struct CodexLoginGateView: View {
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
+    }
+
+    private var personaStepCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Default personality")
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.72))
+
+            TextEditor(text: $personalityDraft)
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+                .scrollContentBackground(.hidden)
+                .foregroundStyle(.white)
+                .frame(minHeight: 180)
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.black.opacity(0.28))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
+
+            Text("This text defines the starting personality for the default assistant. You can keep it as-is or customize it now.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.62))
+
+            HStack(spacing: 12) {
+                Button("Use default", action: onUseDefaultPersonality)
+                    .buttonStyle(.bordered)
+
+                Button("Continue") {
+                    onSavePersonality(personalityDraft)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(maxWidth: 520, alignment: .leading)
     }
 }

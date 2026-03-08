@@ -60,7 +60,7 @@ private enum PreviewFactory {
     }
 
     @MainActor
-    static func makeAuthViewModel(authenticated: Bool) -> AuthViewModel {
+    static func makeAuthViewModel(authenticated: Bool, onboardingComplete: Bool = false) -> AuthViewModel {
         let paths = makePaths()
         try? paths.prepare()
 
@@ -80,7 +80,13 @@ private enum PreviewFactory {
             updatedAt: Date()
         )
         try? authStore.save(state)
-        let onboardingState = (try? onboardingStore.loadOrCreateDefault()) ?? .default()
+        let onboardingState = OnboardingState(
+            hasCompletedOnboarding: onboardingComplete,
+            selectedPersonaId: onboardingComplete ? "default" : nil,
+            personalitySource: onboardingComplete ? .default : nil,
+            updatedAt: Date()
+        )
+        try? onboardingStore.save(onboardingState)
 
         return AuthViewModel(
             authManager: authManager,
@@ -248,7 +254,25 @@ private struct LoginGatePreviewHost: View {
             viewModel: viewModel,
             onStartLogin: {},
             onRetryStatus: {},
-            onCancelLogin: {}
+            onCancelLogin: {},
+            onUseDefaultPersonality: {},
+            onSavePersonality: { _ in }
+        )
+        .frame(width: 1120, height: 760)
+    }
+}
+
+private struct PersonaGatePreviewHost: View {
+    @StateObject private var viewModel = PreviewFactory.makeAuthViewModel(authenticated: true, onboardingComplete: false)
+
+    var body: some View {
+        CodexLoginGateView(
+            viewModel: viewModel,
+            onStartLogin: {},
+            onRetryStatus: {},
+            onCancelLogin: {},
+            onUseDefaultPersonality: {},
+            onSavePersonality: { _ in }
         )
         .frame(width: 1120, height: 760)
     }
@@ -307,5 +331,12 @@ struct LoginGatePreview: PreviewProvider {
     static var previews: some View {
         LoginGatePreviewHost()
             .previewDisplayName("Codex Login Gate")
+    }
+}
+
+struct PersonaGatePreview: PreviewProvider {
+    static var previews: some View {
+        PersonaGatePreviewHost()
+            .previewDisplayName("Persona Gate")
     }
 }
