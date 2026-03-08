@@ -14,7 +14,6 @@ struct TaskEditorSheetView: View {
 
     init(
         task: TaskRecord?,
-        defaultProvider: AuthProvider = .codex,
         onSave: @escaping (TaskRecord, Bool) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -26,8 +25,7 @@ struct TaskEditorSheetView: View {
             scheduleType: .manual,
             scheduleValue: "",
             state: .scheduled,
-            provider: defaultProvider,
-            providerThreadID: nil,
+            codexThreadId: nil,
             personaId: "default",
             runtimeMode: .chatOnly,
             repoPath: nil,

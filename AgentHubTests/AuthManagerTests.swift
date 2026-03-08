@@ -60,8 +60,6 @@ struct AuthManagerTests {
 }
 
 private struct StubAuthProviderClient: AuthProviderClient {
-    let provider: AuthProvider = .codex
-    let capabilities = ProviderCapabilities.available(authMethods: [.browser])
     var refreshedState: AuthState
     var challenge: AuthLoginChallenge = AuthLoginChallenge(
         provider: .codex,

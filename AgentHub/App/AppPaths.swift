@@ -12,10 +12,8 @@ struct AppPaths {
         root.appendingPathComponent("assistant", isDirectory: true)
     }
 
-    func mainAssistantDirectory(for provider: AuthProvider) -> URL {
-        assistantDirectory
-            .appendingPathComponent(provider.rawValue, isDirectory: true)
-            .appendingPathComponent("main-session", isDirectory: true)
+    var mainAssistantDirectory: URL {
+        assistantDirectory.appendingPathComponent("main-session", isDirectory: true)
     }
 
     var tasksDirectory: URL {
@@ -38,12 +36,8 @@ struct AppPaths {
         stateDirectory.appendingPathComponent("runtime-config.json")
     }
 
-    var legacyAuthStateURL: URL {
+    var authStateURL: URL {
         stateDirectory.appendingPathComponent("auth-state.json")
-    }
-
-    func authStateURL(for provider: AuthProvider) -> URL {
-        stateDirectory.appendingPathComponent("auth-state-\(provider.rawValue).json")
     }
 
     var legacyCodexAuthStateURL: URL {
@@ -74,12 +68,12 @@ struct AppPaths {
         tasksDirectory.appendingPathComponent("runs.ndjson")
     }
 
-    func assistantMetadataURL(for provider: AuthProvider) -> URL {
-        mainAssistantDirectory(for: provider).appendingPathComponent("metadata.json")
+    var assistantMetadataURL: URL {
+        mainAssistantDirectory.appendingPathComponent("metadata.json")
     }
 
-    func assistantTranscriptURL(for provider: AuthProvider) -> URL {
-        mainAssistantDirectory(for: provider).appendingPathComponent("transcript.ndjson")
+    var assistantTranscriptURL: URL {
+        mainAssistantDirectory.appendingPathComponent("transcript.ndjson")
     }
 
     static func defaultRoot() -> URL {
@@ -97,9 +91,7 @@ struct AppPaths {
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: personasDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: assistantDirectory, withIntermediateDirectories: true)
-        for provider in AuthProvider.allCases {
-            try fileManager.createDirectory(at: mainAssistantDirectory(for: provider), withIntermediateDirectories: true)
-        }
+        try fileManager.createDirectory(at: mainAssistantDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: tasksDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: stateDirectory, withIntermediateDirectories: true)

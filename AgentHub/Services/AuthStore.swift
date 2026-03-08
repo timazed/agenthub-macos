@@ -23,35 +23,28 @@ final class AuthStore {
         self.lock = FileLock(lockURL: paths.stateDirectory.appendingPathComponent("auth.lock"))
     }
 
-    func loadOrCreateDefault(provider: AuthProvider = .codex) throws -> AuthState {
+    func loadOrCreateDefault() throws -> AuthState {
         try lock.withLock {
             try paths.prepare(fileManager: fileManager)
-            let authURL = paths.authStateURL(for: provider)
-            if fileManager.fileExists(atPath: authURL.path) {
-                return try loadUnlocked(provider: provider)
+            if fileManager.fileExists(atPath: paths.authStateURL.path) {
+                return try loadUnlocked()
             }
 
-            if provider == .codex, fileManager.fileExists(atPath: paths.legacyAuthStateURL.path) {
-                let state = try loadLegacyCurrentUnlocked()
-                try saveUnlocked(state)
-                return state
-            }
-
-            if provider == .codex, fileManager.fileExists(atPath: paths.legacyCodexAuthStateURL.path) {
+            if fileManager.fileExists(atPath: paths.legacyCodexAuthStateURL.path) {
                 let state = try loadLegacyUnlocked()
                 try saveUnlocked(state)
                 return state
             }
 
-            let state = AuthState.default(provider: provider)
+            let state = AuthState.default()
             try saveUnlocked(state)
             return state
         }
     }
 
-    func load(provider: AuthProvider = .codex) throws -> AuthState {
+    func load() throws -> AuthState {
         try lock.withLock {
-            try loadUnlocked(provider: provider)
+            try loadUnlocked()
         }
     }
 
@@ -61,13 +54,8 @@ final class AuthStore {
         }
     }
 
-    private func loadUnlocked(provider: AuthProvider) throws -> AuthState {
-        let data = try Data(contentsOf: paths.authStateURL(for: provider))
-        return try decoder.decode(AuthState.self, from: data)
-    }
-
-    private func loadLegacyCurrentUnlocked() throws -> AuthState {
-        let data = try Data(contentsOf: paths.legacyAuthStateURL)
+    private func loadUnlocked() throws -> AuthState {
+        let data = try Data(contentsOf: paths.authStateURL)
         return try decoder.decode(AuthState.self, from: data)
     }
 
@@ -87,7 +75,7 @@ final class AuthStore {
     private func saveUnlocked(_ state: AuthState) throws {
         try paths.prepare(fileManager: fileManager)
         let data = try encoder.encode(state)
-        try data.write(to: paths.authStateURL(for: state.provider), options: [.atomic])
+        try data.write(to: paths.authStateURL, options: [.atomic])
     }
 }
 

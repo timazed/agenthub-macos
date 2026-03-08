@@ -11,31 +11,32 @@ enum ChatSessionEvent {
 final class ChatSessionService {
     private let sessionStore: AssistantSessionStore
     private let personaManager: PersonaManager
+    private let runtime: AssistantRuntime
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
-    private let providerRegistry: ProviderRegistry
+    private let authManager: AuthManaging
 
     private let stateLock = NSLock()
     private var continuation: AsyncStream<ChatSessionEvent>.Continuation?
-    private var currentRuntime: AssistantRuntime?
 
     init(
         sessionStore: AssistantSessionStore,
         personaManager: PersonaManager,
+        runtime: AssistantRuntime,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
-        providerRegistry: ProviderRegistry
+        authManager: AuthManaging
     ) {
         self.sessionStore = sessionStore
         self.personaManager = personaManager
+        self.runtime = runtime
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
-        self.providerRegistry = providerRegistry
+        self.authManager = authManager
     }
 
     func loadMessages() throws -> [Message] {
-        let provider = providerRegistry.currentProvider()
-        return try sessionStore.loadMessages(provider: provider)
+        try sessionStore.loadMessages()
     }
 
     func streamEvents() -> AsyncStream<ChatSessionEvent> {
@@ -54,25 +55,15 @@ final class ChatSessionService {
     }
 
     func cancelCurrentRun() throws {
-        stateLock.lock()
-        let runtime = currentRuntime
-        stateLock.unlock()
-        try runtime?.cancelCurrentRun()
+        try runtime.cancelCurrentRun()
     }
 
     func sendUserMessage(_ text: String) async throws {
-        defer {
-            finishStream()
-            setCurrentRuntime(nil)
-        }
-
-        let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
-        let provider = providerRegistry.currentProvider()
-        let authManager = providerRegistry.makeAuthManager(for: provider)
+        defer { finishStream() }
         try authManager.requireAuthenticated()
 
         let persona = try personaManager.defaultPersona()
-        var session = try sessionStore.loadOrCreateDefault(personaId: persona.id, provider: provider)
+        var session = try sessionStore.loadOrCreateDefault(personaId: persona.id)
 
         let userMessage = Message(
             id: UUID(),
@@ -82,8 +73,9 @@ final class ChatSessionService {
             source: .userInput,
             createdAt: Date()
         )
-        try sessionStore.appendMessage(userMessage, provider: provider)
+        try sessionStore.appendMessage(userMessage)
 
+        let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
         let launchConfig = AssistantLaunchConfig(
             agentHomeDirectory: persona.directoryPath,
             codexHome: paths.root.path,
@@ -94,8 +86,6 @@ final class ChatSessionService {
             reasoningEffort: runtimeConfig.reasoningEffort
         )
 
-        let runtime = providerRegistry.makeRuntime(for: provider)
-        setCurrentRuntime(runtime)
         let prompt = buildChatPrompt(userText: text)
         let runtimeStream = runtime.streamEvents()
 
@@ -112,7 +102,7 @@ final class ChatSessionService {
                     stderrText += stderrText.isEmpty ? line : "\n\(line)"
                     emit(.stderr(line))
                 case let .threadIdentified(threadId):
-                    session.providerThreadID = threadId
+                    session.codexThreadId = threadId
                     session.updatedAt = Date()
                     try? sessionStore.save(session)
                 case .started, .completed:
@@ -124,12 +114,12 @@ final class ChatSessionService {
         }
 
         let result: AssistantExecutionResult
-        if let threadId = session.providerThreadID {
+        if let threadId = session.codexThreadId {
             result = try await runtime.resumeThread(threadId: threadId, prompt: prompt, config: launchConfig)
         } else {
             result = try await runtime.startNewThread(prompt: prompt, config: launchConfig)
             if let threadId = result.threadId {
-                session.providerThreadID = threadId
+                session.codexThreadId = threadId
             }
         }
 
@@ -147,7 +137,7 @@ final class ChatSessionService {
             source: .codexStdout,
             createdAt: Date()
         )
-        try sessionStore.appendMessage(assistantMessage, provider: provider)
+        try sessionStore.appendMessage(assistantMessage)
 
         if let proposal = parsed.proposal {
             emit(.proposal(proposal))
@@ -222,12 +212,6 @@ final class ChatSessionService {
         self.continuation = nil
         stateLock.unlock()
         continuation?.finish()
-    }
-
-    private func setCurrentRuntime(_ runtime: AssistantRuntime?) {
-        stateLock.lock()
-        currentRuntime = runtime
-        stateLock.unlock()
     }
 }
 

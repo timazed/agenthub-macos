@@ -8,7 +8,8 @@ final class TaskOrchestrator {
     private let workspaceManager: WorkspaceManager
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
-    private let providerRegistry: ProviderRegistry
+    private let authManager: AuthManaging
+    private let runtimeFactory: () -> AssistantRuntime
     private let runningLock = NSLock()
     private var runningTaskIDs = Set<UUID>()
 
@@ -20,7 +21,8 @@ final class TaskOrchestrator {
         workspaceManager: WorkspaceManager,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
-        providerRegistry: ProviderRegistry
+        authManager: AuthManaging,
+        runtimeFactory: @escaping () -> AssistantRuntime
     ) {
         self.taskStore = taskStore
         self.taskRunStore = taskRunStore
@@ -29,7 +31,8 @@ final class TaskOrchestrator {
         self.workspaceManager = workspaceManager
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
-        self.providerRegistry = providerRegistry
+        self.authManager = authManager
+        self.runtimeFactory = runtimeFactory
     }
 
     func loadTasks() throws -> [TaskRecord] {
@@ -44,8 +47,6 @@ final class TaskOrchestrator {
     @discardableResult
     func createTask(from proposal: TaskProposal) async throws -> TaskRecord {
         let now = Date()
-        let provider = providerRegistry.currentProvider()
-        try ensureTaskSupport(for: provider)
         var task = TaskRecord(
             id: UUID(),
             title: proposal.title,
@@ -53,8 +54,7 @@ final class TaskOrchestrator {
             scheduleType: proposal.scheduleType,
             scheduleValue: proposal.scheduleValue,
             state: .scheduled,
-            provider: provider,
-            providerThreadID: nil,
+            codexThreadId: nil,
             personaId: "default",
             runtimeMode: proposal.runtimeMode,
             repoPath: proposal.externalDirectoryPath,
@@ -92,27 +92,19 @@ final class TaskOrchestrator {
 
     @discardableResult
     func runTask(taskId: UUID) async throws -> TaskRecord {
-        guard let existingTask = try taskStore.find(taskId: taskId) else {
-            throw NSError(domain: "TaskOrchestrator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Task not found"])
-        }
-        do {
-            try ensureTaskSupport(for: existingTask.provider)
-        } catch {
-            try? updateTaskForBlockedRun(taskId: taskId, message: error.localizedDescription)
-            throw error
-        }
-        let authManager = providerRegistry.makeAuthManager(for: existingTask.provider)
         do {
             try authManager.requireAuthenticated()
         } catch {
-            try? updateTaskForBlockedRun(taskId: taskId, message: error.localizedDescription)
+            try? updateTaskForAuthFailure(taskId: taskId, message: error.localizedDescription)
             throw error
         }
 
         try beginRunning(taskId: taskId)
         defer { finishRunning(taskId: taskId) }
 
-        var task = existingTask
+        guard var task = try taskStore.find(taskId: taskId) else {
+            throw NSError(domain: "TaskOrchestrator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Task not found"])
+        }
 
         let now = Date()
         task = try taskStore.update(taskId: task.id) { current in
@@ -134,12 +126,12 @@ final class TaskOrchestrator {
             reasoningEffort: runtimeConfig.reasoningEffort
         )
 
-        let runtime = providerRegistry.makeRuntime(for: task.provider)
+        let runtime = runtimeFactory()
         let prompt: String
         let result: AssistantExecutionResult
         let startedAt = Date()
 
-        if let threadId = task.providerThreadID {
+        if let threadId = task.codexThreadId {
             prompt = buildRecurringPrompt(for: task)
             result = try await runtime.resumeThread(threadId: threadId, prompt: prompt, config: launchConfig)
         } else {
@@ -154,7 +146,7 @@ final class TaskOrchestrator {
             : nil
 
         let updated = try taskStore.update(taskId: task.id) { current in
-            current.providerThreadID = current.providerThreadID ?? result.threadId
+            current.codexThreadId = current.codexThreadId ?? result.threadId
             current.state = nextState
             current.lastRun = finishedAt
             current.nextRun = nextRun
@@ -164,7 +156,7 @@ final class TaskOrchestrator {
         let runRecord = TaskRunRecord(
             id: UUID(),
             taskId: task.id,
-            providerThreadID: updated.providerThreadID,
+            codexThreadId: updated.codexThreadId,
             startedAt: startedAt,
             finishedAt: finishedAt,
             exitCode: result.exitCode,
@@ -216,7 +208,7 @@ final class TaskOrchestrator {
     @discardableResult
     func reinitializeThread(taskId: UUID) throws -> TaskRecord {
         let updated = try taskStore.update(taskId: taskId) { current in
-            current.providerThreadID = nil
+            current.codexThreadId = nil
             current.state = .scheduled
             current.lastError = nil
             current.nextRun = computeNextRun(after: Date(), scheduleType: current.scheduleType, scheduleValue: current.scheduleValue)
@@ -255,18 +247,7 @@ final class TaskOrchestrator {
         return "\(task.title) completed a run"
     }
 
-    private func ensureTaskSupport(for provider: AuthProvider) throws {
-        let capabilities = providerRegistry.capabilities(for: provider)
-        guard capabilities.supportsScheduledTasks else {
-            throw NSError(
-                domain: "TaskOrchestrator",
-                code: 4,
-                userInfo: [NSLocalizedDescriptionKey: "\(provider.displayName) tasks are not supported yet."]
-            )
-        }
-    }
-
-    private func updateTaskForBlockedRun(taskId: UUID, message: String) throws {
+    private func updateTaskForAuthFailure(taskId: UUID, message: String) throws {
         let updated = try taskStore.update(taskId: taskId) { current in
             current.state = .error
             current.lastError = message

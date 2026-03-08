@@ -22,8 +22,7 @@ struct TaskRecord: Identifiable, Codable, Hashable {
     var scheduleType: TaskScheduleType
     var scheduleValue: String
     var state: TaskState
-    var provider: AuthProvider
-    var providerThreadID: String?
+    var codexThreadId: String?
     var personaId: String
     var runtimeMode: RuntimeMode
     var repoPath: String?

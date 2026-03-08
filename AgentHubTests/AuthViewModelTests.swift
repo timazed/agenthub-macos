@@ -31,7 +31,6 @@ struct AuthViewModelTests {
     func refreshStatusSurfacesUnauthenticatedState() async throws {
         let viewModel = AuthViewModel(
             authManager: AuthViewModelStubManager(
-                capabilities: .available(authMethods: [.browser]),
                 refreshedState: AuthState(
                     provider: .codex,
                     status: .unauthenticated,
@@ -53,34 +52,9 @@ struct AuthViewModelTests {
     }
 
     @Test
-    func claudeAuthenticatedStateUnlocksAppWhenChatIsSupported() async throws {
-        let viewModel = AuthViewModel(
-            authManager: AuthViewModelStubManager(
-                capabilities: .available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false),
-                refreshedState: AuthState(
-                    provider: .claude,
-                    status: .authenticated,
-                    accountLabel: "user@example.com",
-                    lastValidatedAt: Date(),
-                    failureReason: nil,
-                    updatedAt: Date()
-                )
-            ),
-            initialState: .default(provider: .claude),
-            openURL: { _ in true }
-        )
-
-        await viewModel.refreshStatus()
-
-        #expect(viewModel.canUseApp)
-        #expect(viewModel.statusTitle == "Claude is ready")
-    }
-
-    @Test
     func beginLoginWithoutChallengeShowsBrowserWaitingState() async throws {
         let viewModel = AuthViewModel(
             authManager: AuthViewModelStubManager(
-                capabilities: .available(authMethods: [.browser]),
                 refreshedState: AuthState(
                     provider: .codex,
                     status: .authenticated,
@@ -117,7 +91,6 @@ struct AuthViewModelTests {
 }
 
 private struct AuthViewModelStubManager: AuthManaging {
-    var capabilities: ProviderCapabilities = .available(authMethods: [.browser])
     var refreshedState: AuthState
     var challenge: AuthLoginChallenge? = AuthLoginChallenge(
         provider: .codex,
@@ -126,9 +99,6 @@ private struct AuthViewModelStubManager: AuthManaging {
         expiresInMinutes: 15
     )
     var loginDelayNanoseconds: UInt64 = 0
-
-    var currentProvider: AuthProvider { refreshedState.provider }
-    var availableProviders: [AuthProvider] { [.codex, .claude] }
 
     func loadCachedState() throws -> AuthState {
         refreshedState
@@ -142,17 +112,6 @@ private struct AuthViewModelStubManager: AuthManaging {
         if !refreshedState.isAuthenticated {
             throw AuthManagerError.unauthenticated(refreshedState.failureReason)
         }
-    }
-
-    func selectProvider(_ provider: AuthProvider) throws -> AuthState {
-        AuthState(
-            provider: provider,
-            status: refreshedState.status,
-            accountLabel: refreshedState.accountLabel,
-            lastValidatedAt: refreshedState.lastValidatedAt,
-            failureReason: refreshedState.failureReason,
-            updatedAt: refreshedState.updatedAt
-        )
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {

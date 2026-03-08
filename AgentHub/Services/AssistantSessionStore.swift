@@ -29,19 +29,18 @@ final class AssistantSessionStore {
         self.lock = FileLock(lockURL: paths.stateDirectory.appendingPathComponent("assistant-session.lock"))
     }
 
-    func loadOrCreateDefault(personaId: String, provider: AuthProvider) throws -> AssistantSession {
+    func loadOrCreateDefault(personaId: String) throws -> AssistantSession {
         try lock.withLock {
             try paths.prepare(fileManager: fileManager)
 
-            if fileManager.fileExists(atPath: paths.assistantMetadataURL(for: provider).path) {
-                return try loadUnlocked(provider: provider)
+            if fileManager.fileExists(atPath: paths.assistantMetadataURL.path) {
+                return try loadUnlocked()
             }
 
             let now = Date()
             let session = AssistantSession(
                 id: UUID(),
-                provider: provider,
-                providerThreadID: nil,
+                codexThreadId: nil,
                 personaId: personaId,
                 mode: .chatOnly,
                 createdAt: now,
@@ -58,35 +57,30 @@ final class AssistantSessionStore {
         }
     }
 
-    func loadMessages(provider: AuthProvider) throws -> [Message] {
+    func loadMessages() throws -> [Message] {
         try lock.withLock {
-            let transcriptURL = paths.assistantTranscriptURL(for: provider)
-            if fileManager.fileExists(atPath: transcriptURL.path) {
-                return try readMessages(from: transcriptURL)
-            }
-            return []
+            guard fileManager.fileExists(atPath: paths.assistantTranscriptURL.path) else { return [] }
+            return try readMessages(from: paths.assistantTranscriptURL)
         }
     }
 
-    func appendMessage(_ message: Message, provider: AuthProvider) throws {
+    func appendMessage(_ message: Message) throws {
         try lock.withLock {
-            try append(message: message, to: paths.assistantTranscriptURL(for: provider))
+            try append(message: message, to: paths.assistantTranscriptURL)
         }
     }
 
-    private func loadUnlocked(provider: AuthProvider) throws -> AssistantSession {
-        let data = try Data(contentsOf: paths.assistantMetadataURL(for: provider))
+    private func loadUnlocked() throws -> AssistantSession {
+        let data = try Data(contentsOf: paths.assistantMetadataURL)
         return try decoder.decode(AssistantSession.self, from: data)
     }
 
     private func saveUnlocked(_ session: AssistantSession) throws {
         try paths.prepare(fileManager: fileManager)
         let data = try metadataEncoder.encode(session)
-        let metadataURL = paths.assistantMetadataURL(for: session.provider)
-        let transcriptURL = paths.assistantTranscriptURL(for: session.provider)
-        try data.write(to: metadataURL, options: [.atomic])
-        if !fileManager.fileExists(atPath: transcriptURL.path) {
-            try Data().write(to: transcriptURL, options: [.atomic])
+        try data.write(to: paths.assistantMetadataURL, options: [.atomic])
+        if !fileManager.fileExists(atPath: paths.assistantTranscriptURL.path) {
+            try Data().write(to: paths.assistantTranscriptURL, options: [.atomic])
         }
     }
 

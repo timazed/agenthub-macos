@@ -23,20 +23,8 @@ final class AuthManager: AuthManaging {
         self.providerClient = providerClient
     }
 
-    var currentProvider: AuthProvider {
-        providerClient.provider
-    }
-
-    var availableProviders: [AuthProvider] {
-        [providerClient.provider]
-    }
-
-    var capabilities: ProviderCapabilities {
-        providerClient.capabilities
-    }
-
     func loadCachedState() throws -> AuthState {
-        try store.loadOrCreateDefault(provider: providerClient.provider)
+        try store.loadOrCreateDefault()
     }
 
     @discardableResult
@@ -47,7 +35,7 @@ final class AuthManager: AuthManaging {
             return state
         } catch let error as AssistantRuntimeError {
             let state = AuthState(
-                provider: providerClient.provider,
+                provider: .codex,
                 status: .failed,
                 accountLabel: nil,
                 lastValidatedAt: nil,
@@ -58,7 +46,7 @@ final class AuthManager: AuthManaging {
             throw AuthManagerError.statusCheckFailed(error.localizedDescription)
         } catch {
             let state = AuthState(
-                provider: providerClient.provider,
+                provider: .codex,
                 status: .failed,
                 accountLabel: nil,
                 lastValidatedAt: nil,
@@ -75,14 +63,6 @@ final class AuthManager: AuthManaging {
         guard state.isAuthenticated else {
             throw AuthManagerError.unauthenticated(state.failureReason)
         }
-    }
-
-    @discardableResult
-    func selectProvider(_ provider: AuthProvider) throws -> AuthState {
-        guard provider == providerClient.provider else {
-            throw AuthManagerError.statusCheckFailed("Unsupported provider: \(provider.displayName)")
-        }
-        return try loadCachedState()
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {

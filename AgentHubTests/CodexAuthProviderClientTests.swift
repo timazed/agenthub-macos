@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct CodexAuthProviderClientTests {
     @Test
-    func refreshStatusMapsRuntimeStateToGenericAuthState() throws {
+    func refreshStatusMapsRuntimeStateToAuthState() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let client = CodexAuthProviderClient(
             runtime: StubProviderRuntime(

@@ -10,14 +10,12 @@ final class ChatViewModel: ObservableObject {
     @Published var pendingProposal: TaskProposal?
     @Published private(set) var activeModel = "gpt-5.4"
     @Published private(set) var activeReasoning = "Medium"
-    @Published private(set) var activeProviderName = AuthProvider.codex.displayName
     @Published private(set) var agentName = "Agent"
     @Published private(set) var agentProfilePictureURL: String?
 
     private let chatSessionService: ChatSessionService
     private let taskOrchestrator: TaskOrchestrator
     private let runtimeConfigStore: AppRuntimeConfigStore
-    private let providerRegistry: ProviderRegistry
     private let personaManager: PersonaManager
 
     private var streamTask: Task<Void, Never>?
@@ -27,20 +25,18 @@ final class ChatViewModel: ObservableObject {
     var onActivityChanged: (() -> Void)?
 
     var runtimeDescriptor: String {
-        "\(activeProviderName) · \(activeModel) · \(activeReasoning) reasoning"
+        "\(activeModel) · \(activeReasoning) reasoning"
     }
 
     init(
         chatSessionService: ChatSessionService,
         taskOrchestrator: TaskOrchestrator,
         runtimeConfigStore: AppRuntimeConfigStore,
-        providerRegistry: ProviderRegistry,
         personaManager: PersonaManager
     ) {
         self.chatSessionService = chatSessionService
         self.taskOrchestrator = taskOrchestrator
         self.runtimeConfigStore = runtimeConfigStore
-        self.providerRegistry = providerRegistry
         self.personaManager = personaManager
         loadRuntimeConfig()
         loadPersonaProfile()
@@ -174,7 +170,6 @@ final class ChatViewModel: ObservableObject {
     private func loadRuntimeConfig() {
         do {
             let config = try runtimeConfigStore.loadOrCreateDefault()
-            activeProviderName = providerRegistry.currentProvider().displayName
             activeModel = config.model
             activeReasoning = config.reasoningEffort.displayName
         } catch {

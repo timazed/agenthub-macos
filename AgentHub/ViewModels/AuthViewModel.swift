@@ -29,38 +29,16 @@ final class AuthViewModel: ObservableObject {
         authState.isAuthenticated
     }
 
-    var currentProvider: AuthProvider {
-        authState.provider
-    }
-
-    var availableProviders: [AuthProvider] {
-        authManager.availableProviders
-    }
-
-    var canStartLogin: Bool {
-        authManager.capabilities.isAvailable && !authManager.capabilities.authMethods.isEmpty
-    }
-
-    var canUseApp: Bool {
-        authState.isAuthenticated && authManager.capabilities.supportsChat
-    }
-
     var isBusy: Bool {
         isCheckingStatus || isStartingLogin || isAwaitingBrowserCompletion
     }
 
     var statusTitle: String {
-        if !authManager.capabilities.isAvailable {
-            return "\(providerDisplayName) is unavailable"
-        }
         if isCheckingStatus {
             return "Checking \(providerDisplayName) login"
         }
         switch authState.status {
         case .authenticated:
-            if !authManager.capabilities.supportsChat {
-                return "\(providerDisplayName) is connected"
-            }
             return "\(providerDisplayName) is ready"
         case .failed:
             return "\(providerDisplayName) login check failed"
@@ -70,9 +48,6 @@ final class AuthViewModel: ObservableObject {
     }
 
     var statusMessage: String {
-        if let message = authManager.capabilities.availabilityMessage, !authManager.capabilities.isAvailable {
-            return message
-        }
         if currentChallenge != nil {
             return "Open the browser sign-in page, then enter the one-time code below to finish connecting \(providerDisplayName)."
         }
@@ -84,9 +59,6 @@ final class AuthViewModel: ObservableObject {
         }
         switch authState.status {
         case .authenticated:
-            if !authManager.capabilities.supportsChat {
-                return authManager.capabilities.availabilityMessage ?? "\(providerDisplayName) auth is set up, but runtime support is not available yet."
-            }
             if let accountLabel {
                 return "Signed in as \(accountLabel)."
             }
@@ -109,13 +81,7 @@ final class AuthViewModel: ObservableObject {
     }
 
     var primaryButtonTitle: String {
-        if isBusy {
-            return "Working…"
-        }
-        guard canStartLogin else {
-            return "\(providerDisplayName) unavailable"
-        }
-        return "Get started with \(providerDisplayName)"
+        isBusy ? "Working…" : "Get started with \(providerDisplayName)"
     }
 
     var showsBrowserWaitingCard: Bool {
@@ -142,36 +108,8 @@ final class AuthViewModel: ObservableObject {
         isCheckingStatus = false
     }
 
-    func selectProvider(_ provider: AuthProvider) async {
-        guard provider != authState.provider else { return }
-
-        cancelLogin()
-        errorMessage = nil
-        currentChallenge = nil
-
-        do {
-            authState = try authManager.selectProvider(provider)
-            hasPerformedStartupCheck = false
-            await refreshStatus()
-        } catch {
-            errorMessage = presentableErrorMessage(from: error.localizedDescription)
-            authState = AuthState(
-                provider: provider,
-                status: .failed,
-                accountLabel: nil,
-                lastValidatedAt: nil,
-                failureReason: error.localizedDescription,
-                updatedAt: Date()
-            )
-        }
-    }
-
     func beginLogin() async {
         guard !isBusy else { return }
-        guard canStartLogin else {
-            errorMessage = authManager.capabilities.availabilityMessage ?? "\(providerDisplayName) login is not available."
-            return
-        }
 
         isStartingLogin = true
         errorMessage = nil

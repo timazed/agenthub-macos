@@ -9,6 +9,7 @@ import Foundation
 import Testing
 @testable import AgentHub
 
+@MainActor
 struct AgentHubTests {
     @Test
     func taskStoreRoundTripsThreadBackedTasks() throws {
@@ -23,8 +24,7 @@ struct AgentHubTests {
             scheduleType: .dailyAtHHMM,
             scheduleValue: "08:00",
             state: .scheduled,
-            provider: .codex,
-            providerThreadID: "thread-123",
+            codexThreadId: "thread-123",
             personaId: "default",
             runtimeMode: .chatOnly,
             repoPath: nil,
@@ -39,7 +39,7 @@ struct AgentHubTests {
         let loaded = try store.load()
 
         #expect(loaded.count == 1)
-        #expect(loaded.first?.providerThreadID == "thread-123")
+        #expect(loaded.first?.codexThreadId == "thread-123")
         #expect(loaded.first?.title == "Bondi rentals")
     }
 
@@ -49,10 +49,18 @@ struct AgentHubTests {
         let paths = AppPaths(root: root)
         let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
         let authStore = AuthStore(paths: paths)
-        let providerRegistry = ProviderRegistry(
-            paths: paths,
-            authStore: authStore,
-            registrations: [dummyProviderRegistration]
+        let authManager = AuthManager(
+            store: authStore,
+            providerClient: StubAuthProviderClient(
+                refreshedState: AuthState(
+                    provider: .codex,
+                    status: .authenticated,
+                    accountLabel: "user@example.com",
+                    lastValidatedAt: Date(),
+                    failureReason: nil,
+                    updatedAt: Date()
+                )
+            )
         )
         let orchestrator = TaskOrchestrator(
             taskStore: try TaskStore(paths: paths),
@@ -62,7 +70,8 @@ struct AgentHubTests {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
-            providerRegistry: providerRegistry
+            authManager: authManager,
+            runtimeFactory: { DummyRuntime() }
         )
 
         let now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -73,33 +82,6 @@ struct AgentHubTests {
         #expect(interval != nil)
         #expect(abs(interval!.timeIntervalSince(now) - 1800) < 1)
     }
-
-    @Test
-    func providerRegistryUsesOnlyRegisteredProvider() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
-        let paths = AppPaths(root: root)
-        let registry = ProviderRegistry(
-            paths: paths,
-            authStore: AuthStore(paths: paths),
-            registrations: [dummyProviderRegistration]
-        )
-
-        #expect(registry.currentProvider() == .codex)
-    }
-
-    @Test
-    func providerRegistryCanUseNonCodexProviderWhenThatIsAllThatIsRegistered() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
-        let paths = AppPaths(root: root)
-        let registry = ProviderRegistry(
-            paths: paths,
-            authStore: AuthStore(paths: paths),
-            registrations: [claudeOnlyProviderRegistration]
-        )
-
-        #expect(registry.currentProvider() == .claude)
-    }
-
 }
 
 private struct DummyRuntime: AssistantRuntime {
@@ -124,30 +106,12 @@ private struct DummyRuntime: AssistantRuntime {
     func cancelCurrentRun() throws {}
 }
 
-private let dummyProviderRegistration = ProviderRegistration(
-    provider: .codex,
-    capabilities: .available(authMethods: [.browser]),
-    makeRuntime: { DummyRuntime() },
-    makeAuthProviderClient: { runtime, paths in
-        CodexAuthProviderClient(runtime: runtime, paths: paths)
-    }
-)
-
-private let claudeOnlyProviderRegistration = ProviderRegistration(
-    provider: .claude,
-    capabilities: .available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false),
-    makeRuntime: { DummyRuntime() },
-    makeAuthProviderClient: { _, _ in
-        ClaudeProviderClientStub()
-    }
-)
-
-private struct ClaudeProviderClientStub: AuthProviderClient {
-    let provider: AuthProvider = .claude
-    let capabilities = ProviderCapabilities.available(authMethods: [.externalSetup], supportsChat: true, supportsScheduledTasks: false)
+@MainActor
+private struct StubAuthProviderClient: AuthProviderClient {
+    var refreshedState: AuthState
 
     func refreshStatus() throws -> AuthState {
-        AuthState(provider: .claude, status: .authenticated, accountLabel: "claude@example.com", lastValidatedAt: Date(), failureReason: nil, updatedAt: Date())
+        refreshedState
     }
 
     func startLogin() async throws -> AuthLoginChallenge? { nil }

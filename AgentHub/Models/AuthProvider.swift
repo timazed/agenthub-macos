@@ -1,15 +1,9 @@
 import Foundation
 
-enum AuthProvider: String, Codable, CaseIterable, Hashable {
+enum AuthProvider: String, Codable, Hashable {
     case codex
-    case claude
 
     var displayName: String {
-        switch self {
-        case .codex:
-            return "Codex"
-        case .claude:
-            return "Claude"
-        }
+        "Codex"
     }
 }
