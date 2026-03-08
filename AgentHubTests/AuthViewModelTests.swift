@@ -145,6 +145,71 @@ struct AuthViewModelTests {
         #expect(!viewModel.isStartingLogin)
         #expect(viewModel.authState == initialState)
     }
+
+    @Test
+    func authenticatedUserWithIncompleteOnboardingStartsAtPersonaStep() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        let onboardingManager = makeOnboardingManager(paths: paths)
+        let viewModel = AuthViewModel(
+            authManager: makeAuthManager(
+                paths: paths,
+                refreshedState: AuthState(
+                    status: .authenticated,
+                    accountLabel: "user@example.com",
+                    lastValidatedAt: Date(),
+                    failureReason: nil,
+                    updatedAt: Date()
+                )
+            ),
+            initialState: .default(),
+            onboardingManager: onboardingManager,
+            initialOnboardingState: .default(),
+            openURL: { _ in true }
+        )
+
+        await viewModel.refreshStatus()
+
+        #expect(viewModel.currentStep == .persona)
+        #expect(!viewModel.hasCompletedOnboarding)
+        #expect(viewModel.statusTitle == "Set up your assistant")
+    }
+
+    @Test
+    func savePersonalityCompletesOnboardingAndPersistsDefaultPersona() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        let onboardingManager = makeOnboardingManager(paths: paths)
+        let viewModel = AuthViewModel(
+            authManager: makeAuthManager(
+                paths: paths,
+                refreshedState: AuthState(
+                    status: .authenticated,
+                    accountLabel: "user@example.com",
+                    lastValidatedAt: Date(),
+                    failureReason: nil,
+                    updatedAt: Date()
+                )
+            ),
+            initialState: .default(),
+            onboardingManager: onboardingManager,
+            initialOnboardingState: .default(),
+            openURL: { _ in true }
+        )
+
+        await viewModel.refreshStatus()
+        viewModel.savePersonality("Be direct, skeptical, and concise.")
+
+        #expect(viewModel.hasCompletedOnboarding)
+        #expect(viewModel.currentStep == nil)
+        #expect(viewModel.onboardingState.hasCompletedOnboarding)
+        #expect(viewModel.onboardingState.selectedPersonaId == "default")
+        #expect(viewModel.onboardingState.personalitySource == .custom)
+
+        let instructions = try PersonaManager(paths: paths).loadInstructions(personaId: "default")
+        #expect(instructions.contains("PERSONALITY:"))
+        #expect(instructions.contains("Be direct, skeptical, and concise."))
+    }
 }
 
 private func makeOnboardingManager(paths: AppPaths) -> OnboardingManager {
