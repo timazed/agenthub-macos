@@ -4,13 +4,13 @@ final class ExternalAgentExecutionService {
     private let runtimeConfigStore: AppRuntimeConfigStore
     private let sessionStore: AssistantSessionStore
     private let paths: AppPaths
-    private let runtimeFactory: () -> CodexRuntime
+    private let runtimeFactory: () -> AssistantRuntime
 
     init(
         runtimeConfigStore: AppRuntimeConfigStore,
         sessionStore: AssistantSessionStore,
         paths: AppPaths,
-        runtimeFactory: @escaping () -> CodexRuntime
+        runtimeFactory: @escaping () -> AssistantRuntime
     ) {
         self.runtimeConfigStore = runtimeConfigStore
         self.sessionStore = sessionStore
@@ -22,7 +22,7 @@ final class ExternalAgentExecutionService {
         let runtime = runtimeFactory()
         var session = try sessionStore.loadOrCreateDefault(personaId: persona.id)
         let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
-        let launchConfig = CodexLaunchConfig(
+        let launchConfig = AssistantLaunchConfig(
             agentHomeDirectory: persona.directoryPath,
             codexHome: paths.root.path,
             runtimeMode: .chatOnly,
@@ -50,7 +50,7 @@ final class ExternalAgentExecutionService {
             }
         }
 
-        let result: CodexExecutionResult
+        let result: AssistantExecutionResult
         if let threadID = session.codexThreadId {
             result = try await runtime.resumeThread(
                 threadId: threadID,

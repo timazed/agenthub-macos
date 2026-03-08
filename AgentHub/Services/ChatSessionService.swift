@@ -9,6 +9,11 @@ enum ChatSessionEvent {
 }
 
 final class ChatSessionService {
+    private final class StreamState: @unchecked Sendable {
+        let lock = NSLock()
+        var continuation: AsyncStream<ChatSessionEvent>.Continuation?
+    }
+
     private let sessionStore: AssistantSessionStore
     private let personaManager: PersonaManager
     private let runtime: AssistantRuntime
@@ -16,8 +21,7 @@ final class ChatSessionService {
     private let runtimeConfigStore: AppRuntimeConfigStore
     private let authManager: AuthManager
 
-    private let stateLock = NSLock()
-    private var continuation: AsyncStream<ChatSessionEvent>.Continuation?
+    private let streamState = StreamState()
 
     init(
         sessionStore: AssistantSessionStore,
@@ -41,15 +45,14 @@ final class ChatSessionService {
 
     func streamEvents() -> AsyncStream<ChatSessionEvent> {
         AsyncStream { continuation in
-            stateLock.lock()
-            self.continuation = continuation
-            stateLock.unlock()
+            self.streamState.lock.lock()
+            self.streamState.continuation = continuation
+            self.streamState.lock.unlock()
 
-            continuation.onTermination = { [weak self] _ in
-                guard let self else { return }
-                self.stateLock.lock()
-                self.continuation = nil
-                self.stateLock.unlock()
+            continuation.onTermination = { [streamState] _ in
+                streamState.lock.lock()
+                streamState.continuation = nil
+                streamState.lock.unlock()
             }
         }
     }
@@ -200,17 +203,17 @@ final class ChatSessionService {
     }
 
     private func emit(_ event: ChatSessionEvent) {
-        stateLock.lock()
-        let continuation = continuation
-        stateLock.unlock()
+        streamState.lock.lock()
+        let continuation = streamState.continuation
+        streamState.lock.unlock()
         continuation?.yield(event)
     }
 
     private func finishStream() {
-        stateLock.lock()
-        let continuation = continuation
-        self.continuation = nil
-        stateLock.unlock()
+        streamState.lock.lock()
+        let continuation = streamState.continuation
+        streamState.continuation = nil
+        streamState.lock.unlock()
         continuation?.finish()
     }
 }
