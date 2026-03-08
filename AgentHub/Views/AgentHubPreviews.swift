@@ -2,6 +2,13 @@ import Foundation
 import SwiftUI
 
 private enum PreviewFactory {
+    enum OnboardingPreviewState {
+        case auth
+        case persona
+        case name
+        case complete
+    }
+
     static func makePaths() -> AppPaths {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentHubPreview", isDirectory: true)
@@ -60,7 +67,7 @@ private enum PreviewFactory {
     }
 
     @MainActor
-    static func makeAuthViewModel(authenticated: Bool, onboardingComplete: Bool = false) -> AuthViewModel {
+    static func makeAuthViewModel(state: OnboardingPreviewState) -> AuthViewModel {
         let paths = makePaths()
         try? paths.prepare()
 
@@ -72,26 +79,64 @@ private enum PreviewFactory {
             providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths)
         )
         let onboardingManager = OnboardingManager(store: onboardingStore, personaManager: PersonaManager(paths: paths))
-        let state = AuthState(
-            status: authenticated ? .authenticated : .unauthenticated,
-            accountLabel: authenticated ? "preview@example.com" : nil,
-            lastValidatedAt: authenticated ? Date() : nil,
-            failureReason: authenticated ? nil : "Sign in before using AgentHub.",
+        let isAuthenticated = state != .auth
+        let authState = AuthState(
+            status: isAuthenticated ? .authenticated : .unauthenticated,
+            accountLabel: isAuthenticated ? "preview@example.com" : nil,
+            lastValidatedAt: isAuthenticated ? Date() : nil,
+            failureReason: isAuthenticated ? nil : "Sign in before using AgentHub.",
             updatedAt: Date()
         )
-        try? authStore.save(state)
-        let onboardingState = OnboardingState(
-            hasCompletedOnboarding: onboardingComplete,
-            hasCompletedNameStep: onboardingComplete,
-            selectedPersonaId: onboardingComplete ? "default" : nil,
-            personalitySource: onboardingComplete ? .default : nil,
-            updatedAt: Date()
-        )
+        try? authStore.save(authState)
+
+        let onboardingState: OnboardingState
+        switch state {
+        case .auth:
+            onboardingState = OnboardingState(
+                hasCompletedOnboarding: false,
+                hasCompletedNameStep: false,
+                selectedPersonaId: nil,
+                personalitySource: nil,
+                updatedAt: Date()
+            )
+        case .persona:
+            onboardingState = OnboardingState(
+                hasCompletedOnboarding: false,
+                hasCompletedNameStep: false,
+                selectedPersonaId: nil,
+                personalitySource: nil,
+                updatedAt: Date()
+            )
+        case .name:
+            _ = try? PersonaManager(paths: paths).upsertDefaultPersona(
+                name: "Operator",
+                instructions: "You are a calm, sharp operator."
+            )
+            onboardingState = OnboardingState(
+                hasCompletedOnboarding: false,
+                hasCompletedNameStep: false,
+                selectedPersonaId: "default",
+                personalitySource: .custom,
+                updatedAt: Date()
+            )
+        case .complete:
+            _ = try? PersonaManager(paths: paths).upsertDefaultPersona(
+                name: "Operator",
+                instructions: "You are a calm, sharp operator."
+            )
+            onboardingState = OnboardingState(
+                hasCompletedOnboarding: true,
+                hasCompletedNameStep: true,
+                selectedPersonaId: "default",
+                personalitySource: .custom,
+                updatedAt: Date()
+            )
+        }
         try? onboardingStore.save(onboardingState)
 
         return AuthViewModel(
             authManager: authManager,
-            initialState: state,
+            initialState: authState,
             onboardingManager: onboardingManager,
             initialOnboardingState: onboardingState,
             openURL: { _ in true }
@@ -247,8 +292,15 @@ private struct ChatBusyPreviewHost: View {
     }
 }
 
-private struct LoginGatePreviewHost: View {
-    @StateObject private var viewModel = PreviewFactory.makeAuthViewModel(authenticated: false)
+private struct OnboardingStepPreviewHost: View {
+    let state: PreviewFactory.OnboardingPreviewState
+
+    @StateObject private var viewModel: AuthViewModel
+
+    init(state: PreviewFactory.OnboardingPreviewState) {
+        self.state = state
+        _viewModel = StateObject(wrappedValue: PreviewFactory.makeAuthViewModel(state: state))
+    }
 
     var body: some View {
         CodexLoginGateView(
@@ -264,19 +316,14 @@ private struct LoginGatePreviewHost: View {
     }
 }
 
-private struct PersonaGatePreviewHost: View {
-    @StateObject private var viewModel = PreviewFactory.makeAuthViewModel(authenticated: true, onboardingComplete: false)
+private struct HomeHandoffPreviewHost: View {
+    @StateObject private var viewModel = PreviewFactory.makeChatViewModel()
 
     var body: some View {
-        CodexLoginGateView(
-            viewModel: viewModel,
-            onStartLogin: {},
-            onRetryStatus: {},
-            onCancelLogin: {},
-            onUseDefaultPersonality: {},
-            onSavePersonality: { _ in },
-            onSaveAgentName: { _ in }
-        )
+        ZStack {
+            OnboardingExperienceBackground()
+            ChatView(viewModel: viewModel, isPanelPresented: false, onTogglePanel: {}, isInputEnabled: true, blockedMessage: nil)
+        }
         .frame(width: 1120, height: 760)
     }
 }
@@ -332,14 +379,38 @@ struct TaskEditorPreview: PreviewProvider {
 
 struct LoginGatePreview: PreviewProvider {
     static var previews: some View {
-        LoginGatePreviewHost()
-            .previewDisplayName("Codex Login Gate")
-    }
-}
+        Group {
+            OnboardingStepPreviewHost(state: .auth)
+                .previewDisplayName("Onboarding Auth Light")
+                .preferredColorScheme(.light)
 
-struct PersonaGatePreview: PreviewProvider {
-    static var previews: some View {
-        PersonaGatePreviewHost()
-            .previewDisplayName("Persona Gate")
+            OnboardingStepPreviewHost(state: .auth)
+                .previewDisplayName("Onboarding Auth Dark")
+                .preferredColorScheme(.dark)
+
+            OnboardingStepPreviewHost(state: .persona)
+                .previewDisplayName("Onboarding Persona Light")
+                .preferredColorScheme(.light)
+
+            OnboardingStepPreviewHost(state: .persona)
+                .previewDisplayName("Onboarding Persona Dark")
+                .preferredColorScheme(.dark)
+
+            OnboardingStepPreviewHost(state: .name)
+                .previewDisplayName("Onboarding Name Light")
+                .preferredColorScheme(.light)
+
+            OnboardingStepPreviewHost(state: .name)
+                .previewDisplayName("Onboarding Name Dark")
+                .preferredColorScheme(.dark)
+
+            HomeHandoffPreviewHost()
+                .previewDisplayName("Home Handoff Light")
+                .preferredColorScheme(.light)
+
+            HomeHandoffPreviewHost()
+                .previewDisplayName("Home Handoff Dark")
+                .preferredColorScheme(.dark)
+        }
     }
 }
