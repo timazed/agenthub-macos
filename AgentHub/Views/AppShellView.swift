@@ -56,8 +56,14 @@ struct AppShellView: View {
                         }
                     },
                     onCancelLogin: { authViewModel.cancelLogin() },
-                    onUseDefaultPersonality: {},
-                    onSavePersonality: { _ in }
+                    onUseDefaultPersonality: {
+                        authViewModel.useDefaultPersonality()
+                        performInitialLoadIfNeeded()
+                    },
+                    onSavePersonality: { personality in
+                        authViewModel.savePersonality(personality)
+                        performInitialLoadIfNeeded()
+                    }
                 )
                 .frame(minWidth: 400)
             }

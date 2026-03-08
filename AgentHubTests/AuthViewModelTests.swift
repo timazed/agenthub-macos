@@ -148,7 +148,7 @@ struct AuthViewModelTests {
 }
 
 private func makeOnboardingManager(paths: AppPaths) -> OnboardingManager {
-    OnboardingManager(store: OnboardingStore(paths: paths))
+    OnboardingManager(store: OnboardingStore(paths: paths), personaManager: PersonaManager(paths: paths))
 }
 
 private func makeAuthManager(

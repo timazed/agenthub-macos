@@ -79,7 +79,7 @@ final class AppContainer {
             store: authStore,
             providerClient: CodexAuthProviderClient(runtime: chatRuntime, paths: paths)
         )
-        let onboardingManager = OnboardingManager(store: onboardingStore)
+        let onboardingManager = OnboardingManager(store: onboardingStore, personaManager: personaManager)
         let chatSessionService = ChatSessionService(
             sessionStore: assistantSessionStore,
             personaManager: personaManager,

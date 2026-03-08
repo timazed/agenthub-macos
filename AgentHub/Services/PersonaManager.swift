@@ -23,6 +23,21 @@ final class PersonaManager {
         try validatePersona(personaId: "default")
     }
 
+    func defaultPersonalityText() -> String {
+        defaultInstructions
+    }
+
+    func upsertDefaultPersona(personality: String) throws -> Persona {
+        let instructions = renderDefaultInstructions(personality: personality)
+
+        if (try? validatePersona(personaId: "default")) != nil {
+            try updatePersona(personaId: "default", name: "Default", instructions: instructions)
+            return try validatePersona(personaId: "default")
+        }
+
+        return try createPersona(name: "Default", instructions: instructions)
+    }
+
     func list() throws -> [Persona] {
         try paths.prepare(fileManager: fileManager)
 
@@ -131,8 +146,30 @@ final class PersonaManager {
 
     private var defaultInstructions: String {
         """
-        You are a concise, accurate assistant.
+        Be concise unless the user asks for depth.
         Prioritize correctness and actionable output.
+        Ask clarifying questions only when ambiguity would change the result.
+        Keep a pragmatic, grounded tone.
+        """
+    }
+
+    private func renderDefaultInstructions(personality: String) -> String {
+        let normalizedPersonality = personality.trimmingCharacters(in: .whitespacesAndNewlines)
+        let personalityBlock = normalizedPersonality.isEmpty ? defaultInstructions : normalizedPersonality
+
+        return """
+        You are AgentHub's default assistant.
+        Follow the product and safety instructions in this file.
+
+        PERSONALITY:
+        \(personalityBlock)
+
+        DEFAULT BEHAVIOR:
+        - Be concise unless the user asks for depth.
+        - Prefer actionable output over long framing.
+        - Prioritize correctness and actionable output.
+        - Ask clarifying questions only when ambiguity would change the result.
+        - Keep a pragmatic, grounded tone.
         """
     }
 

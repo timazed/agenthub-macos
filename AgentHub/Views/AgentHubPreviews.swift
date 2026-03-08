@@ -71,7 +71,7 @@ private enum PreviewFactory {
             store: authStore,
             providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths)
         )
-        let onboardingManager = OnboardingManager(store: onboardingStore)
+        let onboardingManager = OnboardingManager(store: onboardingStore, personaManager: PersonaManager(paths: paths))
         let state = AuthState(
             status: authenticated ? .authenticated : .unauthenticated,
             accountLabel: authenticated ? "preview@example.com" : nil,

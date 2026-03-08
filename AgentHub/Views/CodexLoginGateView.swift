@@ -7,12 +7,7 @@ struct CodexLoginGateView: View {
     let onCancelLogin: () -> Void
     let onUseDefaultPersonality: () -> Void
     let onSavePersonality: (String) -> Void
-    @State private var personalityDraft = """
-    Be concise unless the user asks for depth.
-    Prioritize correctness and actionable output.
-    Ask clarifying questions only when ambiguity would change the result.
-    Keep a pragmatic, grounded tone.
-    """
+    @State private var personalityDraft = ""
 
     var body: some View {
         ZStack {
@@ -80,6 +75,12 @@ struct CodexLoginGateView: View {
                     )
             )
             .padding(24)
+        }
+        .onAppear {
+            seedPersonalityDraftIfNeeded()
+        }
+        .onChange(of: viewModel.currentStep) { _, _ in
+            seedPersonalityDraftIfNeeded()
         }
     }
 
@@ -212,5 +213,12 @@ struct CodexLoginGateView: View {
             }
         }
         .frame(maxWidth: 520, alignment: .leading)
+    }
+
+    private func seedPersonalityDraftIfNeeded() {
+        guard viewModel.currentStep == .persona else { return }
+        if personalityDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            personalityDraft = viewModel.defaultPersonalityText
+        }
     }
 }

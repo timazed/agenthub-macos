@@ -108,6 +108,10 @@ final class AuthViewModel: ObservableObject {
         isAwaitingBrowserCompletion && currentChallenge == nil
     }
 
+    var defaultPersonalityText: String {
+        onboardingManager.defaultPersonalityText()
+    }
+
     func performStartupCheckIfNeeded() async {
         guard !hasPerformedStartupCheck else { return }
         hasPerformedStartupCheck = true
@@ -179,7 +183,26 @@ final class AuthViewModel: ObservableObject {
         isAwaitingBrowserCompletion = false
     }
 
+    func useDefaultPersonality() {
+        savePersonality(defaultPersonalityText, source: .default)
+    }
+
+    func savePersonality(_ personality: String) {
+        savePersonality(personality, source: .custom)
+    }
+
     private func presentableErrorMessage(from message: String) -> String {
         return message
+    }
+
+    private func savePersonality(_ personality: String, source: PersonalitySource) {
+        guard currentStep == .persona else { return }
+
+        do {
+            onboardingState = try onboardingManager.completePersonaStep(personality: personality, source: source)
+            errorMessage = nil
+        } catch {
+            errorMessage = presentableErrorMessage(from: error.localizedDescription)
+        }
     }
 }
