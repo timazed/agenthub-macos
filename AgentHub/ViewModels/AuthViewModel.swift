@@ -9,6 +9,7 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var isCheckingStatus = false
     @Published private(set) var isStartingLogin = false
     @Published private(set) var isAwaitingBrowserCompletion = false
+    @Published private(set) var hasResolvedStartupCheck = false
     @Published var errorMessage: String?
 
     private let authManager: AuthManager
@@ -96,9 +97,11 @@ final class AuthViewModel: ObservableObject {
 
         do {
             authState = try authManager.refreshStatus()
+            hasResolvedStartupCheck = true
         } catch {
             errorMessage = presentableErrorMessage(from: error.localizedDescription)
             authState = (try? authManager.loadCachedState()) ?? .default()
+            hasResolvedStartupCheck = true
         }
 
         isCheckingStatus = false
@@ -128,6 +131,11 @@ final class AuthViewModel: ObservableObject {
             authState = state
             currentChallenge = nil
             isAwaitingBrowserCompletion = false
+            hasResolvedStartupCheck = true
+        } catch AuthManagerError.cancelled {
+            currentChallenge = nil
+            isAwaitingBrowserCompletion = false
+            isStartingLogin = false
         } catch {
             currentChallenge = nil
             isAwaitingBrowserCompletion = false
