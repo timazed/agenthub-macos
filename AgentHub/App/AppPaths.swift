@@ -40,6 +40,10 @@ struct AppPaths {
         stateDirectory.appendingPathComponent("codex-auth-state.json")
     }
 
+    var onboardingStateURL: URL {
+        stateDirectory.appendingPathComponent("onboarding-state.json")
+    }
+
     var historyFileURL: URL {
         root.appendingPathComponent("history.jsonl")
     }
