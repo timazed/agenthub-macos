@@ -20,6 +20,8 @@ struct AuthViewModelTests {
                 )
             ),
             initialState: .default(),
+            onboardingManager: makeOnboardingManager(paths: paths),
+            initialOnboardingState: .default(),
             openURL: { _ in true }
         )
 
@@ -47,6 +49,8 @@ struct AuthViewModelTests {
                 )
             ),
             initialState: .default(),
+            onboardingManager: makeOnboardingManager(paths: paths),
+            initialOnboardingState: .default(),
             openURL: { _ in true }
         )
 
@@ -76,6 +80,8 @@ struct AuthViewModelTests {
                 loginDelayNanoseconds: 50_000_000
             ),
             initialState: .default(),
+            onboardingManager: makeOnboardingManager(paths: paths),
+            initialOnboardingState: .default(),
             openURL: { _ in
                 Issue.record("Browser login without a challenge should not request an app-managed URL open.")
                 return true
@@ -119,6 +125,8 @@ struct AuthViewModelTests {
                 shouldThrowCancelledOnWait: true
             ),
             initialState: initialState,
+            onboardingManager: makeOnboardingManager(paths: paths),
+            initialOnboardingState: .default(),
             openURL: { _ in true }
         )
 
@@ -137,6 +145,10 @@ struct AuthViewModelTests {
         #expect(!viewModel.isStartingLogin)
         #expect(viewModel.authState == initialState)
     }
+}
+
+private func makeOnboardingManager(paths: AppPaths) -> OnboardingManager {
+    OnboardingManager(store: OnboardingStore(paths: paths))
 }
 
 private func makeAuthManager(

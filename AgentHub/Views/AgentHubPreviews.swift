@@ -65,11 +65,13 @@ private enum PreviewFactory {
         try? paths.prepare()
 
         let authStore = AuthStore(paths: paths)
+        let onboardingStore = OnboardingStore(paths: paths)
         let runtime = PreviewCodexRuntime()
         let authManager = AuthManager(
             store: authStore,
             providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths)
         )
+        let onboardingManager = OnboardingManager(store: onboardingStore)
         let state = AuthState(
             status: authenticated ? .authenticated : .unauthenticated,
             accountLabel: authenticated ? "preview@example.com" : nil,
@@ -78,10 +80,13 @@ private enum PreviewFactory {
             updatedAt: Date()
         )
         try? authStore.save(state)
+        let onboardingState = (try? onboardingStore.loadOrCreateDefault()) ?? .default()
 
         return AuthViewModel(
             authManager: authManager,
             initialState: state,
+            onboardingManager: onboardingManager,
+            initialOnboardingState: onboardingState,
             openURL: { _ in true }
         )
     }

@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 final class AuthViewModel: ObservableObject {
     @Published private(set) var authState: AuthState
+    @Published private(set) var onboardingState: OnboardingState
     @Published private(set) var currentChallenge: AuthLoginChallenge?
     @Published private(set) var isCheckingStatus = false
     @Published private(set) var isStartingLogin = false
@@ -13,21 +14,34 @@ final class AuthViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let authManager: AuthManager
+    private let onboardingManager: OnboardingManager
     private let openURL: (URL) -> Bool
     private var hasPerformedStartupCheck = false
 
     init(
         authManager: AuthManager,
         initialState: AuthState,
+        onboardingManager: OnboardingManager,
+        initialOnboardingState: OnboardingState,
         openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
         self.authManager = authManager
         self.authState = initialState
+        self.onboardingManager = onboardingManager
+        self.onboardingState = initialOnboardingState
         self.openURL = openURL
     }
 
     var isAuthenticated: Bool {
         authState.isAuthenticated
+    }
+
+    var currentStep: OnboardingStep? {
+        onboardingManager.currentStep(authState: authState, onboardingState: onboardingState)
+    }
+
+    var hasCompletedOnboarding: Bool {
+        currentStep == nil
     }
 
     var isBusy: Bool {
@@ -37,6 +51,12 @@ final class AuthViewModel: ObservableObject {
     var statusTitle: String {
         if isCheckingStatus {
             return "Checking Codex login"
+        }
+        if isStartingLogin || isAwaitingBrowserCompletion || currentChallenge != nil {
+            return "Get started with Codex"
+        }
+        if currentStep == .persona {
+            return "Set up your assistant"
         }
         switch authState.status {
         case .authenticated:
@@ -57,6 +77,9 @@ final class AuthViewModel: ObservableObject {
         }
         if isCheckingStatus {
             return "Validating whether the bundled Codex CLI can run commands with your account."
+        }
+        if currentStep == .persona {
+            return "One more step: confirm the default assistant personality before entering AgentHub."
         }
         switch authState.status {
         case .authenticated:
@@ -97,10 +120,12 @@ final class AuthViewModel: ObservableObject {
 
         do {
             authState = try authManager.refreshStatus()
+            onboardingState = try onboardingManager.loadState()
             hasResolvedStartupCheck = true
         } catch {
             errorMessage = presentableErrorMessage(from: error.localizedDescription)
             authState = (try? authManager.loadCachedState()) ?? .default()
+            onboardingState = (try? onboardingManager.loadState()) ?? .default()
             hasResolvedStartupCheck = true
         }
 
@@ -129,6 +154,7 @@ final class AuthViewModel: ObservableObject {
 
             let state = try await authManager.waitForLoginCompletion()
             authState = state
+            onboardingState = try onboardingManager.loadState()
             currentChallenge = nil
             isAwaitingBrowserCompletion = false
             hasResolvedStartupCheck = true
@@ -142,6 +168,7 @@ final class AuthViewModel: ObservableObject {
             isStartingLogin = false
             errorMessage = presentableErrorMessage(from: error.localizedDescription)
             authState = (try? authManager.loadCachedState()) ?? .default()
+            onboardingState = (try? onboardingManager.loadState()) ?? .default()
         }
     }
 
