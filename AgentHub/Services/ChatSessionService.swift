@@ -14,7 +14,7 @@ final class ChatSessionService {
     private let runtime: AssistantRuntime
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
-    private let authManager: AuthManaging
+    private let authManager: AuthManager
 
     private let stateLock = NSLock()
     private var continuation: AsyncStream<ChatSessionEvent>.Continuation?
@@ -25,7 +25,7 @@ final class ChatSessionService {
         runtime: AssistantRuntime,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
-        authManager: AuthManaging
+        authManager: AuthManager
     ) {
         self.sessionStore = sessionStore
         self.personaManager = personaManager

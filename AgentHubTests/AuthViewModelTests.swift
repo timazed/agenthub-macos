@@ -6,8 +6,11 @@ import Testing
 struct AuthViewModelTests {
     @Test
     func startupRefreshMarksAuthenticatedState() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
         let viewModel = AuthViewModel(
-            authManager: AuthViewModelStubManager(
+            authManager: makeAuthManager(
+                paths: paths,
                 refreshedState: AuthState(
                     status: .authenticated,
                     accountLabel: "user@example.com",
@@ -28,8 +31,11 @@ struct AuthViewModelTests {
 
     @Test
     func refreshStatusSurfacesUnauthenticatedState() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
         let viewModel = AuthViewModel(
-            authManager: AuthViewModelStubManager(
+            authManager: makeAuthManager(
+                paths: paths,
                 refreshedState: AuthState(
                     status: .unauthenticated,
                     accountLabel: nil,
@@ -51,8 +57,11 @@ struct AuthViewModelTests {
 
     @Test
     func beginLoginWithoutChallengeShowsBrowserWaitingState() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
         let viewModel = AuthViewModel(
-            authManager: AuthViewModelStubManager(
+            authManager: makeAuthManager(
+                paths: paths,
                 refreshedState: AuthState(
                     status: .authenticated,
                     accountLabel: "user@example.com",
@@ -87,27 +96,33 @@ struct AuthViewModelTests {
     }
 }
 
-private struct AuthViewModelStubManager: AuthManaging {
-    var refreshedState: AuthState
-    var challenge: AuthLoginChallenge? = AuthLoginChallenge(
+private func makeAuthManager(
+    paths: AppPaths,
+    refreshedState: AuthState,
+    challenge: AuthLoginChallenge? = AuthLoginChallenge(
         verificationURL: URL(string: "https://auth.openai.com/codex/device")!,
         userCode: "ABCD-EFGH",
         expiresInMinutes: 15
+    ),
+    loginDelayNanoseconds: UInt64 = 0
+) -> AuthManager {
+    AuthManager(
+        store: AuthStore(paths: paths),
+        providerClient: AuthViewModelStubProviderClient(
+            refreshedState: refreshedState,
+            challenge: challenge,
+            loginDelayNanoseconds: loginDelayNanoseconds
+        )
     )
-    var loginDelayNanoseconds: UInt64 = 0
+}
 
-    func loadCachedState() throws -> AuthState {
-        refreshedState
-    }
+private struct AuthViewModelStubProviderClient: AuthProviderClient {
+    var refreshedState: AuthState
+    var challenge: AuthLoginChallenge?
+    var loginDelayNanoseconds: UInt64 = 0
 
     func refreshStatus() throws -> AuthState {
         refreshedState
-    }
-
-    func requireAuthenticated() throws {
-        if !refreshedState.isAuthenticated {
-            throw AuthManagerError.unauthenticated(refreshedState.failureReason)
-        }
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {

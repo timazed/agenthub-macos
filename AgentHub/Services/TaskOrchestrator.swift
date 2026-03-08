@@ -8,7 +8,7 @@ final class TaskOrchestrator {
     private let workspaceManager: WorkspaceManager
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
-    private let authManager: AuthManaging
+    private let authManager: AuthManager
     private let runtimeFactory: () -> AssistantRuntime
     private let runningLock = NSLock()
     private var runningTaskIDs = Set<UUID>()
@@ -21,7 +21,7 @@ final class TaskOrchestrator {
         workspaceManager: WorkspaceManager,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
-        authManager: AuthManaging,
+        authManager: AuthManager,
         runtimeFactory: @escaping () -> AssistantRuntime
     ) {
         self.taskStore = taskStore

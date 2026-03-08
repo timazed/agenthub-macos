@@ -11,7 +11,10 @@ struct ExecutionAuthGateTests {
         try paths.prepare()
         try createDefaultPersona(at: paths)
 
-        let authManager = FailingAuthManager()
+        let authManager = AuthManager(
+            store: AuthStore(paths: paths),
+            providerClient: FailingAuthProviderClient()
+        )
         let service = ChatSessionService(
             sessionStore: AssistantSessionStore(paths: paths),
             personaManager: PersonaManager(paths: paths),
@@ -62,7 +65,10 @@ struct ExecutionAuthGateTests {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
-            authManager: FailingAuthManager(),
+            authManager: AuthManager(
+                store: AuthStore(paths: paths),
+                providerClient: FailingAuthProviderClient()
+            ),
             runtimeFactory: { UnauthenticatedRuntime() }
         )
 
@@ -86,17 +92,9 @@ struct ExecutionAuthGateTests {
     }
 }
 
-private struct FailingAuthManager: AuthManaging {
-    func loadCachedState() throws -> AuthState {
-        AuthState(status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
-    }
-
+private struct FailingAuthProviderClient: AuthProviderClient {
     func refreshStatus() throws -> AuthState {
-        try loadCachedState()
-    }
-
-    func requireAuthenticated() throws {
-        throw AuthManagerError.unauthenticated("Not logged in")
+        AuthState(status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {
@@ -104,7 +102,7 @@ private struct FailingAuthManager: AuthManaging {
     }
 
     func waitForLoginCompletion() async throws -> AuthState {
-        try loadCachedState()
+        try refreshStatus()
     }
 
     func cancelLogin() {}

@@ -11,12 +11,12 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var isAwaitingBrowserCompletion = false
     @Published var errorMessage: String?
 
-    private let authManager: AuthManaging
+    private let authManager: AuthManager
     private let openURL: (URL) -> Bool
     private var hasPerformedStartupCheck = false
 
     init(
-        authManager: AuthManaging,
+        authManager: AuthManager,
         initialState: AuthState,
         openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {

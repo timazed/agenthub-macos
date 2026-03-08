@@ -12,7 +12,7 @@ final class AppContainer {
     let taskRunStore: TaskRunStore
     let activityLogStore: ActivityLogStore
     let chatRuntime: AssistantRuntime
-    let authManager: AuthManaging
+    let authManager: AuthManager
     let chatSessionService: ChatSessionService
     let taskOrchestrator: TaskOrchestrator
     let scheduleRunner: ScheduleRunner
@@ -29,7 +29,7 @@ final class AppContainer {
         taskRunStore: TaskRunStore,
         activityLogStore: ActivityLogStore,
         chatRuntime: AssistantRuntime,
-        authManager: AuthManaging,
+        authManager: AuthManager,
         chatSessionService: ChatSessionService,
         taskOrchestrator: TaskOrchestrator,
         scheduleRunner: ScheduleRunner

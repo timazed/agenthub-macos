@@ -14,7 +14,7 @@ enum AuthManagerError: LocalizedError {
     }
 }
 
-final class AuthManager: AuthManaging {
+final class AuthManager {
     private let store: AuthStore
     private let providerClient: AuthProviderClient
 
