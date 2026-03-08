@@ -16,6 +16,7 @@ struct ChatBrowserIntent: Equatable {
     let kind: Kind
     let request: ChromiumRestaurantSearchRequest
     let bookingRequested: Bool
+    let bookingParameters: ChromiumRestaurantBookingParameters
 
     nonisolated static func parse(_ text: String) -> ChatBrowserIntent? {
         let normalized = text
@@ -54,8 +55,57 @@ struct ChatBrowserIntent: Equatable {
                 venueName: venueName,
                 locationHint: locationHint
             ),
-            bookingRequested: bookingRequested
+            bookingRequested: bookingRequested,
+            bookingParameters: extractBookingParameters(from: lowered)
         )
+    }
+
+    private nonisolated static func extractBookingParameters(from loweredText: String) -> ChromiumRestaurantBookingParameters {
+        let partySize = firstMatch(
+            in: loweredText,
+            patterns: [
+                #"party of (\d+)"#,
+                #"for (\d+) people"#,
+                #"(\d+) people"#
+            ]
+        ).flatMap(Int.init)
+
+        let timeText = firstMatch(
+            in: loweredText,
+            patterns: [
+                #"\b(\d{1,2}(?::\d{2})?\s?(?:am|pm))\b"#,
+                #"\bat (\d{1,2}(?::\d{2})?\s?(?:am|pm))\b"#
+            ]
+        )
+
+        let dateText = firstMatch(
+            in: loweredText,
+            patterns: [
+                #"\b(today|tomorrow)\b"#,
+                #"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?\s+\d{1,2}(?:st|nd|rd|th)?)\b"#
+            ]
+        )
+
+        return ChromiumRestaurantBookingParameters(
+            dateText: dateText,
+            timeText: timeText,
+            partySize: partySize
+        )
+    }
+
+    private nonisolated static func firstMatch(in text: String, patterns: [String]) -> String? {
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            guard let match = regex.firstMatch(in: text, options: [], range: range) else { continue }
+            let captureIndex = match.numberOfRanges > 1 ? 1 : 0
+            guard let captureRange = Range(match.range(at: captureIndex), in: text) else { continue }
+            let value = String(text[captureRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 
     private nonisolated static func extractVenueAndLocation(from segments: [String], fullText: String) -> (venueName: String?, locationHint: String?) {
@@ -121,6 +171,82 @@ struct ChatBrowserIntent: Equatable {
             return ""
         }
         return value
+    }
+}
+
+struct GenericBrowserChatIntent: Equatable {
+    let goalText: String
+    let initialURL: String?
+
+    nonisolated static func parse(_ text: String) -> GenericBrowserChatIntent? {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+
+        if let explicitURL = extractURL(from: normalized) {
+            return GenericBrowserChatIntent(goalText: normalized, initialURL: normalizeURL(explicitURL))
+        }
+
+        let lowered = normalized.lowercased()
+        let knownSites: [(needle: String, url: String)] = [
+            ("opentable", "https://www.opentable.com"),
+            ("booking.com", "https://www.booking.com"),
+            ("expedia", "https://www.expedia.com"),
+            ("kayak", "https://www.kayak.com"),
+            ("google flights", "https://www.google.com/travel/flights"),
+            ("airbnb", "https://www.airbnb.com"),
+            ("amazon", "https://www.amazon.com")
+        ]
+        if let site = knownSites.first(where: { lowered.contains($0.needle) }) {
+            return GenericBrowserChatIntent(goalText: normalized, initialURL: site.url)
+        }
+
+        let browserVerbs = ["open", "browse", "book", "find", "search", "look up", "go to", "navigate"]
+        guard browserVerbs.contains(where: { lowered.contains($0) }) else {
+            return nil
+        }
+
+        return GenericBrowserChatIntent(goalText: normalized, initialURL: nil)
+    }
+
+    private nonisolated static func extractURL(from text: String) -> String? {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return nil
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        let match = detector.firstMatch(in: text, options: [], range: range)
+        return match?.url?.absoluteString
+    }
+
+    private nonisolated static func normalizeURL(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return rawValue }
+
+        let withScheme: String
+        if trimmed.contains("://") {
+            withScheme = trimmed
+        } else {
+            withScheme = "https://\(trimmed)"
+        }
+
+        guard var components = URLComponents(string: withScheme) else {
+            return withScheme
+        }
+        if components.scheme == nil {
+            components.scheme = "https"
+        }
+        if let host = components.host?.lowercased() {
+            switch host {
+            case "booking.com", "www.booking.com":
+                components.scheme = "https"
+                components.host = "www.booking.com"
+            case "opentable.com", "www.opentable.com":
+                components.scheme = "https"
+                components.host = "www.opentable.com"
+            default:
+                break
+            }
+        }
+        return components.string ?? withScheme
     }
 }
 
@@ -192,6 +318,14 @@ final class ChatSessionService {
 
         if let browserIntent = ChatBrowserIntent.parse(text) {
             try await handleBrowserIntent(browserIntent, session: &session)
+            session.updatedAt = Date()
+            try sessionStore.save(session)
+            emit(.completed)
+            return
+        }
+
+        if let genericBrowserIntent = GenericBrowserChatIntent.parse(text) {
+            try await handleGenericBrowserIntent(genericBrowserIntent, persona: persona, session: &session)
             session.updatedAt = Date()
             try sessionStore.save(session)
             emit(.completed)
@@ -279,16 +413,24 @@ final class ChatSessionService {
         let browserController = await MainActor.run { browserControllerProvider() }
         emit(.assistantDelta("Using the embedded Chromium browser to search OpenTable for \(intent.request.venueName)."))
 
-        let result = try await browserController.runRestaurantSearchFlow(request: intent.request) { [weak self] message in
-            self?.emit(.assistantDelta(message))
-        }
-
         let finalText: String
-        if intent.bookingRequested {
+        if intent.bookingRequested, intent.bookingParameters.isSpecified {
+            let result = try await browserController.runRestaurantBookingFlow(
+                request: ChromiumRestaurantBookingRequest(
+                    searchRequest: intent.request,
+                    parameters: intent.bookingParameters
+                )
+            ) { [weak self] message in
+                self?.emit(.assistantDelta(message))
+            }
+            let slotText = result.selectedSlot ?? "an available slot"
             finalText = """
-            I opened the exact OpenTable page for \(result.venueName)\(formattedLocationSuffix(result.locationHint)) in the embedded Chromium browser. This chat path is now using the Chromium controller for the venue search and page navigation; reservation selection itself still needs a dedicated controller step on top of the restaurant page.
+            I navigated to the OpenTable venue page for \(result.venueName) and selected \(slotText). I stopped before the final reserve or confirm action, so approval is still required for the last transactional step.
             """
         } else {
+            let result = try await browserController.runRestaurantSearchFlow(request: intent.request) { [weak self] message in
+                self?.emit(.assistantDelta(message))
+            }
             finalText = """
             I opened the exact OpenTable page for \(result.venueName)\(formattedLocationSuffix(result.locationHint)) in the embedded Chromium browser.
             """
@@ -305,6 +447,198 @@ final class ChatSessionService {
         try sessionStore.appendMessage(assistantMessage)
     }
 
+    private func handleGenericBrowserIntent(
+        _ intent: GenericBrowserChatIntent,
+        persona: Persona,
+        session: inout AssistantSession
+    ) async throws {
+        let browserController = await MainActor.run { browserControllerProvider() }
+        emit(.assistantDelta("Using the embedded Chromium browser for this web task."))
+
+        let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
+        let launchConfig = CodexLaunchConfig(
+            agentHomeDirectory: persona.directoryPath,
+            codexHome: paths.root.path,
+            runtimeMode: .chatOnly,
+            externalDirectory: nil,
+            enableSearch: false,
+            model: runtimeConfig.model,
+            reasoningEffort: runtimeConfig.reasoningEffort
+        )
+
+        var lastResultSummary = intent.initialURL != nil
+            ? "The browser can open \(intent.initialURL!)."
+            : "No browser action has run yet."
+        var latestInspection: ChromiumInspection?
+        var recentHistory: [String] = []
+        var actionSignatureCounts: [String: Int] = [:]
+        var lastProgressSnapshot: BrowserProgressSnapshot?
+        var stalledStepCount = 0
+        var recoveryCount = 0
+        let maxSteps = 12
+
+        for step in 1...maxSteps {
+            let state = await MainActor.run { browserController.browserSnapshot() }
+            let prompt = buildBrowserAgentPrompt(
+                goalText: intent.goalText,
+                initialURL: intent.initialURL,
+                state: state,
+                inspection: latestInspection,
+                lastResultSummary: lastResultSummary,
+                recentHistory: recentHistory,
+                step: step,
+                maxSteps: maxSteps
+            )
+
+            let turn = try await performCodexTurn(
+                prompt: prompt,
+                session: &session,
+                config: launchConfig,
+                forwardAssistantLines: false
+            )
+
+            if turn.result.exitCode != 0 {
+                let message = turn.stderrText.isEmpty
+                    ? "Browser agent turn failed with exit code \(turn.result.exitCode)"
+                    : turn.stderrText
+                throw ChromiumBrowserActionError(message: message)
+            }
+
+            let parsed = parseBrowserAssistantResponse(turn.assistantText)
+            if !parsed.displayText.isEmpty {
+                emit(.assistantDelta(parsed.displayText))
+            }
+
+            guard let command = parsed.command else {
+                throw ChromiumBrowserActionError(message: "Codex did not return a browser command.")
+            }
+
+            let signature = browserActionSignature(command, url: state.urlString)
+            actionSignatureCounts[signature, default: 0] += 1
+            if actionSignatureCounts[signature, default: 0] >= 3 {
+                let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
+                latestInspection = refreshedInspection
+                lastResultSummary = browserRecoverySummary(
+                    for: command,
+                    message: "The same action repeated without changing the page.",
+                    inspection: refreshedInspection,
+                    progressChanged: false
+                )
+                recentHistory.append("Recovery: repeated \(command.action.rawValue) without progress.")
+                emit(.assistantDelta(lastResultSummary))
+                actionSignatureCounts[signature] = 0
+                stalledStepCount = 0
+                recoveryCount += 1
+                if recoveryCount >= 4 {
+                    throw ChromiumBrowserActionError(message: "Browser agent is stuck on stale targets and repeated replans.")
+                }
+                continue
+            }
+
+            if command.action == .done {
+                let finalText = parsed.displayText.isEmpty
+                    ? (command.finalResponse?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Finished the browser task.")
+                    : parsed.displayText
+                let assistantMessage = Message(
+                    id: UUID(),
+                    sessionId: session.id,
+                    role: .assistant,
+                    text: finalText,
+                    source: .codexStdout,
+                    createdAt: Date()
+                )
+                try sessionStore.appendMessage(assistantMessage)
+                return
+            }
+
+            let previousProgressSnapshot = browserProgressSnapshot(state: state, inspection: latestInspection)
+            let execution: BrowserAgentExecutionResult
+            do {
+                execution = try await executeBrowserAgentCommand(command, inspection: latestInspection, controller: browserController)
+            } catch {
+                let message = (error as? ChromiumBrowserActionError)?.message ?? error.localizedDescription
+                guard isRecoverableBrowserError(message) else {
+                    throw error
+                }
+                let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
+                if let recoveredExecution = try await retryBrowserAgentCommandIfPossible(
+                    command,
+                    staleInspection: latestInspection,
+                    refreshedInspection: refreshedInspection,
+                    controller: browserController
+                ) {
+                    latestInspection = recoveredExecution.inspection ?? refreshedInspection
+                    lastResultSummary = recoveredExecution.summary
+                    recentHistory.append("Recovery: \(command.action.rawValue) -> \(recoveredExecution.summary)")
+                    if recentHistory.count > 6 {
+                        recentHistory.removeFirst(recentHistory.count - 6)
+                    }
+                    emit(.assistantDelta(recoveredExecution.summary))
+                    let recoveredState = await MainActor.run { browserController.browserSnapshot() }
+                    lastProgressSnapshot = browserProgressSnapshot(state: recoveredState, inspection: latestInspection)
+                    stalledStepCount = 0
+                    recoveryCount += 1
+                    continue
+                }
+                latestInspection = refreshedInspection
+                let currentState = await MainActor.run { browserController.browserSnapshot() }
+                let refreshedProgressSnapshot = browserProgressSnapshot(state: currentState, inspection: refreshedInspection)
+                lastResultSummary = browserRecoverySummary(
+                    for: command,
+                    message: message,
+                    inspection: refreshedInspection,
+                    progressChanged: refreshedProgressSnapshot != previousProgressSnapshot
+                )
+                recentHistory.append("Recovery: \(command.action.rawValue) -> \(message)")
+                emit(.assistantDelta(lastResultSummary))
+                stalledStepCount = 0
+                recoveryCount += 1
+                if recoveryCount >= 4 {
+                    throw ChromiumBrowserActionError(message: "Browser agent exceeded the recovery budget while trying to re-target the page.")
+                }
+                continue
+            }
+
+            latestInspection = execution.inspection ?? latestInspection
+            lastResultSummary = execution.summary
+            recentHistory.append("Step \(step): \(command.action.rawValue) -> \(execution.summary)")
+            if recentHistory.count > 6 {
+                recentHistory.removeFirst(recentHistory.count - 6)
+            }
+            emit(.assistantDelta(execution.summary))
+
+            let currentState = await MainActor.run { browserController.browserSnapshot() }
+            let progressSnapshot = browserProgressSnapshot(state: currentState, inspection: latestInspection)
+            if progressSnapshot == lastProgressSnapshot && command.action != .inspectPage {
+                stalledStepCount += 1
+            } else {
+                stalledStepCount = 0
+                recoveryCount = 0
+            }
+            lastProgressSnapshot = progressSnapshot
+
+            if stalledStepCount >= 2 {
+                let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
+                latestInspection = refreshedInspection
+                lastResultSummary = browserRecoverySummary(
+                    for: command,
+                    message: "The last actions did not visibly change the page state.",
+                    inspection: refreshedInspection,
+                    progressChanged: false
+                )
+                recentHistory.append("Recovery: refreshed inspection after stalled browser progress.")
+                emit(.assistantDelta(lastResultSummary))
+                stalledStepCount = 0
+                recoveryCount += 1
+                if recoveryCount >= 4 {
+                    throw ChromiumBrowserActionError(message: "Browser agent exceeded the recovery budget after repeated stalled steps.")
+                }
+            }
+        }
+
+        throw ChromiumBrowserActionError(message: "Browser agent loop exceeded the maximum number of steps.")
+    }
+
     private func buildChatPrompt(userText: String) -> String {
         """
         FORMAT INSTRUCTION:
@@ -316,6 +650,256 @@ final class ChatSessionService {
         USER:
         \(userText)
         """
+    }
+
+    private func buildBrowserAgentPrompt(
+        goalText: String,
+        initialURL: String?,
+        state: ChromiumBrowserState,
+        inspection: ChromiumInspection?,
+        lastResultSummary: String,
+        recentHistory: [String],
+        step: Int,
+        maxSteps: Int
+    ) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let stateJSON = (try? encoder.encode(state)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let inspectionJSON = inspection.map(encodeJSON(_:)) ?? "null"
+        let initialURLLine = initialURL.map { "Initial URL hint: \($0)" } ?? "Initial URL hint: none"
+        let historySection = recentHistory.isEmpty
+            ? "Recent browser history:\n- none yet"
+            : "Recent browser history:\n- " + recentHistory.joined(separator: "\n- ")
+
+        return """
+        You are controlling an embedded Chromium browser inside AgentHub.
+
+        Goal:
+        \(goalText)
+
+        Step \(step) of \(maxSteps)
+        \(initialURLLine)
+
+        Last browser result:
+        \(lastResultSummary)
+
+        \(historySection)
+
+        Current browser state JSON:
+        \(stateJSON)
+
+        Latest page inspection JSON:
+        \(inspectionJSON)
+
+        Rules:
+        - Choose exactly one next browser action.
+        - Prefer semantic structures from the inspection JSON first:
+          - semanticTargets
+          - forms
+          - controlGroups
+          - autocompleteSurfaces
+          - datePickers
+          - resultLists
+          - cards
+          - dialogs
+          - transactionalBoundaries
+        - Use selectors from the inspection JSON when needed, but do not rely on raw selectors if a semantic target is available.
+        - When you use a raw selector action, also include label when you know the semantic target so runtime recovery has a stable target name.
+        - If you do not have enough page information, use inspect_page.
+        - Never mention shell commands, files, local tools, or external browsers.
+        - Do not ask the user to click controls that you can operate yourself.
+        - If the goal is complete, return action done with a finalResponse.
+        - Keep any prose outside the command brief.
+
+        Allowed actions:
+        - inspect_page
+        - open_url
+        - click_selector
+        - click_text
+        - type_text
+        - select_option
+        - choose_autocomplete_option
+        - choose_grouped_option
+        - pick_date
+        - submit_form
+        - press_key
+        - scroll
+        - wait_for_text
+        - wait_for_selector
+        - wait_for_navigation
+        - wait_for_results
+        - wait_for_dialog
+        - wait_for_settle
+        - capture_snapshot
+        - done
+
+        Emit exactly one XML block at the end of your response:
+        <agenthub_browser_command>{"action":"inspect_page","selector":null,"text":null,"url":null,"key":null,"timeoutSeconds":null,"deltaY":null,"label":null,"finalResponse":null,"rationale":"..."}</agenthub_browser_command>
+        """
+    }
+
+    private func parseBrowserAssistantResponse(_ text: String) -> (displayText: String, command: BrowserAgentCommand?) {
+        BrowserAgentResponseParser.parse(text)
+    }
+
+    private func executeBrowserAgentCommand(
+        _ command: BrowserAgentCommand,
+        inspection: ChromiumInspection?,
+        controller: ChromiumBrowserController
+    ) async throws -> BrowserAgentExecutionResult {
+        let resolution = BrowserSemanticResolver.resolve(command, inspection: inspection)
+        switch command.action {
+        case .inspectPage:
+            let inspection = try await controller.inspectCurrentPageForAgent()
+            let controls = inspection.interactiveElements
+                .prefix(5)
+                .map { "\($0.label.isEmpty ? $0.text : $0.label) [\($0.selector)]" }
+                .joined(separator: ", ")
+            let summary = """
+            Inspected \(inspection.title) at \(inspection.url). Stage: \(inspection.pageStage). Semantic targets: \(inspection.semanticTargets.count). Forms: \(inspection.forms.count), control groups: \(inspection.controlGroups.count), autocomplete surfaces: \(inspection.autocompleteSurfaces.count), date pickers: \(inspection.datePickers.count), result lists: \(inspection.resultLists.count), cards: \(inspection.cards.count), dialogs: \(inspection.dialogs.count), transactional boundaries: \(inspection.transactionalBoundaries.count). Top controls: \(controls).
+            """
+            return BrowserAgentExecutionResult(summary: summary, inspection: inspection)
+        case .openURL:
+            guard let url = command.url else {
+                throw ChromiumBrowserActionError(message: "open_url requires a url.")
+            }
+            let state = try await controller.openURLForAgent(url)
+            return BrowserAgentExecutionResult(summary: "Opened \(state.urlString). Current title: \(state.title).", inspection: nil)
+        case .clickSelector:
+            if let selector = resolution.selector {
+                _ = try await controller.clickSelectorForAgent(
+                    selector,
+                    label: resolution.label,
+                    transactionalKind: resolution.transactionalKind
+                )
+                let state = await MainActor.run { controller.browserSnapshot() }
+                let targetText = resolution.label ?? selector
+                return BrowserAgentExecutionResult(summary: "Clicked semantic target \(targetText). Current page: \(state.urlString).", inspection: nil)
+            }
+            guard let selector = command.selector else {
+                throw ChromiumBrowserActionError(message: "click_selector requires a selector or semantic label.")
+            }
+            _ = try await controller.clickSelectorForAgent(selector, label: command.label)
+            let state = await MainActor.run { controller.browserSnapshot() }
+            return BrowserAgentExecutionResult(summary: "Clicked selector \(selector). Current page: \(state.urlString).", inspection: nil)
+        case .clickText:
+            guard let text = command.text else {
+                throw ChromiumBrowserActionError(message: "click_text requires text.")
+            }
+            if let selector = resolution.selector {
+                _ = try await controller.clickSelectorForAgent(
+                    selector,
+                    label: resolution.label ?? text,
+                    transactionalKind: resolution.transactionalKind
+                )
+                let state = await MainActor.run { controller.browserSnapshot() }
+                return BrowserAgentExecutionResult(summary: "Clicked semantic target \(resolution.label ?? text). Current page: \(state.urlString).", inspection: nil)
+            }
+            _ = try await controller.clickTextForAgent(text, label: command.label)
+            let state = await MainActor.run { controller.browserSnapshot() }
+            return BrowserAgentExecutionResult(summary: "Clicked visible text match \(text). Current page: \(state.urlString).", inspection: nil)
+        case .typeText:
+            guard let text = command.text else {
+                throw ChromiumBrowserActionError(message: "type_text requires text.")
+            }
+            guard let selector = resolution.selector ?? command.selector else {
+                throw ChromiumBrowserActionError(message: "type_text requires a selector or semantic label.")
+            }
+            _ = try await controller.typeTextForAgent(text, selector: selector)
+            return BrowserAgentExecutionResult(summary: "Typed \(text) into \(resolution.label ?? selector).", inspection: nil)
+        case .selectOption:
+            guard let text = command.text else {
+                throw ChromiumBrowserActionError(message: "select_option requires text.")
+            }
+            guard let selector = resolution.selector ?? command.selector else {
+                throw ChromiumBrowserActionError(message: "select_option requires a selector or semantic label.")
+            }
+            _ = try await controller.selectOptionForAgent(text, selector: selector)
+            return BrowserAgentExecutionResult(summary: "Selected option \(text) in \(resolution.label ?? selector).", inspection: nil)
+        case .chooseAutocompleteOption:
+            guard let text = command.text else {
+                throw ChromiumBrowserActionError(message: "choose_autocomplete_option requires text.")
+            }
+            _ = try await controller.chooseAutocompleteOptionForAgent(text, selector: resolution.selector ?? command.selector)
+            let inspection = try await controller.inspectCurrentPageForAgent()
+            return BrowserAgentExecutionResult(summary: "Chose autocomplete option \(text) for \(resolution.label ?? command.label ?? "the active field").", inspection: inspection)
+        case .chooseGroupedOption:
+            guard let text = command.text else {
+                throw ChromiumBrowserActionError(message: "choose_grouped_option requires text.")
+            }
+            _ = try await controller.chooseGroupedOptionForAgent(
+                text,
+                groupLabel: resolution.label ?? command.label,
+                selector: resolution.selector ?? command.selector
+            )
+            let inspection = try await controller.inspectCurrentPageForAgent()
+            return BrowserAgentExecutionResult(summary: "Chose grouped option \(text) in \(resolution.label ?? command.label ?? "the matching group").", inspection: inspection)
+        case .pickDate:
+            guard let text = command.text else {
+                throw ChromiumBrowserActionError(message: "pick_date requires text.")
+            }
+            _ = try await controller.pickDateForAgent(text, selector: resolution.selector ?? command.selector)
+            let inspection = try await controller.inspectCurrentPageForAgent()
+            return BrowserAgentExecutionResult(summary: "Picked date \(text) for \(resolution.label ?? command.label ?? "the matching date field").", inspection: inspection)
+        case .submitForm:
+            _ = try await controller.submitFormForAgent(
+                selector: resolution.selector ?? command.selector,
+                label: resolution.label ?? command.label,
+                transactionalKind: resolution.transactionalKind
+            )
+            let inspection = try await controller.inspectCurrentPageForAgent()
+            return BrowserAgentExecutionResult(summary: "Submitted \(resolution.label ?? command.label ?? "the best matching form").", inspection: inspection)
+        case .pressKey:
+            let key = command.key ?? command.text
+            guard let key else {
+                throw ChromiumBrowserActionError(message: "press_key requires a key.")
+            }
+            _ = try await controller.pressKeyForAgent(key)
+            return BrowserAgentExecutionResult(summary: "Pressed key \(key).", inspection: nil)
+        case .scroll:
+            let deltaY = command.deltaY ?? 600
+            _ = try await controller.scrollForAgent(deltaY: deltaY)
+            let state = await MainActor.run { controller.browserSnapshot() }
+            return BrowserAgentExecutionResult(summary: "Scrolled the page by \(Int(deltaY)) points on \(state.urlString).", inspection: nil)
+        case .waitForText:
+            guard let text = command.text else {
+                throw ChromiumBrowserActionError(message: "wait_for_text requires text.")
+            }
+            let timeout = command.timeoutSeconds ?? 8
+            let probe = try await controller.waitForTextForAgent(text, timeout: timeout)
+            return BrowserAgentExecutionResult(summary: "Observed \(probe.matchCount) visible matches for \(text) on \(probe.url).", inspection: nil)
+        case .waitForSelector:
+            guard let selector = command.selector else {
+                throw ChromiumBrowserActionError(message: "wait_for_selector requires a selector.")
+            }
+            let timeout = command.timeoutSeconds ?? 8
+            let probe = try await controller.waitForSelectorForAgent(selector, timeout: timeout)
+            return BrowserAgentExecutionResult(summary: "Observed selector \(selector) on \(probe.url).", inspection: nil)
+        case .waitForNavigation:
+            let timeout = command.timeoutSeconds ?? 8
+            let probe = try await controller.waitForNavigationForAgent(expectedURLFragment: command.url, timeout: timeout)
+            return BrowserAgentExecutionResult(summary: "Observed navigation to \(probe.url).", inspection: nil)
+        case .waitForResults:
+            let timeout = command.timeoutSeconds ?? 8
+            let probe = try await controller.waitForResultsForAgent(expectedText: command.text, timeout: timeout)
+            let inspection = try await controller.inspectCurrentPageForAgent()
+            return BrowserAgentExecutionResult(summary: "Observed \(probe.resultCount) visible results on \(probe.url).", inspection: inspection)
+        case .waitForDialog:
+            let timeout = command.timeoutSeconds ?? 8
+            let probe = try await controller.waitForDialogForAgent(expectedText: command.text, timeout: timeout)
+            let inspection = try await controller.inspectCurrentPageForAgent()
+            return BrowserAgentExecutionResult(summary: "Observed dialog \(probe.label.isEmpty ? "state" : probe.label) on \(probe.url).", inspection: inspection)
+        case .waitForSettle:
+            let timeout = command.timeoutSeconds ?? 8
+            let state = try await controller.waitForSettleForAgent(timeout: timeout)
+            let inspection = try await controller.inspectCurrentPageForAgent()
+            return BrowserAgentExecutionResult(summary: "Page settled at \(state.urlString).", inspection: inspection)
+        case .captureSnapshot:
+            let artifact = try await controller.captureSnapshotForAgent(label: command.label)
+            return BrowserAgentExecutionResult(summary: "Captured browser snapshot at \(artifact.filePath).", inspection: nil)
+        case .done:
+            return BrowserAgentExecutionResult(summary: command.finalResponse ?? "Browser task completed.", inspection: nil)
+        }
     }
 
     private func parseAssistantResponse(_ text: String) -> (displayText: String, proposal: TaskProposal?) {
@@ -352,6 +936,149 @@ final class ChatSessionService {
         return (stripped, proposal)
     }
 
+    private func encodeJSON<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return string
+    }
+
+    private func performCodexTurn(
+        prompt: String,
+        session: inout AssistantSession,
+        config: CodexLaunchConfig,
+        forwardAssistantLines: Bool
+    ) async throws -> BrowserCodexTurnResult {
+        let result: CodexExecutionResult
+        if let threadId = session.codexThreadId {
+            result = try await runtime.resumeThread(threadId: threadId, prompt: prompt, config: config)
+        } else {
+            result = try await runtime.startNewThread(prompt: prompt, config: config)
+            if let threadId = result.threadId {
+                session.codexThreadId = threadId
+            }
+        }
+        let assistantText = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if forwardAssistantLines, !assistantText.isEmpty {
+            assistantText.split(separator: "\n").forEach { emit(.assistantDelta(String($0))) }
+        }
+        let stderrText = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        return BrowserCodexTurnResult(assistantText: assistantText, stderrText: stderrText, result: result)
+    }
+
+    private func retryBrowserAgentCommandIfPossible(
+        _ command: BrowserAgentCommand,
+        staleInspection: ChromiumInspection?,
+        refreshedInspection: ChromiumInspection,
+        controller: ChromiumBrowserController
+    ) async throws -> BrowserAgentExecutionResult? {
+        guard let resolution = BrowserSemanticResolver.bestEffortRetarget(
+            command,
+            staleInspection: staleInspection,
+            refreshedInspection: refreshedInspection
+        ) else {
+            return nil
+        }
+
+        let retargetedCommand = apply(resolution: resolution, to: command)
+        let result = try await executeBrowserAgentCommand(retargetedCommand, inspection: refreshedInspection, controller: controller)
+        let targetDescription = resolution.label ?? resolution.selector ?? "the refreshed semantic target"
+        return BrowserAgentExecutionResult(
+            summary: "Recovered by re-targeting to \(targetDescription). \(result.summary)",
+            inspection: result.inspection
+        )
+    }
+
+    private func apply(resolution: BrowserSemanticResolution, to command: BrowserAgentCommand) -> BrowserAgentCommand {
+        var updated = command
+        if let selector = resolution.selector {
+            updated.selector = selector
+        }
+        if let label = resolution.label {
+            updated.label = label
+        }
+        if command.action == .clickText, updated.selector != nil {
+            updated.action = .clickSelector
+        }
+        return updated
+    }
+
+    private func browserActionSignature(_ command: BrowserAgentCommand, url: String) -> String {
+        let selector = command.selector ?? "-"
+        let text = command.text ?? "-"
+        let targetURL = command.url ?? "-"
+        let key = command.key ?? "-"
+        return "\(url)|\(command.action.rawValue)|\(selector)|\(text)|\(targetURL)|\(key)"
+    }
+
+    private func browserProgressSnapshot(state: ChromiumBrowserState, inspection: ChromiumInspection?) -> BrowserProgressSnapshot {
+        BrowserProgressSnapshot(
+            url: state.urlString,
+            title: state.title,
+            pageStage: inspection?.pageStage ?? "unknown",
+            formCount: inspection?.forms.count ?? 0,
+            resultListCount: inspection?.resultLists.count ?? 0,
+            cardCount: inspection?.cards.count ?? 0,
+            dialogLabels: (inspection?.dialogs ?? []).prefix(2).map { $0.label.lowercased() },
+            boundaryKinds: (inspection?.transactionalBoundaries ?? []).prefix(3).map { $0.kind.lowercased() },
+            primaryActionLabels: (inspection?.primaryActions ?? []).prefix(4).map { $0.label.lowercased() },
+            semanticTargetLabels: (inspection?.semanticTargets ?? []).prefix(6).map { $0.label.lowercased() },
+            topControlLabels: (inspection?.interactiveElements ?? [])
+                .prefix(5)
+                .map { ($0.label.isEmpty ? $0.text : $0.label).lowercased() }
+        )
+    }
+
+    private func isRecoverableBrowserError(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("no element matched")
+            || normalized.contains("no visible element matched")
+            || normalized.contains("no autocomplete option matched")
+            || normalized.contains("no grouped control option matched")
+            || normalized.contains("no visible date matched")
+            || normalized.contains("timed out waiting for selector")
+            || normalized.contains("timed out waiting for dialog")
+            || normalized.contains("timed out waiting for search results")
+    }
+
+    private func browserRecoverySummary(
+        for command: BrowserAgentCommand,
+        message: String,
+        inspection: ChromiumInspection,
+        progressChanged: Bool
+    ) -> String {
+        let dialogSummary = inspection.dialogs.prefix(2).map(\.label).filter { !$0.isEmpty }.joined(separator: ", ")
+        let actionSummary = inspection.primaryActions.prefix(3).map(\.label).filter { !$0.isEmpty }.joined(separator: ", ")
+        let autocompleteSummary = inspection.autocompleteSurfaces.prefix(2).map(\.label).filter { !$0.isEmpty }.joined(separator: ", ")
+        let groupSummary = inspection.controlGroups.prefix(2).map(\.label).filter { !$0.isEmpty }.joined(separator: ", ")
+        let dateSummary = inspection.datePickers.prefix(2).map(\.label).filter { !$0.isEmpty }.joined(separator: ", ")
+        let stageSummary = inspection.pageStage
+        let prefix = progressChanged
+            ? "The target reported an error, but the page state changed."
+            : "The target appears stale or the action was a no-op."
+
+        switch command.action {
+        case .typeText, .chooseAutocompleteOption:
+            return "\(prefix) \(message) Page stage: \(stageSummary). Visible autocomplete inputs: \(autocompleteSummary.isEmpty ? "none" : autocompleteSummary)."
+        case .chooseGroupedOption:
+            return "\(prefix) \(message) Page stage: \(stageSummary). Visible grouped controls: \(groupSummary.isEmpty ? "none" : groupSummary)."
+        case .pickDate:
+            return "\(prefix) \(message) Page stage: \(stageSummary). Visible date controls: \(dateSummary.isEmpty ? "none" : dateSummary)."
+        case .submitForm, .clickSelector, .clickText:
+            let dialogText = dialogSummary.isEmpty ? "none" : dialogSummary
+            return "\(prefix) \(message) Page stage: \(stageSummary). Visible dialogs: \(dialogText). Top actions now: \(actionSummary.isEmpty ? "none" : actionSummary)."
+        case .waitForResults:
+            return "\(prefix) \(message) Page stage: \(stageSummary). Result lists: \(inspection.resultLists.count), cards: \(inspection.cards.count), top actions: \(actionSummary.isEmpty ? "none" : actionSummary)."
+        case .waitForDialog:
+            return "\(prefix) \(message) Page stage: \(stageSummary). Visible dialogs: \(dialogSummary.isEmpty ? "none" : dialogSummary)."
+        default:
+            return "\(prefix) \(message) Page stage: \(stageSummary). Inspection was refreshed with \(inspection.interactiveElements.count) visible interactive controls."
+        }
+    }
+
     private func emit(_ event: ChatSessionEvent) {
         stateLock.lock()
         let continuation = continuation
@@ -385,4 +1112,24 @@ private struct TaskProposalPayload: Decodable {
     var externalDirectory: String?
     var repoPath: String?
     var runNow: Bool
+}
+
+private struct BrowserCodexTurnResult {
+    let assistantText: String
+    let stderrText: String
+    let result: CodexExecutionResult
+}
+
+private struct BrowserProgressSnapshot: Equatable {
+    let url: String
+    let title: String
+    let pageStage: String
+    let formCount: Int
+    let resultListCount: Int
+    let cardCount: Int
+    let dialogLabels: [String]
+    let boundaryKinds: [String]
+    let primaryActionLabels: [String]
+    let semanticTargetLabels: [String]
+    let topControlLabels: [String]
 }

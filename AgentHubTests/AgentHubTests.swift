@@ -112,6 +112,143 @@ struct AgentHubTests {
         #expect(intent?.request.locationHint == "culver city")
     }
 
+    @Test
+    func openTableBookingIntentParsesDateTimeAndPartySize() throws {
+        let intent = ChatBrowserIntent.parse("book opentable. Sake House By Hikari. culver city. tomorrow. 7:30pm. party of 4.")
+
+        #expect(intent != nil)
+        #expect(intent?.bookingParameters.dateText == "tomorrow")
+        #expect(intent?.bookingParameters.timeText == "7:30pm")
+        #expect(intent?.bookingParameters.partySize == 4)
+    }
+
+    @Test
+    func genericBrowserIntentParsesKnownTravelSite() throws {
+        let intent = GenericBrowserChatIntent.parse("book a hotel in tokyo on booking.com for next week")
+
+        #expect(intent != nil)
+        guard let intent else {
+            Issue.record("Expected a generic browser intent.")
+            return
+        }
+        #expect(intent.initialURL == "https://www.booking.com")
+        #expect(intent.goalText.lowercased().contains("tokyo"))
+    }
+
+    @Test
+    func browserAgentResponseParserExtractsCommandPayload() throws {
+        let response = """
+        I found the destination field.
+        <agenthub_browser_command>{"action":"type_text","selector":null,"text":"Tokyo","url":null,"key":null,"timeoutSeconds":null,"deltaY":null,"label":"Destination","finalResponse":null,"rationale":"Fill the destination field."}</agenthub_browser_command>
+        """
+
+        let parsed = BrowserAgentResponseParser.parse(response)
+
+        #expect(parsed.displayText == "I found the destination field.")
+        #expect(parsed.command?.action == .typeText)
+        #expect(parsed.command?.text == "Tokyo")
+        #expect(parsed.command?.label == "Destination")
+    }
+
+    @Test
+    func browserSemanticResolverRetargetsStaleFieldSelector() throws {
+        let command = BrowserAgentCommand(
+            action: .typeText,
+            url: nil,
+            selector: "#destination-old",
+            text: "Tokyo",
+            key: nil,
+            timeoutSeconds: nil,
+            deltaY: nil,
+            label: "Destination",
+            finalResponse: nil,
+            rationale: nil
+        )
+
+        let staleInspection = sampleInspection(destinationSelector: "#destination-old")
+        let refreshedInspection = sampleInspection(destinationSelector: "#destination-new")
+
+        let resolution = BrowserSemanticResolver.bestEffortRetarget(
+            command,
+            staleInspection: staleInspection,
+            refreshedInspection: refreshedInspection
+        )
+
+        #expect(resolution?.selector == "#destination-new")
+        #expect(resolution?.label == "Destination")
+    }
+}
+
+private func sampleInspection(destinationSelector: String) -> ChromiumInspection {
+    ChromiumInspection(
+        title: "Travel Search",
+        url: "https://example.com/search",
+        pageStage: "form",
+        formCount: 1,
+        hasSearchField: true,
+        interactiveElements: [
+            ChromiumInteractiveElement(
+                id: "element-0",
+                role: "input",
+                label: "Destination",
+                text: "",
+                selector: destinationSelector,
+                value: nil,
+                href: nil,
+                purpose: "location",
+                groupLabel: "Search form",
+                priority: 90
+            )
+        ],
+        forms: [
+            ChromiumSemanticForm(
+                id: "form-0",
+                label: "Search form",
+                selector: "form.search",
+                submitLabel: "Search",
+                fields: [
+                    ChromiumSemanticFormField(
+                        id: "field-0",
+                        label: "Destination",
+                        selector: destinationSelector,
+                        controlType: "text",
+                        value: nil,
+                        options: [],
+                        isRequired: true
+                    )
+                ]
+            )
+        ],
+        resultLists: [],
+        cards: [],
+        dialogs: [],
+        controlGroups: [],
+        autocompleteSurfaces: [
+            ChromiumAutocompleteSurface(
+                id: "autocomplete-0",
+                label: "Destination",
+                inputSelector: destinationSelector,
+                optionSelector: "#destination-options",
+                options: ["Tokyo", "Sydney"]
+            )
+        ],
+        datePickers: [],
+        primaryActions: [],
+        transactionalBoundaries: [],
+        semanticTargets: [
+            ChromiumSemanticTarget(
+                id: "target-destination",
+                kind: "autocomplete",
+                label: "Destination",
+                selector: destinationSelector,
+                purpose: "location",
+                groupLabel: "Search form",
+                transactionalKind: nil,
+                priority: 95
+            )
+        ],
+        booking: nil
+    )
 }
 
 private struct DummyRuntime: CodexRuntime {

@@ -15,11 +15,17 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         let delay: TimeInterval
     }
 
-    private struct VisibleTextProbe: Decodable {
+    struct VisibleTextProbe: Decodable {
         let url: String
         let title: String
         let matchCount: Int
         let firstMatch: String
+    }
+
+    private struct BrowserProgressMarker: Equatable {
+        let url: String
+        let title: String
+        let visibleLabels: [String]
     }
 
     @Published private(set) var state = ChromiumBrowserState()
@@ -191,6 +197,511 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
             progress?("The embedded Chromium flow failed: \(message)")
             throw (error as? ChromiumBrowserActionError) ?? ChromiumBrowserActionError(message: message)
         }
+    }
+
+    func runRestaurantBookingFlow(
+        request: ChromiumRestaurantBookingRequest,
+        progress: ((String) -> Void)? = nil
+    ) async throws -> ChromiumRestaurantBookingFlowResult {
+        let venue = try await runRestaurantSearchFlow(request: request.searchRequest, progress: progress)
+        progress?("Inspecting the OpenTable venue page for reservation controls.")
+        var inspection = try await inspectCurrentPageForAgent()
+        try await waitForPageToSettle(timeout: 5)
+
+        var selectedPartySize: String?
+        var selectedDate: String?
+        var selectedTime: String?
+        var selectedSlot: String?
+
+        if let partySize = request.parameters.partySize {
+            progress?("Setting party size to \(partySize).")
+            let valueJSON = try await performRetriedAsyncAction(
+                name: "opentable_party_size",
+                detail: "\(partySize)",
+                policy: RetryPolicy(attempts: 2, delay: 0.8)
+            ) {
+                try await self.evaluateJSONScript(
+                    ChromiumBrowserScripts.selectOpenTablePartySize(partySize),
+                    label: "Select OpenTable party size"
+                )
+            } shouldRetry: { _ in
+                try await self.waitForPageToSettle(timeout: 4)
+                return false
+            }
+            selectedPartySize = parseSelectionLabel(from: valueJSON)
+            inspection = try await inspectCurrentPageForAgent()
+        }
+
+        if let dateText = request.parameters.dateText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !dateText.isEmpty {
+            progress?("Selecting date \(dateText).")
+            let valueJSON = try await performRetriedAsyncAction(
+                name: "opentable_date",
+                detail: dateText,
+                policy: RetryPolicy(attempts: 2, delay: 0.8)
+            ) {
+                try await self.evaluateJSONScript(
+                    ChromiumBrowserScripts.selectOpenTableDate(dateText),
+                    label: "Select OpenTable date"
+                )
+            } shouldRetry: { _ in
+                try await self.waitForPageToSettle(timeout: 4)
+                return false
+            }
+            selectedDate = parseSelectionLabel(from: valueJSON) ?? dateText
+            inspection = try await inspectCurrentPageForAgent()
+        }
+
+        if let timeText = request.parameters.timeText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !timeText.isEmpty {
+            progress?("Selecting time \(timeText).")
+            let valueJSON = try await performRetriedAsyncAction(
+                name: "opentable_time",
+                detail: timeText,
+                policy: RetryPolicy(attempts: 2, delay: 0.8)
+            ) {
+                try await self.evaluateJSONScript(
+                    ChromiumBrowserScripts.selectOpenTableTime(timeText),
+                    label: "Select OpenTable time"
+                )
+            } shouldRetry: { _ in
+                try await self.waitForPageToSettle(timeout: 4)
+                return false
+            }
+            selectedTime = parseSelectionLabel(from: valueJSON) ?? timeText
+            inspection = try await inspectCurrentPageForAgent()
+        }
+
+        progress?("Selecting the best available reservation slot.")
+        let slotJSON = try await performRetriedAsyncAction(
+            name: "opentable_slot",
+            detail: request.parameters.timeText ?? "best available",
+            policy: RetryPolicy(attempts: 2, delay: 1.0)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.clickBestOpenTableSlot(preferredTime: request.parameters.timeText),
+                label: "Click best OpenTable slot"
+            )
+        } shouldRetry: { _ in
+            try await self.waitForPageToSettle(timeout: 5)
+            return false
+        }
+        selectedSlot = parseSelectionLabel(from: slotJSON)
+        inspection = try await inspectCurrentPageForAgent()
+
+        let confirmationButtons = inspection.booking?.confirmationButtons ?? []
+        flowStatus = .succeeded("Reached the confirmation boundary for \(venue.venueName)")
+        appendLog("Stopped before final confirmation on the OpenTable venue flow.")
+        progress?("Stopped before final confirmation. Approval is still required for any final reserve or confirm action.")
+
+        return ChromiumRestaurantBookingFlowResult(
+            venueName: venue.venueName,
+            finalURL: state.urlString,
+            finalTitle: state.title,
+            selectedDate: selectedDate,
+            selectedTime: selectedTime,
+            selectedPartySize: selectedPartySize,
+            selectedSlot: selectedSlot,
+            confirmationButtons: confirmationButtons
+        )
+    }
+
+    func browserSnapshot() -> ChromiumBrowserState {
+        state
+    }
+
+    func openURLForAgent(_ url: String) async throws -> ChromiumBrowserState {
+        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Open URL requires a non-empty URL.")
+        }
+        try await openURLAndWaitUntilReady(trimmedURL)
+        return state
+    }
+
+    func inspectCurrentPageForAgent() async throws -> ChromiumInspection {
+        let valueJSON = try await evaluateJSONScript(ChromiumBrowserScripts.inspectPage, label: "Inspect current page")
+        let inspection = try decode(ChromiumInspection.self, from: valueJSON)
+        lastInspection = inspection
+        appendLog("Inspection captured \(inspection.interactiveElements.count) interactive elements.")
+        return inspection
+    }
+
+    func typeTextForAgent(_ text: String, selector: String) async throws -> String {
+        let trimmedSelector = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSelector.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Type text requires a selector.")
+        }
+        let result = try await performRetriedAsyncAction(
+            name: "type_text",
+            detail: "\(trimmedSelector) <= \(text)",
+            policy: RetryPolicy(attempts: 2, delay: 0.5)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.typeText(text, selector: trimmedSelector),
+                label: "Type text for agent"
+            )
+        } shouldRetry: { _ in
+            false
+        }
+        appendLog("Typed text into \(trimmedSelector).")
+        return result
+    }
+
+    func selectOptionForAgent(_ text: String, selector: String) async throws -> String {
+        let trimmedSelector = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSelector.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Select option requires a selector.")
+        }
+        guard !trimmedText.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Select option requires option text.")
+        }
+        let result = try await performRetriedAsyncAction(
+            name: "select_option",
+            detail: "\(trimmedSelector) => \(trimmedText)",
+            policy: RetryPolicy(attempts: 2, delay: 0.4)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.selectOption(selector: trimmedSelector, text: trimmedText),
+                label: "Select option for agent"
+            )
+        } shouldRetry: { _ in
+            false
+        }
+        appendLog("Selected option \(trimmedText) in \(trimmedSelector).")
+        return result
+    }
+
+    func chooseAutocompleteOptionForAgent(_ text: String, selector: String?) async throws -> String {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSelector = selector?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Autocomplete selection requires option text.")
+        }
+        let result = try await performRetriedAsyncAction(
+            name: "choose_autocomplete_option",
+            detail: "\(trimmedSelector ?? "active input") => \(trimmedText)",
+            policy: RetryPolicy(attempts: 2, delay: 0.5)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.chooseAutocompleteOption(selector: trimmedSelector, text: trimmedText),
+                label: "Choose autocomplete option for agent"
+            )
+        } shouldRetry: { _ in
+            try await self.waitForPageToSettle(timeout: 2)
+            return false
+        }
+        appendLog("Chose autocomplete option \(trimmedText).")
+        return result
+    }
+
+    func chooseGroupedOptionForAgent(_ text: String, groupLabel: String?, selector: String?) async throws -> String {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedGroupLabel = groupLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSelector = selector?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Grouped option selection requires option text.")
+        }
+        let result = try await performRetriedAsyncAction(
+            name: "choose_grouped_option",
+            detail: "\(trimmedGroupLabel ?? trimmedSelector ?? "best group") => \(trimmedText)",
+            policy: RetryPolicy(attempts: 2, delay: 0.5)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.chooseGroupedOption(
+                    selector: trimmedSelector,
+                    groupLabel: trimmedGroupLabel,
+                    text: trimmedText
+                ),
+                label: "Choose grouped option for agent"
+            )
+        } shouldRetry: { _ in
+            try await self.waitForPageToSettle(timeout: 2)
+            return false
+        }
+        appendLog("Chose grouped option \(trimmedText).")
+        return result
+    }
+
+    func pickDateForAgent(_ text: String, selector: String?) async throws -> String {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSelector = selector?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Pick date requires a target date string.")
+        }
+        let result = try await performRetriedAsyncAction(
+            name: "pick_date",
+            detail: "\(trimmedSelector ?? "best date control") => \(trimmedText)",
+            policy: RetryPolicy(attempts: 2, delay: 0.7)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.pickDate(selector: trimmedSelector, text: trimmedText),
+                label: "Pick date for agent"
+            )
+        } shouldRetry: { _ in
+            try await self.waitForPageToSettle(timeout: 2)
+            return false
+        }
+        appendLog("Picked date \(trimmedText).")
+        return result
+    }
+
+    func submitFormForAgent(selector: String?, label: String?, transactionalKind: String? = nil) async throws -> String {
+        let trimmedSelector = selector?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = trimmedLabel ?? trimmedSelector ?? "best matching form"
+        try await requestApprovalIfNeeded(
+            actionName: "submit_form",
+            detail: detail,
+            rationale: "Submitting a form may trigger a booking, checkout, or confirmation step.",
+            transactionalKind: transactionalKind
+        )
+        let baselineInspection = lastInspection
+        let result = try await performRetriedAsyncAction(
+            name: "submit_form",
+            detail: detail,
+            policy: RetryPolicy(attempts: 3, delay: 0.8)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.submitForm(selector: trimmedSelector, label: trimmedLabel),
+                label: "Submit form for agent"
+            )
+        } shouldRetry: { [weak self] _ in
+            guard let self else { return false }
+            try await self.waitForPageToSettle(timeout: 2)
+            if try await self.didPageProgress(from: baselineInspection) {
+                return false
+            }
+            return false
+        }
+        appendLog("Submitted form \(detail).")
+        return result
+    }
+
+    func clickSelectorForAgent(_ selector: String, label: String? = nil, transactionalKind: String? = nil) async throws -> String {
+        let trimmedSelector = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSelector.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Click selector requires a selector.")
+        }
+        let normalizedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = (normalizedLabel?.isEmpty == false ? normalizedLabel : nil) ?? trimmedSelector
+        try await requestApprovalIfNeeded(
+            actionName: "click_selector",
+            detail: detail,
+            rationale: "This selector click may trigger a booking, checkout, or confirmation action.",
+            transactionalKind: transactionalKind
+        )
+        let baselineURL = state.urlString
+        let baselineTitle = state.title
+        let baselineInspection = lastInspection
+        let result = try await performRetriedAsyncAction(
+            name: "click_selector",
+            detail: trimmedSelector,
+            policy: RetryPolicy(attempts: 3, delay: 0.8)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.clickSelector(trimmedSelector),
+                label: "Click selector for agent"
+            )
+        } shouldRetry: { [weak self] _ in
+            guard let self else { return true }
+            if self.didPageRespond(afterSubmittingFromURL: baselineURL, title: baselineTitle) {
+                return false
+            }
+            try await self.waitForPageToSettle(timeout: 2)
+            if try await self.didPageProgress(from: baselineInspection) {
+                return false
+            }
+            return false
+        }
+        appendLog("Clicked selector \(detail).")
+        return result
+    }
+
+    func clickTextForAgent(_ text: String, label: String? = nil, transactionalKind: String? = nil) async throws -> String {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Click text requires visible text.")
+        }
+        let normalizedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = (normalizedLabel?.isEmpty == false ? normalizedLabel : nil) ?? trimmedText
+        try await requestApprovalIfNeeded(
+            actionName: "click_text",
+            detail: detail,
+            rationale: "This click may trigger a booking, checkout, or confirmation action.",
+            transactionalKind: transactionalKind
+        )
+        let baselineInspection = lastInspection
+        let result = try await performRetriedAsyncAction(
+            name: "click_text",
+            detail: trimmedText,
+            policy: RetryPolicy(attempts: 3, delay: 0.8)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.clickElementContainingText(trimmedText),
+                label: "Click text for agent"
+            )
+        } shouldRetry: { [weak self] _ in
+            guard let self else { return false }
+            try await self.waitForPageToSettle(timeout: 2)
+            if try await self.didPageProgress(from: baselineInspection) {
+                return false
+            }
+            return false
+        }
+        appendLog("Clicked visible text match \(detail).")
+        return result
+    }
+
+    func pressKeyForAgent(_ key: String) async throws -> String {
+        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Press key requires a key.")
+        }
+        let result = try await performRetriedAsyncAction(
+            name: "press_key",
+            detail: trimmedKey,
+            policy: RetryPolicy(attempts: 2, delay: 0.4)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.pressKey(trimmedKey),
+                label: "Press key for agent"
+            )
+        } shouldRetry: { _ in
+            false
+        }
+        appendLog("Pressed key \(trimmedKey).")
+        return result
+    }
+
+    func scrollForAgent(deltaY: Double) async throws -> String {
+        let result = try await performRetriedAsyncAction(
+            name: "scroll",
+            detail: "deltaY=\(deltaY)",
+            policy: RetryPolicy(attempts: 2, delay: 0.3)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.scrollBy(deltaY: deltaY),
+                label: "Scroll for agent"
+            )
+        } shouldRetry: { _ in
+            false
+        }
+        appendLog("Scrolled by \(Int(deltaY)).")
+        return result
+    }
+
+    func waitForTextForAgent(_ text: String, timeout: TimeInterval) async throws -> VisibleTextProbe {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Wait for text requires text.")
+        }
+        guard let probe = try await waitForVisibleText(trimmedText, timeout: timeout) else {
+            throw ChromiumBrowserActionError(message: "Timed out waiting for visible text \(trimmedText).")
+        }
+        appendLog("Observed visible text match \(trimmedText).")
+        return probe
+    }
+
+    func waitForSelectorForAgent(_ selector: String, timeout: TimeInterval) async throws -> ChromiumSelectorProbe {
+        let trimmedSelector = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSelector.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Wait for selector requires a selector.")
+        }
+        var latestProbe: ChromiumSelectorProbe?
+        try await waitUntil(name: "selector \(trimmedSelector)", timeout: timeout) { [weak self] in
+            guard let self else { return false }
+            let valueJSON = try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.probeSelector(trimmedSelector),
+                label: "Probe selector"
+            )
+            let probe = try self.decode(ChromiumSelectorProbe.self, from: valueJSON)
+            latestProbe = probe
+            return probe.found
+        }
+        guard let latestProbe else {
+            throw ChromiumBrowserActionError(message: "Timed out waiting for selector \(trimmedSelector).")
+        }
+        appendLog("Observed selector \(trimmedSelector).")
+        return latestProbe
+    }
+
+    func waitForNavigationForAgent(expectedURLFragment: String?, timeout: TimeInterval) async throws -> ChromiumSelectorProbe {
+        let previousURL = state.urlString
+        let previousTitle = state.title
+        let expectedFragment = expectedURLFragment?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var latestProbe: ChromiumSelectorProbe?
+        try await waitUntil(name: "navigation", timeout: timeout) { [weak self] in
+            guard let self else { return false }
+            let valueJSON = try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.navigationProbe(
+                    previousURL: previousURL,
+                    previousTitle: previousTitle,
+                    expectedURLFragment: expectedFragment
+                ),
+                label: "Probe navigation"
+            )
+            let probe = try self.decode(ChromiumSelectorProbe.self, from: valueJSON)
+            latestProbe = probe
+            return probe.found
+        }
+        guard let latestProbe else {
+            throw ChromiumBrowserActionError(message: "Timed out waiting for navigation.")
+        }
+        appendLog("Observed navigation to \(latestProbe.url).")
+        return latestProbe
+    }
+
+    func waitForResultsForAgent(expectedText: String?, timeout: TimeInterval) async throws -> ChromiumResultsProbe {
+        let trimmedText = expectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var latestProbe: ChromiumResultsProbe?
+        try await waitUntil(name: "results", timeout: timeout) { [weak self] in
+            guard let self else { return false }
+            let valueJSON = try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.resultsProbe(expectedText: trimmedText),
+                label: "Probe results"
+            )
+            let probe = try self.decode(ChromiumResultsProbe.self, from: valueJSON)
+            latestProbe = probe
+            return probe.found
+        }
+        guard let latestProbe else {
+            throw ChromiumBrowserActionError(message: "Timed out waiting for search results.")
+        }
+        appendLog("Observed \(latestProbe.resultCount) visible results.")
+        return latestProbe
+    }
+
+    func waitForDialogForAgent(expectedText: String?, timeout: TimeInterval) async throws -> ChromiumDialogProbe {
+        let trimmedText = expectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var latestProbe: ChromiumDialogProbe?
+        try await waitUntil(name: "dialog", timeout: timeout) { [weak self] in
+            guard let self else { return false }
+            let valueJSON = try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.dialogProbe(expectedText: trimmedText),
+                label: "Probe dialog"
+            )
+            let probe = try self.decode(ChromiumDialogProbe.self, from: valueJSON)
+            latestProbe = probe
+            return probe.found
+        }
+        guard let latestProbe else {
+            throw ChromiumBrowserActionError(message: "Timed out waiting for dialog.")
+        }
+        appendLog("Observed dialog \(latestProbe.label).")
+        return latestProbe
+    }
+
+    func waitForSettleForAgent(timeout: TimeInterval) async throws -> ChromiumBrowserState {
+        try await waitForPageToSettle(timeout: timeout)
+        appendLog("Page settled at \(state.urlString).")
+        return state
+    }
+
+    func captureSnapshotForAgent(label: String?) async throws -> ChromiumSnapshotArtifact {
+        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return try await captureSnapshot(label: trimmedLabel.isEmpty ? "agent" : trimmedLabel)
     }
 
     func setAddressBarEditing(_ isEditing: Bool) {
@@ -478,6 +989,21 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         throw ChromiumBrowserActionError(message: "Timed out waiting for \(name).")
     }
 
+    private func waitForPageToSettle(timeout: TimeInterval) async throws {
+        try await waitUntil(name: "page settle", timeout: timeout, pollInterval: .milliseconds(300)) { [weak self] in
+            guard let self else { return false }
+            if self.state.isLoading {
+                return false
+            }
+            let valueJSON = try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.retryProbe(previousURL: self.state.urlString, previousTitle: self.state.title),
+                label: "Probe page settle"
+            )
+            let probe = try self.decode(ChromiumRetryProbe.self, from: valueJSON)
+            return probe.readyState == "complete"
+        }
+    }
+
     private func captureSnapshot(label: String) async throws -> ChromiumSnapshotArtifact {
         let pngData: Data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
             browserView.capturePNGSnapshot { data, errorMessage in
@@ -664,6 +1190,38 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         return false
     }
 
+    private func didPageProgress(from baselineInspection: ChromiumInspection?) async throws -> Bool {
+        let latestInspection = try await inspectCurrentPageForAgent()
+        return progressMarker(for: latestInspection) != progressMarker(for: baselineInspection)
+    }
+
+    private func progressMarker(for inspection: ChromiumInspection?) -> BrowserProgressMarker {
+        let labels = (inspection?.interactiveElements ?? [])
+            .prefix(6)
+            .map { element in
+                let source = element.label.isEmpty ? element.text : element.label
+                return source.lowercased()
+            }
+        return BrowserProgressMarker(url: state.urlString, title: state.title, visibleLabels: labels)
+    }
+
+    private func parseSelectionLabel(from valueJSON: String) -> String? {
+        guard let data = valueJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let keys = ["label", "value", "control"]
+        for key in keys {
+            if let value = object[key] as? String {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed
+                }
+            }
+        }
+        return nil
+    }
+
     private func handleGenericResult(_ result: Result<String, ChromiumBrowserActionError>, successPrefix: String) {
         switch result {
         case let .success(valueJSON):
@@ -715,18 +1273,26 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         return remaining
     }
 
-    private func shouldRequireApproval(actionName: String, detail: String) -> Bool {
+    private func shouldRequireApproval(actionName: String, detail: String, transactionalKind: String?) -> Bool {
+        if transactionalKind == "final_confirmation" {
+            return true
+        }
         let haystack = "\(actionName) \(detail)".lowercased()
         return haystack.contains("reserve")
-            || haystack.contains("book")
-            || haystack.contains("checkout")
             || haystack.contains("purchase")
             || haystack.contains("pay")
             || haystack.contains("confirm")
+            || haystack.contains("complete booking")
+            || haystack.contains("place order")
     }
 
-    private func requestApprovalIfNeeded(actionName: String, detail: String, rationale: String) async throws {
-        guard shouldRequireApproval(actionName: actionName, detail: detail) else { return }
+    private func requestApprovalIfNeeded(
+        actionName: String,
+        detail: String,
+        rationale: String,
+        transactionalKind: String? = nil
+    ) async throws {
+        guard shouldRequireApproval(actionName: actionName, detail: detail, transactionalKind: transactionalKind) else { return }
         lastApprovalDecision = nil
         let pending = ChromiumPendingApproval(actionName: actionName, detail: detail, rationale: rationale, createdAt: Date())
         approvalStatus = .pending(pending)
