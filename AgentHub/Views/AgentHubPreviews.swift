@@ -17,13 +17,20 @@ private enum PreviewFactory {
         let personaManager = PersonaManager(paths: paths)
         let runtime = PreviewCodexRuntime()
         let configStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = AuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
+        _ = try? authStore.loadOrCreateDefault()
+        let authManager = AuthManager(
+            store: authStore,
+            providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths)
+        )
         let chatSessionService = ChatSessionService(
             sessionStore: sessionStore,
             personaManager: personaManager,
             runtime: runtime,
             paths: paths,
-            runtimeConfigStore: configStore
+            runtimeConfigStore: configStore,
+            authManager: authManager
         )
 
         let taskStore = (try? TaskStore(paths: paths)) ?? fatalTaskStore(paths: paths)
@@ -37,7 +44,8 @@ private enum PreviewFactory {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
-            runtimeFactory: { PreviewCodexRuntime() }
+            authManager: authManager,
+            runtimeFactory: { runtime }
         )
 
         let viewModel = ChatViewModel(
@@ -49,6 +57,33 @@ private enum PreviewFactory {
         viewModel.messages = sampleMessages()
         viewModel.pendingProposal = sampleProposal()
         return viewModel
+    }
+
+    @MainActor
+    static func makeAuthViewModel(authenticated: Bool) -> AuthViewModel {
+        let paths = makePaths()
+        try? paths.prepare()
+
+        let authStore = AuthStore(paths: paths)
+        let runtime = PreviewCodexRuntime()
+        let authManager = AuthManager(
+            store: authStore,
+            providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths)
+        )
+        let state = AuthState(
+            status: authenticated ? .authenticated : .unauthenticated,
+            accountLabel: authenticated ? "preview@example.com" : nil,
+            lastValidatedAt: authenticated ? Date() : nil,
+            failureReason: authenticated ? nil : "Sign in before using AgentHub.",
+            updatedAt: Date()
+        )
+        try? authStore.save(state)
+
+        return AuthViewModel(
+            authManager: authManager,
+            initialState: state,
+            openURL: { _ in true }
+        )
     }
 
     @MainActor
@@ -69,7 +104,14 @@ private enum PreviewFactory {
         let taskRunStore = TaskRunStore(paths: paths)
         let activityLogStore = ActivityLogStore(paths: paths)
         let configStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = AuthStore(paths: paths)
         _ = try? configStore.loadOrCreateDefault()
+        _ = try? authStore.loadOrCreateDefault()
+        let runtime = PreviewCodexRuntime()
+        let authManager = AuthManager(
+            store: authStore,
+            providerClient: CodexAuthProviderClient(runtime: runtime, paths: paths)
+        )
         let orchestrator = TaskOrchestrator(
             taskStore: taskStore,
             taskRunStore: taskRunStore,
@@ -78,7 +120,8 @@ private enum PreviewFactory {
             workspaceManager: WorkspaceManager(),
             paths: paths,
             runtimeConfigStore: configStore,
-            runtimeFactory: { PreviewCodexRuntime() }
+            authManager: authManager,
+            runtimeFactory: { runtime }
         )
         let scheduleRunner = ScheduleRunner(taskStore: taskStore, orchestrator: orchestrator, paths: paths)
         let viewModel = TasksViewModel(taskOrchestrator: orchestrator, scheduleRunner: scheduleRunner, appExecutableURL: URL(fileURLWithPath: "/Applications/AgentHub.app/Contents/MacOS/AgentHub"))
@@ -144,16 +187,24 @@ private enum PreviewFactory {
     }
 }
 
-private final class PreviewCodexRuntime: CodexRuntime {
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: "preview-thread", exitCode: 0, stdout: "", stderr: "")
+private final class PreviewCodexRuntime: AssistantRuntime {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: "preview-thread", exitCode: 0, stdout: "", stderr: "")
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
     }
 
-    func streamEvents() -> AsyncStream<CodexEvent> {
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
+        AssistantLoginStatusResult(
+            isAuthenticated: true,
+            accountEmail: "preview@example.com",
+            message: "Logged in as preview@example.com"
+        )
+    }
+
+    func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
             continuation.finish()
         }
@@ -166,7 +217,7 @@ private struct ChatSurfacePreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeChatViewModel()
 
     var body: some View {
-        ChatView(viewModel: viewModel, isPanelPresented: false, onTogglePanel: {})
+        ChatView(viewModel: viewModel, isPanelPresented: false, onTogglePanel: {}, isInputEnabled: true, blockedMessage: nil)
             .frame(width: 1120, height: 760)
             .padding()
             .background(Color.black)
@@ -177,10 +228,24 @@ private struct ChatBusyPreviewHost: View {
     @StateObject private var viewModel = PreviewFactory.makeBusyChatViewModel()
 
     var body: some View {
-        ChatView(viewModel: viewModel, isPanelPresented: true, onTogglePanel: {})
+        ChatView(viewModel: viewModel, isPanelPresented: true, onTogglePanel: {}, isInputEnabled: true, blockedMessage: nil)
             .frame(width: 1120, height: 760)
             .padding()
             .background(Color.black)
+    }
+}
+
+private struct LoginGatePreviewHost: View {
+    @StateObject private var viewModel = PreviewFactory.makeAuthViewModel(authenticated: false)
+
+    var body: some View {
+        CodexLoginGateView(
+            viewModel: viewModel,
+            onStartLogin: {},
+            onRetryStatus: {},
+            onCancelLogin: {}
+        )
+        .frame(width: 1120, height: 760)
     }
 }
 
@@ -230,5 +295,12 @@ struct TaskEditorPreview: PreviewProvider {
         TaskEditorSheetView(task: PreviewFactory.sampleTasks().first, onSave: { _, _ in }, onCancel: {})
             .frame(width: 760, height: 620)
             .previewDisplayName("Task Editor")
+    }
+}
+
+struct LoginGatePreview: PreviewProvider {
+    static var previews: some View {
+        LoginGatePreviewHost()
+            .previewDisplayName("Codex Login Gate")
     }
 }

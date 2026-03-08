@@ -12,7 +12,11 @@ struct TaskEditorSheetView: View {
     let onCancel: () -> Void
     private let headerHeight: CGFloat = 86
 
-    init(task: TaskRecord?, onSave: @escaping (TaskRecord, Bool) -> Void, onCancel: @escaping () -> Void) {
+    init(
+        task: TaskRecord?,
+        onSave: @escaping (TaskRecord, Bool) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
         let now = Date()
         let value = task ?? TaskRecord(
             id: UUID(),

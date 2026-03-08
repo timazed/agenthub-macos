@@ -9,6 +9,7 @@ import Foundation
 import Testing
 @testable import AgentHub
 
+@MainActor
 struct AgentHubTests {
     @Test
     func taskStoreRoundTripsThreadBackedTasks() throws {
@@ -46,6 +47,20 @@ struct AgentHubTests {
     func computeNextRunSupportsManualAndInterval() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let paths = AppPaths(root: root)
+        let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
+        let authStore = AuthStore(paths: paths)
+        let authManager = AuthManager(
+            store: authStore,
+            providerClient: StubAuthProviderClient(
+                refreshedState: AuthState(
+                    status: .authenticated,
+                    accountLabel: "user@example.com",
+                    lastValidatedAt: Date(),
+                    failureReason: nil,
+                    updatedAt: Date()
+                )
+            )
+        )
         let orchestrator = TaskOrchestrator(
             taskStore: try TaskStore(paths: paths),
             taskRunStore: TaskRunStore(paths: paths),
@@ -53,6 +68,8 @@ struct AgentHubTests {
             personaManager: PersonaManager(paths: paths),
             workspaceManager: WorkspaceManager(),
             paths: paths,
+            runtimeConfigStore: runtimeConfigStore,
+            authManager: authManager,
             runtimeFactory: { DummyRuntime() }
         )
 
@@ -64,23 +81,39 @@ struct AgentHubTests {
         #expect(interval != nil)
         #expect(abs(interval!.timeIntervalSince(now) - 1800) < 1)
     }
-
 }
 
-private struct DummyRuntime: CodexRuntime {
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: "dummy", exitCode: 0, stdout: "", stderr: "")
+private struct DummyRuntime: AssistantRuntime {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: "dummy", exitCode: 0, stdout: "", stderr: "")
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
-        CodexExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
+        AssistantExecutionResult(threadId: threadId, exitCode: 0, stdout: "", stderr: "")
     }
 
-    func streamEvents() -> AsyncStream<CodexEvent> {
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
+        AssistantLoginStatusResult(isAuthenticated: true, accountEmail: nil, message: nil)
+    }
+
+    func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
             continuation.finish()
         }
     }
 
     func cancelCurrentRun() throws {}
+}
+
+@MainActor
+private struct StubAuthProviderClient: AuthProviderClient {
+    var refreshedState: AuthState
+
+    func refreshStatus() throws -> AuthState {
+        refreshedState
+    }
+
+    func startLogin() async throws -> AuthLoginChallenge? { nil }
+    func waitForLoginCompletion() async throws -> AuthState { try refreshStatus() }
+    func cancelLogin() {}
 }

@@ -8,7 +8,8 @@ final class TaskOrchestrator {
     private let workspaceManager: WorkspaceManager
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
-    private let runtimeFactory: () -> CodexRuntime
+    private let authManager: AuthManager
+    private let runtimeFactory: () -> AssistantRuntime
     private let runningLock = NSLock()
     private var runningTaskIDs = Set<UUID>()
 
@@ -20,7 +21,8 @@ final class TaskOrchestrator {
         workspaceManager: WorkspaceManager,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
-        runtimeFactory: @escaping () -> CodexRuntime
+        authManager: AuthManager,
+        runtimeFactory: @escaping () -> AssistantRuntime
     ) {
         self.taskStore = taskStore
         self.taskRunStore = taskRunStore
@@ -29,6 +31,7 @@ final class TaskOrchestrator {
         self.workspaceManager = workspaceManager
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
+        self.authManager = authManager
         self.runtimeFactory = runtimeFactory
     }
 
@@ -89,11 +92,17 @@ final class TaskOrchestrator {
 
     @discardableResult
     func runTask(taskId: UUID) async throws -> TaskRecord {
+        do {
+            try authManager.requireAuthenticated()
+        } catch {
+            try? updateTaskForAuthFailure(taskId: taskId, message: error.localizedDescription)
+            throw error
+        }
+
         try beginRunning(taskId: taskId)
         defer { finishRunning(taskId: taskId) }
 
-        var task = try taskStore.find(taskId: taskId)
-        guard var task else {
+        guard var task = try taskStore.find(taskId: taskId) else {
             throw NSError(domain: "TaskOrchestrator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Task not found"])
         }
 
@@ -107,7 +116,7 @@ final class TaskOrchestrator {
         let persona = try personaManager.defaultPersona()
         let repoPath = try workspaceManager.validateExternalDirectory(path: task.externalDirectoryPath, for: task.runtimeMode)
         let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
-        let launchConfig = CodexLaunchConfig(
+        let launchConfig = AssistantLaunchConfig(
             agentHomeDirectory: persona.directoryPath,
             codexHome: paths.root.path,
             runtimeMode: task.runtimeMode,
@@ -119,7 +128,7 @@ final class TaskOrchestrator {
 
         let runtime = runtimeFactory()
         let prompt: String
-        let result: CodexExecutionResult
+        let result: AssistantExecutionResult
         let startedAt = Date()
 
         if let threadId = task.codexThreadId {
@@ -213,7 +222,7 @@ final class TaskOrchestrator {
             .nextRun(after: now)
     }
 
-    private func classifyState(from result: CodexExecutionResult) -> TaskState {
+    private func classifyState(from result: AssistantExecutionResult) -> TaskState {
         if result.exitCode != 0 {
             return .error
         }
@@ -228,7 +237,7 @@ final class TaskOrchestrator {
         return .scheduled
     }
 
-    private func activityMessage(for task: TaskRecord, result: CodexExecutionResult) -> String {
+    private func activityMessage(for task: TaskRecord, result: AssistantExecutionResult) -> String {
         if task.state == .needsInput {
             return "\(task.title) needs input"
         }
@@ -236,6 +245,23 @@ final class TaskOrchestrator {
             return "\(task.title) failed"
         }
         return "\(task.title) completed a run"
+    }
+
+    private func updateTaskForAuthFailure(taskId: UUID, message: String) throws {
+        let updated = try taskStore.update(taskId: taskId) { current in
+            current.state = .error
+            current.lastError = message
+            current.nextRun = nil
+        }
+        try activityLogStore.append(
+            ActivityEvent(
+                id: UUID(),
+                taskId: updated.id,
+                kind: .taskRunFailed,
+                message: "\(updated.title) blocked: \(message)",
+                createdAt: Date()
+            )
+        )
     }
 
     private func beginRunning(taskId: UUID) throws {

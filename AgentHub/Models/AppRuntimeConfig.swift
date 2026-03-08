@@ -43,6 +43,10 @@ struct AppRuntimeConfig: Codable, Hashable {
     ]
 
     static func `default`() -> AppRuntimeConfig {
-        AppRuntimeConfig(model: "gpt-5.4", reasoningEffort: .medium, updatedAt: Date())
+        AppRuntimeConfig(
+            model: "gpt-5.4",
+            reasoningEffort: .medium,
+            updatedAt: Date()
+        )
     }
 }

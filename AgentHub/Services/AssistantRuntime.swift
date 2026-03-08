@@ -1,6 +1,6 @@
 import Foundation
 
-struct CodexLaunchConfig {
+struct AssistantLaunchConfig {
     var agentHomeDirectory: String
     var codexHome: String
     var runtimeMode: RuntimeMode
@@ -10,14 +10,20 @@ struct CodexLaunchConfig {
     var reasoningEffort: ReasoningEffort
 }
 
-struct CodexExecutionResult {
+struct AssistantExecutionResult {
     var threadId: String?
     var exitCode: Int32
     var stdout: String
     var stderr: String
 }
 
-enum CodexEvent: Sendable {
+struct AssistantLoginStatusResult: Equatable {
+    var isAuthenticated: Bool
+    var accountEmail: String?
+    var message: String?
+}
+
+enum AssistantEvent: Sendable {
     case started
     case threadIdentified(String)
     case stdoutLine(String)
@@ -26,40 +32,44 @@ enum CodexEvent: Sendable {
     case failed(String)
 }
 
-protocol CodexRuntime {
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult
-    func streamEvents() -> AsyncStream<CodexEvent>
+protocol AssistantRuntime {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult
+    func streamEvents() -> AsyncStream<AssistantEvent>
     func cancelCurrentRun() throws
 }
 
-enum CodexRuntimeError: LocalizedError {
+enum AssistantRuntimeError: LocalizedError {
     case busy
     case binaryNotFound
     case personaMissing(String)
     case repoMissing(String)
     case launchFailed(String)
+    case unauthenticated(String?)
     case cancelled
 
     var errorDescription: String? {
         switch self {
         case .busy:
-            return "Codex runtime is already executing"
+            return "Runtime is already executing"
         case .binaryNotFound:
-            return "Bundled codex binary not found"
+            return "Bundled runtime binary not found"
         case let .personaMissing(path):
             return "Missing default persona AGENTS.md at \(path)"
         case let .repoMissing(path):
             return "External directory does not exist: \(path)"
         case let .launchFailed(message):
-            return "Failed to launch Codex: \(message)"
+            return "Failed to launch runtime: \(message)"
+        case let .unauthenticated(message):
+            return message ?? "Login is required"
         case .cancelled:
-            return "Codex run cancelled"
+            return "Run cancelled"
         }
     }
 }
 
-final class CodexCLIRuntime: CodexRuntime {
+final class CodexCLIRuntime: AssistantRuntime {
     private struct StreamBuffer {
         var data = Data()
     }
@@ -74,7 +84,7 @@ final class CodexCLIRuntime: CodexRuntime {
     private let bundle: Bundle
     private let fileManager: FileManager
     private let stateLock = NSLock()
-    private var continuation: AsyncStream<CodexEvent>.Continuation?
+    private var continuation: AsyncStream<AssistantEvent>.Continuation?
     private var currentProcess: Process?
 
     init(
@@ -85,7 +95,7 @@ final class CodexCLIRuntime: CodexRuntime {
         self.fileManager = fileManager
     }
 
-    func streamEvents() -> AsyncStream<CodexEvent> {
+    func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
             stateLock.lock()
             self.continuation = continuation
@@ -100,12 +110,64 @@ final class CodexCLIRuntime: CodexRuntime {
         }
     }
 
-    func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+    func startNewThread(prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
         try await execute(prompt: prompt, command: .startNewThread, config: config)
     }
 
-    func resumeThread(threadId: String, prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+    func resumeThread(threadId: String, prompt: String, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
         try await execute(prompt: prompt, command: .resume(threadId), config: config)
+    }
+
+    func checkLoginStatus(codexHome: String) throws -> AssistantLoginStatusResult {
+        let codexURL = try locateCodexBinary()
+
+        let process = Process()
+        process.executableURL = codexURL
+        process.arguments = ["login", "status"]
+        process.currentDirectoryURL = URL(fileURLWithPath: codexHome, isDirectory: true)
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODEX_HOME"] = codexHome
+        process.environment = environment
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            throw AssistantRuntimeError.launchFailed(String(describing: error))
+        }
+
+        process.waitUntilExit()
+
+        let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let combined = [stdout, stderr]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+
+        if process.terminationStatus == 0 {
+            return AssistantLoginStatusResult(
+                isAuthenticated: true,
+                accountEmail: extractAccountEmail(from: combined),
+                message: combined.isEmpty ? nil : combined
+            )
+        }
+
+        if combined.localizedCaseInsensitiveContains("not logged in") {
+            return AssistantLoginStatusResult(
+                isAuthenticated: false,
+                accountEmail: nil,
+                message: combined
+            )
+        }
+
+        throw AssistantRuntimeError.launchFailed(combined.isEmpty ? "Unable to determine Codex login status" : combined)
     }
 
     func cancelCurrentRun() throws {
@@ -120,7 +182,7 @@ final class CodexCLIRuntime: CodexRuntime {
         case resume(String)
     }
 
-    private func execute(prompt: String, command: Command, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
+    private func execute(prompt: String, command: Command, config: AssistantLaunchConfig) async throws -> AssistantExecutionResult {
         let codexURL = try locateCodexBinary()
         try validate(config: config)
 
@@ -136,7 +198,7 @@ final class CodexCLIRuntime: CodexRuntime {
         }
     }
 
-    private func runBlocking(codexURL: URL, prompt: String, command: Command, config: CodexLaunchConfig) throws -> CodexExecutionResult {
+    private func runBlocking(codexURL: URL, prompt: String, command: Command, config: AssistantLaunchConfig) throws -> AssistantExecutionResult {
         let process = Process()
         process.executableURL = codexURL
         process.arguments = buildArguments(prompt: prompt, command: command, config: config)
@@ -196,7 +258,7 @@ final class CodexCLIRuntime: CodexRuntime {
         stateLock.lock()
         guard currentProcess == nil else {
             stateLock.unlock()
-            throw CodexRuntimeError.busy
+            throw AssistantRuntimeError.busy
         }
         currentProcess = process
         stateLock.unlock()
@@ -208,7 +270,7 @@ final class CodexCLIRuntime: CodexRuntime {
         } catch {
             clearCurrentProcess()
             debugLog(codexHome: config.codexHome, message: "launch_failed error=\(String(describing: error))")
-            throw CodexRuntimeError.launchFailed(String(describing: error))
+            throw AssistantRuntimeError.launchFailed(String(describing: error))
         }
 
         _ = finished.wait(timeout: .distantFuture)
@@ -234,9 +296,9 @@ final class CodexCLIRuntime: CodexRuntime {
         try appendRunnerLog(codexHome: config.codexHome, line: "finish exit_code=\(exitCode) \(renderCommand(command: command, config: config))")
 
         if process.terminationReason == .uncaughtSignal && exitCode != 0 {
-            emit(.failed(CodexRuntimeError.cancelled.localizedDescription))
+            emit(.failed(AssistantRuntimeError.cancelled.localizedDescription))
             finishStream()
-            throw CodexRuntimeError.cancelled
+            throw AssistantRuntimeError.cancelled
         }
 
         if exitCode != 0 {
@@ -255,26 +317,26 @@ final class CodexCLIRuntime: CodexRuntime {
 
         emit(.completed(exitCode))
         finishStream()
-        return CodexExecutionResult(threadId: threadId, exitCode: exitCode, stdout: stdout, stderr: stderr)
+        return AssistantExecutionResult(threadId: threadId, exitCode: exitCode, stdout: stdout, stderr: stderr)
     }
 
-    private func validate(config: CodexLaunchConfig) throws {
+    private func validate(config: AssistantLaunchConfig) throws {
         let agentsPath = URL(fileURLWithPath: config.agentHomeDirectory, isDirectory: true)
             .appendingPathComponent("AGENTS.md")
             .path
         guard fileManager.fileExists(atPath: agentsPath) else {
-            throw CodexRuntimeError.personaMissing(agentsPath)
+            throw AssistantRuntimeError.personaMissing(agentsPath)
         }
 
         if config.runtimeMode == .task, let repoPath = config.externalDirectory {
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: repoPath, isDirectory: &isDirectory), isDirectory.boolValue else {
-                throw CodexRuntimeError.repoMissing(repoPath)
+                throw AssistantRuntimeError.repoMissing(repoPath)
             }
         }
     }
 
-    private func buildArguments(prompt: String, command: Command, config: CodexLaunchConfig) -> [String] {
+    private func buildArguments(prompt: String, command: Command, config: AssistantLaunchConfig) -> [String] {
         var args: [String] = [
             "exec",
             "--json",
@@ -305,7 +367,7 @@ final class CodexCLIRuntime: CodexRuntime {
         return args
     }
 
-    private func emit(_ event: CodexEvent) {
+    private func emit(_ event: AssistantEvent) {
         stateLock.lock()
         let continuation = continuation
         stateLock.unlock()
@@ -521,6 +583,22 @@ final class CodexCLIRuntime: CodexRuntime {
         return true
     }
 
+    private func extractAccountEmail(from text: String) -> String? {
+        guard !text.isEmpty else { return nil }
+        let pattern = #"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              let emailRange = Range(match.range, in: text) else {
+            return nil
+        }
+
+        return String(text[emailRange])
+    }
+
     private func locateCodexBinary() throws -> URL {
         if let resourcesURL = bundle.resourceURL {
             let candidates = [
@@ -533,7 +611,7 @@ final class CodexCLIRuntime: CodexRuntime {
             }
         }
 
-        throw CodexRuntimeError.binaryNotFound
+        throw AssistantRuntimeError.binaryNotFound
     }
 
     private func clearCurrentProcess() {
@@ -598,7 +676,7 @@ final class CodexCLIRuntime: CodexRuntime {
         return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
     }
 
-    private func renderCommand(command: Command, config: CodexLaunchConfig) -> String {
+    private func renderCommand(command: Command, config: AssistantLaunchConfig) -> String {
         var args = buildArguments(prompt: "<prompt>", command: command, config: config)
         if let last = args.last, last == "<prompt>" {
             args[args.count - 1] = "<prompt>"

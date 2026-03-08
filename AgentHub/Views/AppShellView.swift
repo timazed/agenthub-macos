@@ -2,12 +2,17 @@ import SwiftUI
 
 struct AppShellView: View {
     @StateObject private var appViewModel = AppViewModel()
+    @StateObject private var authViewModel: AuthViewModel
     @StateObject private var chatViewModel: ChatViewModel
     @StateObject private var tasksViewModel: TasksViewModel
     @StateObject private var activityViewModel: ActivityLogViewModel
     @State private var didPerformInitialLoad = false
 
     init(container: AppContainer) {
+        _authViewModel = StateObject(wrappedValue: AuthViewModel(
+            authManager: container.authManager,
+            initialState: (try? container.authManager.loadCachedState()) ?? .default()
+        ))
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(
             chatSessionService: container.chatSessionService,
             taskOrchestrator: container.taskOrchestrator,
@@ -23,12 +28,36 @@ struct AppShellView: View {
     }
 
     var body: some View {
-        ChatView(
-            viewModel: chatViewModel,
-            isPanelPresented: appViewModel.isPanelPresented,
-            onTogglePanel: { appViewModel.togglePanel() }
-        )
-        .frame(minWidth: 400)
+        Group {
+            if authViewModel.isAuthenticated {
+                ChatView(
+                    viewModel: chatViewModel,
+                    isPanelPresented: appViewModel.isPanelPresented,
+                    onTogglePanel: { appViewModel.togglePanel() },
+                    isInputEnabled: true,
+                    blockedMessage: nil
+                )
+                .frame(minWidth: 400)
+            } else {
+                CodexLoginGateView(
+                    viewModel: authViewModel,
+                    onStartLogin: {
+                        Task {
+                            await authViewModel.beginLogin()
+                            performInitialLoadIfNeeded()
+                        }
+                    },
+                    onRetryStatus: {
+                        Task {
+                            await authViewModel.refreshStatus()
+                            performInitialLoadIfNeeded()
+                        }
+                    },
+                    onCancelLogin: { authViewModel.cancelLogin() }
+                )
+                .frame(minWidth: 400)
+            }
+        }
         .inspector(isPresented: $appViewModel.isPanelPresented) {
             AssistantPanelView(
                 tasksViewModel: tasksViewModel,
@@ -41,8 +70,8 @@ struct AppShellView: View {
         }
         .task {
             guard !didPerformInitialLoad else { return }
-            didPerformInitialLoad = true
-            performInitialLoad()
+            await authViewModel.performStartupCheckIfNeeded()
+            performInitialLoadIfNeeded()
         }
         .sheet(isPresented: $appViewModel.isEditorPresented, onDismiss: {
             tasksViewModel.load()
@@ -81,7 +110,9 @@ struct AppShellView: View {
         chatViewModel.errorMessage ?? tasksViewModel.errorMessage ?? activityViewModel.errorMessage
     }
 
-    private func performInitialLoad() {
+    private func performInitialLoadIfNeeded() {
+        guard authViewModel.isAuthenticated, !didPerformInitialLoad else { return }
+        didPerformInitialLoad = true
         tasksViewModel.load()
         activityViewModel.load()
         chatViewModel.load()

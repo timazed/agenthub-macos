@@ -7,6 +7,8 @@ struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     let isPanelPresented: Bool
     let onTogglePanel: () -> Void
+    let isInputEnabled: Bool
+    let blockedMessage: String?
 
     @State private var composerHeight: CGFloat = ComposerMetrics.minTextHeight
     @State private var isModelMenuPresented = false
@@ -206,7 +208,7 @@ struct ChatView: View {
                         calculatedHeight: $composerHeight,
                         placeholder: "Ask me to do anything (one off or repeatable)",
                         colorScheme: colorScheme,
-                        isEnabled: !viewModel.isBusy,
+                        isEnabled: !viewModel.isBusy && isInputEnabled,
                         onSubmit: { viewModel.sendCurrentInput() }
                     )
                     .frame(height: composerHeight)
@@ -231,8 +233,17 @@ struct ChatView: View {
                             viewModel.sendCurrentInput()
                         }
                     }
-                    .disabled(!viewModel.isBusy && viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        !isInputEnabled ||
+                        (!viewModel.isBusy && viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    )
                 }
+            }
+
+            if let blockedMessage, !isInputEnabled {
+                Text(blockedMessage)
+                    .font(.caption)
+                    .foregroundStyle(Color.white.opacity(0.52))
             }
         }
     }

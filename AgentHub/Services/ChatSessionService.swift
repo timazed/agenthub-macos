@@ -11,9 +11,10 @@ enum ChatSessionEvent {
 final class ChatSessionService {
     private let sessionStore: AssistantSessionStore
     private let personaManager: PersonaManager
-    private let runtime: CodexRuntime
+    private let runtime: AssistantRuntime
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
+    private let authManager: AuthManager
 
     private let stateLock = NSLock()
     private var continuation: AsyncStream<ChatSessionEvent>.Continuation?
@@ -21,15 +22,17 @@ final class ChatSessionService {
     init(
         sessionStore: AssistantSessionStore,
         personaManager: PersonaManager,
-        runtime: CodexRuntime,
+        runtime: AssistantRuntime,
         paths: AppPaths,
-        runtimeConfigStore: AppRuntimeConfigStore
+        runtimeConfigStore: AppRuntimeConfigStore,
+        authManager: AuthManager
     ) {
         self.sessionStore = sessionStore
         self.personaManager = personaManager
         self.runtime = runtime
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
+        self.authManager = authManager
     }
 
     func loadMessages() throws -> [Message] {
@@ -57,6 +60,7 @@ final class ChatSessionService {
 
     func sendUserMessage(_ text: String) async throws {
         defer { finishStream() }
+        try authManager.requireAuthenticated()
 
         let persona = try personaManager.defaultPersona()
         var session = try sessionStore.loadOrCreateDefault(personaId: persona.id)
@@ -72,7 +76,7 @@ final class ChatSessionService {
         try sessionStore.appendMessage(userMessage)
 
         let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
-        let launchConfig = CodexLaunchConfig(
+        let launchConfig = AssistantLaunchConfig(
             agentHomeDirectory: persona.directoryPath,
             codexHome: paths.root.path,
             runtimeMode: .chatOnly,
@@ -109,7 +113,7 @@ final class ChatSessionService {
             }
         }
 
-        let result: CodexExecutionResult
+        let result: AssistantExecutionResult
         if let threadId = session.codexThreadId {
             result = try await runtime.resumeThread(threadId: threadId, prompt: prompt, config: launchConfig)
         } else {
