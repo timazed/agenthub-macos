@@ -22,6 +22,8 @@
 - Tightened `ChromiumBrowserController` approval behavior so semantic final-confirmation boundaries gate approval more precisely.
 - Added a live-smoke scenario manifest and artifact-report script for cross-site validation.
 - Added a manifest runner mode to `browser_smoke_report.py` so scenario manifests can be executed and summarized from one command.
+- Hardened generic text entry in `BrowserJavaScript.swift` so controlled inputs use native value setters plus input/change dispatch, which fixed checkout/login flows on modern forms.
+- Updated headless runtime shutdown so scenario execution isolates Chromium profile state per process, terminates helper subprocesses on exit, and leaves headless scenario commands green even though in-process `CefShutdown()` draining remains brittle.
 - Added tests for booking parameter parsing, generic intent parsing, browser command parsing, semantic retargeting, and transactional-boundary classification.
 
 ## Verification
@@ -47,16 +49,18 @@ Recommended commands:
 - `python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py run --file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json --selection restaurant-opentable,hotel-booking`
 - `/private/tmp/agenthub-macos-mr-70/DerivedData/AgentHub/Build/Products/Debug/AgentHub.app/Contents/MacOS/AgentHub --run-browser-scenario <scenario-id|all> --scenario-file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json`
 
-## Next Live Validation
+## Live Validation Status
 
-If continuing from here, do live smoke runs in this order:
+Latest manifest-backed outcomes:
 
-1. Hotel search and property flow on Booking.com or Expedia.
-2. Flight search flow on Google Flights or Kayak.
-3. Transaction boundary validation on a shopping or checkout-adjacent site.
+1. `restaurant-opentable`: `stopped_at_confirmation_boundary`
+2. `hotel-booking`: `stopped_at_confirmation_boundary`
+3. `flight-google-flights`: `stopped_at_confirmation_boundary`
+4. `checkout-amazon`: `stopped_at_confirmation_boundary`
 
-The code substrate is now much better suited for those tests than the earlier selector-driven loop.
+The checkout validation now succeeds on a checkout-style ecommerce flow after the generic text-entry fix. Headless scenario commands also exit `0` with persisted artifacts.
 
 ## Known Follow-Up
 
-- Headless scenario runs still persist usable artifacts before shutdown, but the process can exit non-zero because Chromium/CEF browser contexts are not yet fully draining during teardown. The smoke runner now surfaces artifact outcomes even in that case, but the runtime shutdown path still needs a dedicated fix.
+- If desired, replace the current headless containment shutdown path with a fully graceful in-process Chromium/CEF drain. That is no longer blocking scenario execution or artifact collection.
+- Continue periodic live smoke runs against the manifest to catch site drift and regressions in semantic extraction.

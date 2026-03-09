@@ -7,11 +7,12 @@ private final class BrowserControllerStore {
 }
 
 @MainActor
-private final class HeadlessBrowserHost {
-    let window: NSWindow
+private final class HeadlessBrowserHost: NSObject, NSWindowDelegate {
+    var window: NSWindow!
     private weak var browserView: AHChromiumBrowserView?
 
     init(controller: ChromiumBrowserController) {
+        super.init()
         let frame = NSRect(x: 0, y: 0, width: 1440, height: 960)
         let window = NSWindow(
             contentRect: frame,
@@ -24,6 +25,7 @@ private final class HeadlessBrowserHost {
         window.alphaValue = 0.0
         window.ignoresMouseEvents = true
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.delegate = self
 
         let contentView = NSView(frame: frame)
         contentView.wantsLayer = true
@@ -42,10 +44,15 @@ private final class HeadlessBrowserHost {
     }
 
     func teardown(controller: ChromiumBrowserController) {
+        window.delegate = nil
         browserView?.removeFromSuperview()
         window.orderOut(nil)
         window.close()
         controller.resetBrowserView()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        browserView?.shouldAllowHostWindowClose() ?? true
     }
 }
 

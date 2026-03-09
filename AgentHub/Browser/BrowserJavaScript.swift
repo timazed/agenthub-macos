@@ -1,9 +1,78 @@
 import Foundation
 
 enum ChromiumBrowserScripts {
+    private static let textEntryHelpers = """
+        const nativeValueSetter = (element) => {
+            const prototypes = [];
+            if (element instanceof HTMLInputElement && window.HTMLInputElement) {
+                prototypes.push(window.HTMLInputElement.prototype);
+            }
+            if (element instanceof HTMLTextAreaElement && window.HTMLTextAreaElement) {
+                prototypes.push(window.HTMLTextAreaElement.prototype);
+            }
+            if ("value" in element && window.HTMLElement) {
+                prototypes.push(window.HTMLElement.prototype);
+            }
+            for (const prototype of prototypes) {
+                const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+                if (descriptor?.set) {
+                    return descriptor.set;
+                }
+            }
+            return null;
+        };
+        const currentElementValue = (element) => {
+            if (element == null) { return ""; }
+            if (typeof element.value === "string") { return element.value; }
+            if (element.isContentEditable) { return element.textContent || ""; }
+            return "";
+        };
+        const setElementValue = (element, nextValue) => {
+            if (element.isContentEditable) {
+                element.textContent = nextValue;
+                return;
+            }
+            const setter = nativeValueSetter(element);
+            if (setter) {
+                setter.call(element, nextValue);
+                return;
+            }
+            element.value = nextValue;
+        };
+        const dispatchTextEntryEvents = (element, previousValue, nextValue) => {
+            const inputType = nextValue.length < previousValue.length ? "deleteContentBackward" : "insertText";
+            const data = nextValue === previousValue ? null : nextValue;
+            try {
+                element.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, data, inputType }));
+            } catch (_) {}
+            element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+            element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+        };
+        const commitTextEntry = (element, nextValue) => {
+            if (!element) {
+                throw new Error("No element available for text entry.");
+            }
+            element.focus?.();
+            const previousValue = currentElementValue(element);
+            if (typeof element.select === "function" && previousValue.length > 0) {
+                element.select();
+            }
+            setElementValue(element, nextValue);
+            if (typeof element.setSelectionRange === "function") {
+                const caret = String(nextValue).length;
+                try {
+                    element.setSelectionRange(caret, caret);
+                } catch (_) {}
+            }
+            dispatchTextEntryEvents(element, previousValue, nextValue);
+            return currentElementValue(element);
+        };
+        """
+
     static func fillVisibleSearchField(query: String) -> String {
         let queryLiteral = jsStringLiteral(query)
         return """
+        \(textEntryHelpers)
         const query = \(queryLiteral);
         const isVisible = (element) => {
             if (!element) { return false; }
@@ -38,19 +107,10 @@ enum ChromiumBrowserScripts {
         if (!candidate) {
             throw new Error("No visible search field found.");
         }
-        candidate.focus();
-        candidate.value = "";
-        candidate.dispatchEvent(new InputEvent("input", { bubbles: true, data: "", inputType: "deleteContentBackward" }));
-        for (const character of query) {
-            candidate.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: character }));
-            candidate.value += character;
-            candidate.dispatchEvent(new InputEvent("input", { bubbles: true, data: character, inputType: "insertText" }));
-            candidate.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: character }));
-        }
-        candidate.dispatchEvent(new Event("change", { bubbles: true }));
+        const committedValue = commitTextEntry(candidate, query);
         return {
             query,
-            value: candidate.value,
+            value: committedValue,
             label: candidate.getAttribute("aria-label") || candidate.getAttribute("placeholder") || candidate.name || candidate.id || candidate.tagName.toLowerCase()
         };
         """
@@ -238,23 +298,15 @@ enum ChromiumBrowserScripts {
         let textLiteral = jsStringLiteral(text)
         let selectorLiteral = jsStringLiteral(selector)
         return """
+        \(textEntryHelpers)
         const selector = \(selectorLiteral);
         const value = \(textLiteral);
         const element = document.querySelector(selector);
         if (!element) {
             throw new Error(`No element matched ${selector}.`);
         }
-        element.focus();
-        element.value = "";
-        element.dispatchEvent(new InputEvent("input", { bubbles: true, data: "", inputType: "deleteContentBackward" }));
-        for (const character of value) {
-            element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: character }));
-            element.value += character;
-            element.dispatchEvent(new InputEvent("input", { bubbles: true, data: character, inputType: "insertText" }));
-            element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: character }));
-        }
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-        return { selector, value: element.value };
+        const committedValue = commitTextEntry(element, value);
+        return { selector, value: committedValue };
         """
     }
 

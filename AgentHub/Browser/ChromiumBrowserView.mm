@@ -95,6 +95,31 @@ static std::string AHUTF8String(NSString* value) {
   return std::string(utf8);
 }
 
+static BOOL AHProcessHasArgument(NSString* expectedArgument) {
+  int argc = *_NSGetArgc();
+  char** argv = *_NSGetArgv();
+  const char* expected = expectedArgument.UTF8String;
+  if (!expected || argc <= 0 || !argv) {
+    return NO;
+  }
+
+  for (int index = 0; index < argc; index += 1) {
+    const char* argument = argv[index];
+    if (!argument) {
+      continue;
+    }
+    if (strcmp(argument, expected) == 0) {
+      return YES;
+    }
+  }
+  return NO;
+}
+
+static BOOL AHUsesHeadlessChromiumProfile(void) {
+  return AHProcessHasArgument(@"--run-browser-scenario")
+      || AHProcessHasArgument(@"--run-task");
+}
+
 class AHCloseBrowserTask : public CefTask {
  public:
   AHCloseBrowserTask(CefRefPtr<CefBrowser> browser, bool force_close)
@@ -139,7 +164,8 @@ static NSNotificationName const AHChromiumContextInitializedNotification =
 @interface AHChromiumBrowserView ()
 - (void)didCreateBrowser:(CefRefPtr<CefBrowser>)browser;
 - (void)browserWillClose:(CefRefPtr<CefBrowser>)browser;
-- (void)completeBrowserDoClose;
+- (void)browserReadyToClose;
+- (void)didHandleJSDialogWithMessage:(NSString*)message accepted:(BOOL)accepted;
 - (void)didReceiveTitle:(NSString*)title;
 - (void)didReceiveMainFrameURL:(NSString*)urlString;
 - (void)didReceiveLoadingState:(BOOL)isLoading
@@ -203,13 +229,15 @@ class AHChromiumApp : public CefApp {
 class AHChromiumClient : public CefClient,
                          public CefDisplayHandler,
                          public CefLifeSpanHandler,
-                         public CefLoadHandler {
+                         public CefLoadHandler,
+                         public CefJSDialogHandler {
  public:
   explicit AHChromiumClient(AHChromiumBrowserView* owner) : owner_(owner) {}
 
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
 
   void OnAddressChange(CefRefPtr<CefBrowser> browser,
                        CefRefPtr<CefFrame> frame,
@@ -245,7 +273,42 @@ class AHChromiumClient : public CefClient,
 
   bool DoClose(CefRefPtr<CefBrowser> browser) override {
     AHDispatchToOwner(owner_, ^(AHChromiumBrowserView* owner) {
-      [owner completeBrowserDoClose];
+      [owner browserReadyToClose];
+    });
+    return false;
+  }
+
+  bool OnJSDialog(CefRefPtr<CefBrowser> browser,
+                  const CefString& origin_url,
+                  JSDialogType dialog_type,
+                  const CefString& message_text,
+                  const CefString& default_prompt_text,
+                  CefRefPtr<CefJSDialogCallback> callback,
+                  bool& suppress_message) override {
+    CEF_REQUIRE_UI_THREAD();
+    suppress_message = false;
+    NSString* message = AHNSStringFromCefString(message_text);
+    bool accept = dialog_type == JSDIALOGTYPE_ALERT;
+    if (callback) {
+      callback->Continue(accept, default_prompt_text);
+    }
+    AHDispatchToOwner(owner_, ^(AHChromiumBrowserView* owner) {
+      [owner didHandleJSDialogWithMessage:message accepted:accept];
+    });
+    return true;
+  }
+
+  bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser,
+                            const CefString& message_text,
+                            bool is_reload,
+                            CefRefPtr<CefJSDialogCallback> callback) override {
+    CEF_REQUIRE_UI_THREAD();
+    if (callback) {
+      callback->Continue(true, CefString());
+    }
+    NSString* message = AHNSStringFromCefString(message_text);
+    AHDispatchToOwner(owner_, ^(AHChromiumBrowserView* owner) {
+      [owner didHandleJSDialogWithMessage:message accepted:YES];
     });
     return true;
   }
@@ -314,14 +377,17 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
 
 @implementation AHChromiumRuntime {
   BOOL _initialized;
+  BOOL _isInitializing;
   BOOL _isPumping;
   NSString* _initializationError;
-  CefScopedLibraryLoader* _libraryLoader;
   CefRefPtr<CefApp> _app;
   BOOL _contextInitialized;
   NSUInteger _scheduledPumpGeneration;
   dispatch_source_t _fallbackPumpTimer;
   NSInteger _activeBrowserCount;
+  BOOL _libraryLoaded;
+  NSString* _cacheDirectory;
+  BOOL _usesEphemeralCache;
 }
 
 + (instancetype)sharedRuntime {
@@ -351,15 +417,22 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
     dispatch_source_cancel(_fallbackPumpTimer);
     _fallbackPumpTimer = nil;
   }
-  if (_libraryLoader) {
-    delete _libraryLoader;
-    _libraryLoader = nullptr;
+  if (_libraryLoaded) {
+    cef_unload_library();
+    _libraryLoaded = NO;
+  }
+  if (_usesEphemeralCache && _cacheDirectory.length > 0) {
+    [[NSFileManager defaultManager] removeItemAtPath:_cacheDirectory error:nil];
   }
   [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (BOOL)ensureInitialized:(NSString* _Nullable __autoreleasing*)errorMessage {
   if (_initialized) {
+    return YES;
+  }
+
+  if (_isInitializing) {
     return YES;
   }
 
@@ -370,6 +443,7 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
     return NO;
   }
 
+  _isInitializing = YES;
   NSString* frameworkPath = [NSBundle.mainBundle.privateFrameworksPath
       stringByAppendingPathComponent:@"Chromium Embedded Framework.framework"];
   NSString* resourcesPath = NSBundle.mainBundle.resourcePath;
@@ -377,6 +451,7 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
 
   if (frameworkPath.length == 0) {
     _initializationError = @"Chromium runtime bundle paths are missing.";
+    _isInitializing = NO;
     if (errorMessage) {
       *errorMessage = _initializationError;
     }
@@ -385,24 +460,41 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
 
   NSString* supportRoot = NSSearchPathForDirectoriesInDomains(
       NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject;
-  NSString* cacheDirectory = [supportRoot
-      stringByAppendingPathComponent:@"AgentHub/ChromiumPrototype/Profile"];
+  NSString* prototypeRoot =
+      [supportRoot stringByAppendingPathComponent:@"AgentHub/ChromiumPrototype"];
+  BOOL usesHeadlessProfile = AHUsesHeadlessChromiumProfile();
+  NSString* rootCacheDirectory = [prototypeRoot
+      stringByAppendingPathComponent:(usesHeadlessProfile ? @"Headless" : @"GUI")];
+  NSString* cacheDirectory = usesHeadlessProfile
+      ? [rootCacheDirectory stringByAppendingPathComponent:
+                             [NSString stringWithFormat:@"Session-%d",
+                                                        NSProcessInfo.processInfo.processIdentifier]]
+      : [rootCacheDirectory stringByAppendingPathComponent:@"Profile"];
+  _cacheDirectory = cacheDirectory;
+  _usesEphemeralCache = usesHeadlessProfile;
+  [[NSFileManager defaultManager] createDirectoryAtPath:rootCacheDirectory
+                            withIntermediateDirectories:YES
+                                             attributes:nil
+                                                  error:nil];
   [[NSFileManager defaultManager] createDirectoryAtPath:cacheDirectory
                             withIntermediateDirectories:YES
                                              attributes:nil
                                                   error:nil];
 
-  if (!_libraryLoader) {
-    _libraryLoader = new CefScopedLibraryLoader();
-  }
-
-  if (!_libraryLoader->LoadInMain()) {
+  NSString* frameworkBinaryPath =
+      [frameworkPath stringByAppendingPathComponent:@"Chromium Embedded Framework"];
+  NSLog(@"[AgentHub][ChromiumPrototype] Loading CEF binary at %@",
+        frameworkBinaryPath);
+  if (!_libraryLoaded && !cef_load_library(frameworkBinaryPath.UTF8String)) {
     _initializationError = @"Failed to dynamically load the Chromium framework.";
+    _isInitializing = NO;
     if (errorMessage) {
       *errorMessage = _initializationError;
     }
     return NO;
   }
+  _libraryLoaded = YES;
+  NSLog(@"[AgentHub][ChromiumPrototype] CEF binary load succeeded.");
 
   CefMainArgs mainArgs(*_NSGetArgc(), *_NSGetArgv());
   CefSettings settings;
@@ -413,19 +505,24 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
   CefString(&settings.main_bundle_path) = AHUTF8String(NSBundle.mainBundle.bundlePath);
   CefString(&settings.resources_dir_path) = AHUTF8String(resourcesPath);
   CefString(&settings.locales_dir_path) = AHUTF8String(localesPath);
+  CefString(&settings.root_cache_path) = AHUTF8String(rootCacheDirectory);
   CefString(&settings.cache_path) = AHUTF8String(cacheDirectory);
 
   _app = new AHChromiumApp();
+  NSLog(@"[AgentHub][ChromiumPrototype] Calling CefInitialize.");
   if (!CefInitialize(mainArgs, settings, _app, nullptr)) {
     _app = nullptr;
     _initializationError = @"CEF failed to initialize.";
+    _isInitializing = NO;
     if (errorMessage) {
       *errorMessage = _initializationError;
     }
     return NO;
   }
+  NSLog(@"[AgentHub][ChromiumPrototype] CefInitialize returned successfully.");
 
   _initialized = YES;
+  _isInitializing = NO;
   [self startFallbackPumpTimer];
   [self scheduleMessagePumpWorkAfterDelay:0];
   return YES;
@@ -545,12 +642,16 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
   CefShutdown();
   _app = nullptr;
   _initialized = NO;
+  _isInitializing = NO;
   _contextInitialized = NO;
   _activeBrowserCount = 0;
 
-  if (_libraryLoader) {
-    delete _libraryLoader;
-    _libraryLoader = nullptr;
+  if (_libraryLoaded) {
+    cef_unload_library();
+    _libraryLoaded = NO;
+  }
+  if (_usesEphemeralCache && _cacheDirectory.length > 0) {
+    [[NSFileManager defaultManager] removeItemAtPath:_cacheDirectory error:nil];
   }
 }
 
@@ -576,6 +677,8 @@ void AHChromiumShutdownRuntime(void) {
   BOOL _canGoForward;
   BOOL _runtimeReady;
   NSTimer* _statePollTimer;
+  BOOL _browserReadyToClose;
+  BOOL _closeRequestIssued;
 }
 
 @synthesize pageTitle = _pageTitle;
@@ -768,9 +871,17 @@ void AHChromiumShutdownRuntime(void) {
 
   NSLog(@"[AgentHub][ChromiumPrototype] Requesting Chromium browser shutdown.");
   [self.delegate browserView:self didLogMessage:@"Requesting Chromium browser shutdown."];
-  CefPostTask(TID_UI, new AHCloseBrowserTask(_browser, false));
+  _browserReadyToClose = NO;
+  _closeRequestIssued = NO;
+  NSWindow* hostWindow = self.window;
+  if (hostWindow) {
+    [hostWindow performClose:nil];
+  } else {
+    _closeRequestIssued = YES;
+    CefPostTask(TID_UI, new AHCloseBrowserTask(_browser, false));
+  }
 
-  NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:2.0];
+  NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:4.0];
   while (_browser && [deadline timeIntervalSinceNow] > 0) {
     [[AHChromiumRuntime sharedRuntime] pumpCEF];
     [[NSRunLoop mainRunLoop] runMode:NSRunLoopCommonModes
@@ -821,6 +932,7 @@ void AHChromiumShutdownRuntime(void) {
   _runtimeReady = YES;
   [self.delegate browserViewDidUpdateState:self];
   if (![[AHChromiumRuntime sharedRuntime] isContextInitialized]) {
+    NSLog(@"[AgentHub][ChromiumPrototype] Waiting for CEF context initialization before creating browser.");
     [self.delegate browserView:self
              didLogMessage:@"Waiting for CEF browser context initialization."];
     return;
@@ -847,6 +959,8 @@ void AHChromiumShutdownRuntime(void) {
   [self.delegate browserView:self
            didLogMessage:[NSString stringWithFormat:@"Creating Chromium browser for %@",
                                                     initialURLString]];
+  NSLog(@"[AgentHub][ChromiumPrototype] Calling CreateBrowserSync for %@",
+        initialURLString);
   CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
       windowInfo, _client, AHUTF8String(initialURLString), browserSettings,
       nullptr, nullptr);
@@ -914,20 +1028,45 @@ void AHChromiumShutdownRuntime(void) {
   _browser = nullptr;
   _devToolsObserver = nullptr;
   _client = nullptr;
+  _browserReadyToClose = NO;
+  _closeRequestIssued = NO;
   [[AHChromiumRuntime sharedRuntime] browserDidClose];
   [self.delegate browserViewDidUpdateState:self];
 }
 
-- (void)completeBrowserDoClose {
-  NSLog(@"[AgentHub][ChromiumPrototype] Completing host window close for Chromium browser.");
-  NSWindow* hostWindow = self.window;
-  if (self.superview) {
-    [self removeFromSuperview];
+- (BOOL)shouldAllowHostWindowClose {
+  if (!_browser) {
+    return YES;
   }
-  if (hostWindow) {
-    [hostWindow orderOut:nil];
-    [hostWindow close];
+
+  if (_browserReadyToClose) {
+    return YES;
   }
+
+  if (!_closeRequestIssued) {
+    _closeRequestIssued = YES;
+    [self.delegate browserView:self
+             didLogMessage:@"Intercepted host window close; requesting Chromium browser close."];
+    CefPostTask(TID_UI, new AHCloseBrowserTask(_browser, false));
+  }
+  return NO;
+}
+
+- (void)browserReadyToClose {
+  NSLog(@"[AgentHub][ChromiumPrototype] Chromium browser is ready for host window close.");
+  [self.delegate browserView:self
+           didLogMessage:@"Chromium browser is ready for host window close."];
+  _browserReadyToClose = YES;
+}
+
+- (void)didHandleJSDialogWithMessage:(NSString*)message accepted:(BOOL)accepted {
+  NSString* trimmedMessage = message.length > 0 ? message : @"JavaScript dialog";
+  NSString* action = accepted ? @"accepted" : @"dismissed";
+  NSLog(@"[AgentHub][ChromiumPrototype] %@ JS dialog: %@", action, trimmedMessage);
+  [self.delegate browserView:self
+           didLogMessage:[NSString stringWithFormat:@"%@ JS dialog: %@",
+                                                    accepted ? @"Accepted" : @"Dismissed",
+                                                    trimmedMessage]];
 }
 
 - (void)didReceiveTitle:(NSString*)title {

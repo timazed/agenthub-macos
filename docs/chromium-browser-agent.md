@@ -100,7 +100,7 @@ python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py compar
 /private/tmp/agenthub-macos-mr-70/DerivedData/AgentHub/Build/Products/Debug/AgentHub.app/Contents/MacOS/AgentHub --run-browser-scenario hotel-booking --scenario-file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json
 ```
 
-The `run` subcommand executes the manifest through the headless app binary, then harvests the newest artifact per scenario so validation still produces a usable matrix even if the app exits non-zero after persisting artifacts.
+The `run` subcommand executes the manifest through the headless app binary, then harvests the newest artifact per scenario. Headless runs now isolate Chromium profile state per process and exit cleanly after persisting artifacts, so manifest validation can be used directly in automation.
 
 The persisted artifact JSON now contains:
 
@@ -114,12 +114,19 @@ The persisted artifact JSON now contains:
 - flow/approval summaries
 - snapshot capture warnings if artifact capture failed
 
-## Known Remaining Work
+## Current Validation Status
 
-The branch is materially more generic, but a few items still require live validation rather than more local refactoring:
+The manifest-backed live smoke matrix is now green for the main generic validation set:
 
-- repeated smoke runs across hotel and flight sites
-- tuning semantic extraction for more custom calendar and autocomplete variants
-- validating final-confirmation boundary detection on unfamiliar checkout flows
-- iterating on scenario-specific regressions that the smoke harness exposes
-- fixing the remaining headless Chromium teardown bug where the scenario process can exit non-zero after artifacts are already written
+- `restaurant-opentable`: `stopped_at_confirmation_boundary`
+- `hotel-booking`: `stopped_at_confirmation_boundary`
+- `flight-google-flights`: `stopped_at_confirmation_boundary`
+- `checkout-amazon`: `stopped_at_confirmation_boundary`
+
+## Known Follow-Up
+
+The branch is now at the milestone where the generic browser substrate is live-validated across restaurant, hotel, flight, and checkout-style flows. Remaining work is narrower and lower priority:
+
+- repeated live smoke runs to catch site drift and selector/semantic regressions
+- tuning semantic extraction for more custom calendar, autocomplete, and modal variants
+- replacing the current headless teardown containment path with a fully graceful in-process Chromium/CEF drain if that lifecycle cleanliness becomes important

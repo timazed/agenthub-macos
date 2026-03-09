@@ -322,6 +322,15 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserTypeTextScriptUsesNativeValueSetterForControlledInputs() throws {
+        let script = ChromiumBrowserScripts.typeText("standard_user", selector: "#user-name")
+
+        #expect(script.contains("nativeValueSetter"))
+        #expect(script.contains("Object.getOwnPropertyDescriptor"))
+        #expect(script.contains("dispatchTextEntryEvents"))
+    }
+
+    @Test
     func codexRuntimeParsesCurrentThreadStartedEventSchema() throws {
         let runtime = CodexCLIRuntime()
 

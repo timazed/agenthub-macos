@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import SwiftUI
 
@@ -18,8 +19,9 @@ enum AgentHubMain {
             let exitCode = runAsyncMainLoop {
                 await HeadlessTaskCommand().run(taskId: taskId)
             }
-            AHChromiumShutdownRuntime()
-            Foundation.exit(exitCode)
+            terminateHeadlessChromiumHelpers()
+            cleanupHeadlessChromiumProfile()
+            _exit(exitCode)
         }
 
         if let scenarioSelection = parseScenarioSelection(args: args) {
@@ -33,8 +35,9 @@ enum AgentHubMain {
                     scenarioFilePath: scenarioSelection.filePath
                 )
             }
-            AHChromiumShutdownRuntime()
-            Foundation.exit(exitCode)
+            terminateHeadlessChromiumHelpers()
+            cleanupHeadlessChromiumProfile()
+            _exit(exitCode)
         }
 
         appendStartupLog("entry=gui")
@@ -93,6 +96,27 @@ enum AgentHubMain {
         }
         return box.exitCode ?? 1
     }
+
+    private static func terminateHeadlessChromiumHelpers() {
+        let helperRoot = Bundle.main.bundlePath + "/Contents/Frameworks/AgentHub Helper"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        process.arguments = ["-TERM", "-f", helperRoot]
+        try? process.run()
+        process.waitUntilExit()
+    }
+
+    private static func cleanupHeadlessChromiumProfile() {
+        let supportRoot = NSSearchPathForDirectoriesInDomains(
+            .applicationSupportDirectory,
+            .userDomainMask,
+            true
+        ).first ?? ("~/Library/Application Support" as NSString).expandingTildeInPath
+        let sessionDirectory = URL(fileURLWithPath: supportRoot, isDirectory: true)
+            .appendingPathComponent("AgentHub/ChromiumPrototype/Headless", isDirectory: true)
+            .appendingPathComponent("Session-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        try? FileManager.default.removeItem(at: sessionDirectory)
+    }
 }
 
 struct HeadlessTaskCommand {
@@ -114,7 +138,6 @@ struct HeadlessTaskCommand {
         if let container {
             await MainActor.run {
                 container.teardownHeadlessBrowserHost()
-                container.browserController.prepareForShutdown()
             }
         }
 
@@ -157,7 +180,6 @@ struct HeadlessBrowserScenarioCommand {
         if let container {
             await MainActor.run {
                 container.teardownHeadlessBrowserHost()
-                container.browserController.prepareForShutdown()
             }
         }
 
