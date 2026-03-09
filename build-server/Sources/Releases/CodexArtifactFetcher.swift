@@ -112,7 +112,7 @@ struct CodexArtifactFetcher {
     }
 
     func stableAssets(from release: GitHubRelease) -> [CodexReleaseAssetDescriptor] {
-        release.assets.compactMap { asset in
+        let candidateAssets: [CodexReleaseAssetDescriptor] = release.assets.compactMap { asset in
             guard containsAlphaMarker(asset.name) == false else {
                 return nil
             }
@@ -124,6 +124,25 @@ struct CodexArtifactFetcher {
                 digest: asset.digest
             )
         }
+
+        let groupedAssets: [CodexReleaseAssetKind: [CodexReleaseAssetDescriptor]] = Dictionary(
+            grouping: candidateAssets,
+            by: { $0.kind }
+        )
+        let selectedDarwinArm64 = groupedAssets[CodexReleaseAssetKind.darwinArm64]
+            .flatMap { selectPreferredAsset(from: $0) }
+        let selectedDarwinX64 = groupedAssets[CodexReleaseAssetKind.darwinX64]
+            .flatMap { selectPreferredAsset(from: $0) }
+        let selectedChecksums = groupedAssets[CodexReleaseAssetKind.checksums]
+            .flatMap { selectPreferredAsset(from: $0) }
+        let otherAssets = groupedAssets[CodexReleaseAssetKind.other] ?? []
+
+        return [
+            selectedDarwinArm64,
+            selectedDarwinX64,
+            selectedChecksums,
+        ]
+        .compactMap { $0 } + otherAssets
     }
 
     func assetKind(for assetName: String) -> CodexReleaseAssetKind {
@@ -150,6 +169,29 @@ struct CodexArtifactFetcher {
 
     func containsAlphaMarker(_ value: String) -> Bool {
         value.lowercased().contains("-alpha")
+    }
+
+    func selectPreferredAsset(from assets: [CodexReleaseAssetDescriptor]) -> CodexReleaseAssetDescriptor? {
+        assets.max { lhs, rhs in
+            assetPreferenceScore(for: lhs.name) < assetPreferenceScore(for: rhs.name)
+        }
+    }
+
+    func assetPreferenceScore(for assetName: String) -> Int {
+        let normalized = assetName.lowercased()
+        if normalized.hasSuffix(".tar.gz") {
+            return 4
+        }
+        if normalized.hasSuffix(".tgz") {
+            return 3
+        }
+        if normalized.hasSuffix(".zip") {
+            return 2
+        }
+        if normalized.hasSuffix(".dmg") {
+            return 1
+        }
+        return 0
     }
 
     private func isDarwinAsset(named assetName: String) -> Bool {

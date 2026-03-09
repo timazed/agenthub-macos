@@ -116,6 +116,64 @@ struct CodexArtifactFetcherTests {
     }
 
     @Test
+    func prefersExtractableArchivesOverDiskImagesForSameArchitecture() throws {
+        let fetcher = CodexArtifactFetcher(
+            configurationProvider: {
+                GitHubReleasesConfiguration(
+                    owner: "openai",
+                    repository: "codex",
+                    apiBaseURL: URL(string: "https://api.github.com")!,
+                    authToken: nil
+                )
+            },
+            releaseDataProvider: { _ in
+                try fixtureData(
+                    """
+                    [
+                      {
+                        "tag_name": "v2.0.2",
+                        "name": "v2.0.2",
+                        "draft": false,
+                        "prerelease": false,
+                        "published_at": "2026-03-08T12:00:00Z",
+                        "assets": [
+                          {
+                            "name": "codex-aarch64-apple-darwin.dmg",
+                            "browser_download_url": "https://example.com/codex-aarch64-apple-darwin.dmg",
+                            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                          },
+                          {
+                            "name": "codex-aarch64-apple-darwin.tar.gz",
+                            "browser_download_url": "https://example.com/codex-aarch64-apple-darwin.tar.gz",
+                            "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                          },
+                          {
+                            "name": "codex-x86_64-apple-darwin.dmg",
+                            "browser_download_url": "https://example.com/codex-x86_64-apple-darwin.dmg",
+                            "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                          },
+                          {
+                            "name": "codex-x86_64-apple-darwin.tar.gz",
+                            "browser_download_url": "https://example.com/codex-x86_64-apple-darwin.tar.gz",
+                            "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                          }
+                        ]
+                      }
+                    ]
+                    """
+                )
+            }
+        )
+
+        let release = try fetcher.resolveLatestStableRelease()
+
+        #expect(release.assets.count == 2)
+        #expect(release.assets.contains { $0.name == "codex-aarch64-apple-darwin.tar.gz" })
+        #expect(release.assets.contains { $0.name == "codex-x86_64-apple-darwin.tar.gz" })
+        #expect(release.assets.contains { $0.name.hasSuffix(".dmg") } == false)
+    }
+
+    @Test
     func formatsUnauthorizedMessageWhenAuthTokenWasProvided() {
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/openai/codex/releases")!)
         request.setValue("Bearer token", forHTTPHeaderField: "Authorization")
