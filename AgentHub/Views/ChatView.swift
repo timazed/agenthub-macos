@@ -54,10 +54,12 @@ struct ChatView: View {
                         }
                     }
                 }
+                .background(.clear)
                 .padding(.horizontal, 32)
                 .padding(.top, topOverlayHeight)
                 .padding(.bottom, bottomOverlayHeight)
             }
+            .background(.clear)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentMargins(.top, 0, for: .scrollContent)
             .contentMargins(.bottom, 0, for: .scrollContent)

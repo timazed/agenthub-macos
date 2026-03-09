@@ -1,14 +1,52 @@
 import SwiftUI
 import Combine
+import AppKit
+
+private enum AppSceneID {
+    static let mainWindow = "main-window"
+}
+
+private enum AppStatus {
+    case starting
+    case ready
+    case error
+
+    var label: String {
+        switch self {
+        case .starting:
+            return "Starting"
+        case .ready:
+            return "Ready"
+        case .error:
+            return "Error"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .starting:
+            return .yellow
+        case .ready:
+            return .green
+        case .error:
+            return .red
+        }
+    }
+}
 
 struct AgentHubApp: App {
-    @StateObject private var bootstrap = AppBootstrap()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
+    @StateObject private var bootstrap = AppBootstrap.shared
 
     var body: some Scene {
-        WindowGroup {
+        let _ = appDelegate.configureStatusMenu(openDashboard: openDashboard)
+
+        WindowGroup(id: AppSceneID.mainWindow) {
             Group {
                 if let container = bootstrap.container {
                     AppShellView(container: container)
+                        .background(.clear)
                 } else if let errorMessage = bootstrap.errorMessage {
                     LaunchStateView(
                         title: "Failed to Launch AgentHub",
@@ -24,6 +62,7 @@ struct AgentHubApp: App {
                     }
                 }
             }
+            .background(WindowChromeConfigurator())
             .toolbar {
                 ToolbarItem(placement: .automatic) {
                     Spacer()
@@ -35,16 +74,138 @@ struct AgentHubApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
         .defaultSize(width: 800, height: 800)
+    }
+
+    private func openDashboard() {
+        AppPresentationController.shared.dashboardWillOpen()
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = AppWindowRegistry.existingMainWindow() {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        } else {
+            openWindow(id: AppSceneID.mainWindow)
+        }
+    }
+}
+
+private struct StatusMenuHostedView: View {
+    @StateObject private var bootstrap = AppBootstrap.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(bootstrap.status.color)
+                .frame(width: 8, height: 8)
+            Text(bootstrap.status.label)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 6)
+        .frame(width: 180, alignment: .leading)
+    }
+}
+
+private final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let statusMenuController = StatusMenuController()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        AppPresentationController.shared.applicationDidFinishLaunching()
+        statusMenuController.installIfNeeded()
+        Task { @MainActor in
+            await AppBootstrap.shared.loadIfNeeded()
+        }
+    }
+
+    func configureStatusMenu(openDashboard: @escaping @MainActor () -> Void) {
+        statusMenuController.installIfNeeded()
+        statusMenuController.openDashboard = openDashboard
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+}
+
+@MainActor
+private final class StatusMenuController: NSObject {
+    var openDashboard: (() -> Void)?
+
+    private var statusItem: NSStatusItem?
+    private let menu = NSMenu()
+
+    func installIfNeeded() {
+        guard statusItem == nil else { return }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = item.button {
+            button.image = NSImage(
+                systemSymbolName: "bubble.left.and.bubble.right",
+                accessibilityDescription: "AgentHub"
+            )
+            button.imagePosition = .imageOnly
+        }
+
+        let hostedItem = NSMenuItem()
+        let hostedView = NSHostingView(rootView: StatusMenuHostedView())
+        hostedView.frame = NSRect(x: 0, y: 0, width: 180, height: 28)
+        hostedItem.view = hostedView
+        menu.addItem(hostedItem)
+
+        menu.addItem(.separator())
+
+        let dashboardItem = NSMenuItem(
+            title: "Dashboard",
+            action: #selector(handleOpenDashboard),
+            keyEquivalent: ""
+        )
+        dashboardItem.target = self
+        menu.addItem(dashboardItem)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(handleQuit), keyEquivalent: "")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        item.menu = menu
+        statusItem = item
+    }
+
+    @objc private func handleOpenDashboard() {
+        openDashboard?()
+    }
+
+    @objc private func handleQuit() {
+        NSApp.terminate(nil)
     }
 }
 
 @MainActor
 private final class AppBootstrap: ObservableObject {
+    static let shared = AppBootstrap()
+
     @Published var container: AppContainer?
     @Published var errorMessage: String?
 
     private var didStart = false
+
+    var status: AppStatus {
+        if errorMessage != nil {
+            return .error
+        }
+        if container != nil {
+            return .ready
+        }
+        return .starting
+    }
 
     func loadIfNeeded() async {
         guard !didStart else { return }
@@ -66,10 +227,26 @@ private final class AppBootstrap: ObservableObject {
 
             self.container = container
             self.errorMessage = nil
+            startBackgroundServices(using: container)
             Self.log("bootstrap_success duration_ms=\(Self.durationMillis(since: startedAt))")
         } catch {
             self.errorMessage = error.localizedDescription
             Self.log("bootstrap_failed duration_ms=\(Self.durationMillis(since: startedAt)) error=\(error.localizedDescription)")
+        }
+    }
+
+    private func startBackgroundServices(using container: AppContainer) {
+        Task.detached(priority: .utility) {
+            do {
+                try await container.scheduleRunner.reconcileAllAsync(appExecutableURL: container.appExecutableURL)
+                await MainActor.run {
+                    Self.log("schedule_reconcile_success")
+                }
+            } catch {
+                await MainActor.run {
+                    Self.log("schedule_reconcile_failed error=\(error.localizedDescription)")
+                }
+            }
         }
     }
 

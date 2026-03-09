@@ -44,6 +44,7 @@ struct AppShellView: View {
                     isInputEnabled: true,
                     blockedMessage: nil
                 )
+                .background(.clear)
                 .frame(minWidth: 400)
             } else {
                 CodexLoginGateView(
@@ -65,6 +66,7 @@ struct AppShellView: View {
                 .frame(minWidth: 400)
             }
         }
+        .background(.clear)
         .inspector(isPresented: $appViewModel.isPanelPresented) {
             AssistantPanelView(
                 tasksViewModel: tasksViewModel,
@@ -125,7 +127,6 @@ struct AppShellView: View {
         activityViewModel.load()
         iMessageViewModel.load()
         chatViewModel.load()
-        tasksViewModel.reconcileSchedulesDeferred()
 
         chatViewModel.onTasksChanged = {
             tasksViewModel.load()
