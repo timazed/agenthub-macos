@@ -141,6 +141,21 @@ struct ChromiumBookingSemanticState: Codable, Equatable {
     let confirmationButtons: [String]
 }
 
+struct ChromiumBookingFunnelState: Codable, Equatable {
+    let stage: String
+    let selectedParameterCount: Int
+    let hasVenueAction: Bool
+    let hasBookingWidget: Bool
+    let hasSlotSelection: Bool
+    let hasGuestDetailsForm: Bool
+    let hasPaymentForm: Bool
+    let hasReviewSummary: Bool
+    let hasFinalConfirmationBoundary: Bool
+    let selectedDate: Bool
+    let selectedTime: Bool
+    let selectedPartySize: Bool
+}
+
 struct ChromiumInspection: Codable, Equatable {
     let title: String
     let url: String
@@ -159,6 +174,7 @@ struct ChromiumInspection: Codable, Equatable {
     let transactionalBoundaries: [ChromiumTransactionalBoundary]
     let semanticTargets: [ChromiumSemanticTarget]
     let booking: ChromiumBookingSemanticState?
+    let bookingFunnel: ChromiumBookingFunnelState?
 }
 
 struct ChromiumRetryProbe: Codable, Equatable {

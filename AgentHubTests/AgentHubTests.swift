@@ -123,6 +123,15 @@ struct AgentHubTests {
     }
 
     @Test
+    func openTableBookingIntentPreservesMonthAndDay() throws {
+        let intent = ChatBrowserIntent.parse("make a reservation for me on opentable. Sake House By Hikari. culver city. march 9. 7pm. 2 people.")
+
+        #expect(intent?.bookingParameters.dateText == "march 9")
+        #expect(intent?.bookingParameters.timeText == "7pm")
+        #expect(intent?.bookingParameters.partySize == 2)
+    }
+
+    @Test
     func openTableIntentConvertsToGenericBrowserGoal() throws {
         let intent = try #require(ChatBrowserIntent.parse("book opentable. Sake House By Hikari. culver city. tomorrow. 7:30pm. party of 4."))
         let genericIntent = intent.genericBrowserIntent
@@ -132,6 +141,7 @@ struct AgentHubTests {
         #expect(genericIntent.goalText.lowercased().contains("stop before the final reservation confirmation step"))
         #expect(genericIntent.goalText.lowercased().contains("tomorrow"))
         #expect(genericIntent.goalText.lowercased().contains("7:30pm"))
+        #expect(genericIntent.goalText.lowercased().contains("choose the closest available reservation slot"))
     }
 
     @Test
@@ -339,6 +349,107 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserTransactionalGuardDoesNotAutoStopAtVenueDetailReserveCTA() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Reserve for Others",
+                    selector: "button.reserve-for-others",
+                    confidence: 95
+                )
+            ],
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "venue_detail",
+                selectedParameterCount: 0,
+                hasVenueAction: true,
+                hasBookingWidget: false,
+                hasSlotSelection: false,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: false,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: false,
+                selectedTime: false,
+                selectedPartySize: false
+            )
+        )
+
+        #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection)?.selector == "button.reserve-for-others")
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "make a reservation on opentable", inspection: inspection) == false)
+    }
+
+    @Test
+    func browserTransactionalGuardDoesNotAutoStopAtDenseResultsReserveCTA() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "results",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Reserve for Others Reserve for Others",
+                    selector: "div.results-card-cta",
+                    confidence: 85
+                )
+            ],
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "results",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: false,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: false,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection)?.selector == "div.results-card-cta")
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "make a reservation on opentable", inspection: inspection) == false)
+    }
+
+    @Test
+    func browserTransactionalGuardAutoStopsAtGuestDetailsConfirmationBoundary() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Confirm reservation",
+                    selector: "#confirm-reservation",
+                    confidence: 95
+                )
+            ],
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "guest_details",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: false,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "make a reservation on opentable", inspection: inspection))
+    }
+
+    @Test
     func browserScenarioClassifierCategorizesTravelAndCheckoutGoals() throws {
         #expect(
             BrowserScenarioClassifier.category(
@@ -412,6 +523,16 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserPickDateScriptMatchesNormalizedCalendarDates() throws {
+        let script = ChromiumBrowserScripts.pickDate(selector: "#search-autocomplete-day-picker", text: "2026-03-09")
+
+        #expect(script.contains("parseDateValue"))
+        #expect(script.contains("sameCalendarDay"))
+        #expect(script.contains("data-date"))
+        #expect(script.contains("datetime"))
+    }
+
+    @Test
     func browserInspectionScriptIgnoresFavoriteSaveActionsAsFinalConfirmation() throws {
         let script = ChromiumBrowserScripts.inspectPage
 
@@ -427,7 +548,68 @@ struct AgentHubTests {
 
         #expect(script.contains("isDiscoveryNavigation"))
         #expect(script.contains("view full list"))
-        #expect(script.contains("labelHasFinalKeyword || hasTransactionalContainer || hrefHasTransactionalKeyword"))
+        #expect(script.contains("hasStrongFinalIntent || hasTransactionalContainer || hrefHasTransactionalKeyword"))
+    }
+
+    @Test
+    func browserInspectionScriptIgnoresDenseResultReserveAndReviewNoise() throws {
+        let script = ChromiumBrowserScripts.inspectPage
+
+        #expect(script.contains("isReserveForOthers"))
+        #expect(script.contains("isDenseResultAction"))
+        #expect(script.contains("transactionalContext"))
+        #expect(script.contains("review(?: reservation| booking| details| step| summary)"))
+        #expect(script.contains("hasLateStageBookingStructure"))
+        #expect(script.contains("isStandaloneControl"))
+    }
+
+    @Test
+    func browserInspectionScriptPrefersVenueCardOpenActionsOverMapUtilities() throws {
+        let script = ChromiumBrowserScripts.inspectPage
+
+        #expect(script.contains("scoreCardActionCandidate"))
+        #expect(script.contains("keyboard shortcuts"))
+        #expect(script.contains("find next available"))
+        #expect(script.contains("candidate.tagName.toLowerCase() === \"a\""))
+    }
+
+    @Test
+    func browserInspectionScriptEmitsBookingFunnelStage() throws {
+        let script = ChromiumBrowserScripts.inspectPage
+
+        #expect(script.contains("const bookingFunnelStage"))
+        #expect(script.contains("hasGuestDetailsForm"))
+        #expect(script.contains("selectedParameterCount"))
+        #expect(script.contains("bookingFunnel"))
+        #expect(script.contains("hasDenseResults"))
+        #expect(script.contains("transactionalSlotContainer"))
+        #expect(script.contains("hasTimeLikeLabel"))
+    }
+
+    @Test
+    func sampleInspectionSupportsBookingFunnelState() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "review",
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: false,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(inspection.bookingFunnel?.stage == "review")
+        #expect(inspection.bookingFunnel?.selectedParameterCount == 3)
+        #expect(inspection.bookingFunnel?.hasSlotSelection == true)
     }
 
     @Test
@@ -471,7 +653,8 @@ struct AgentHubTests {
 private func sampleInspection(
     destinationSelector: String,
     pageStage: String = "form",
-    boundaries: [ChromiumTransactionalBoundary] = []
+    boundaries: [ChromiumTransactionalBoundary] = [],
+    bookingFunnel: ChromiumBookingFunnelState? = nil
 ) -> ChromiumInspection {
     ChromiumInspection(
         title: "Travel Search",
@@ -540,7 +723,8 @@ private func sampleInspection(
                 priority: 95
             )
         ],
-        booking: nil
+        booking: nil,
+        bookingFunnel: bookingFunnel
     )
 }
 

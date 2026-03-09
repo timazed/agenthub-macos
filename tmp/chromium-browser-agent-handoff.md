@@ -24,6 +24,11 @@
 - Added a manifest runner mode to `browser_smoke_report.py` so scenario manifests can be executed and summarized from one command.
 - Hardened generic text entry in `BrowserJavaScript.swift` so controlled inputs use native value setters plus input/change dispatch, which fixed checkout/login flows on modern forms.
 - Re-routed OpenTable chat intents and smoke scenarios through the generic semantic browser loop instead of the deterministic OpenTable controller path.
+- Added `bookingFunnel` inference to `ChromiumInspection` so the runtime can distinguish search/results/venue/widget/slot-selection/guest-details/review/final states from generic page semantics.
+- Updated `BrowserTransactionalGuard` to require late-stage booking progression before auto-stopping on semantic final-confirmation boundaries, which closes the false-stop class for early `Reserve` CTAs on venue/detail pages.
+- Tightened the generic browser prompt so booking goals prefer exact venue/detail discovery before changing date/time/party parameters.
+- Hardened generic `pick_date` handling so normalized targets like `2026-03-09` match real calendar labels and day cells.
+- Ranked result-card actions semantically so the generic runtime prefers venue/detail navigation instead of map/help/share controls embedded in cards.
 - Updated headless runtime shutdown so scenario execution isolates Chromium profile state per process, terminates helper subprocesses on exit, and leaves headless scenario commands green even though in-process `CefShutdown()` draining remains brittle.
 - Added tests for booking parameter parsing, generic intent parsing, browser command parsing, semantic retargeting, and transactional-boundary classification.
 
@@ -59,10 +64,23 @@ Latest manifest-backed outcomes:
 3. `flight-google-flights`: `stopped_at_confirmation_boundary`
 4. `checkout-amazon`: `stopped_at_confirmation_boundary`
 
-The checkout validation now succeeds on a checkout-style ecommerce flow after the generic text-entry fix. Headless scenario commands also exit `0` with persisted artifacts.
+The checkout validation now succeeds on a checkout-style ecommerce flow after the generic text-entry fix.
 OpenTable-specific chat/scenario handling now exercises the same generic semantic loop as the other domains, so failures land in the shared browser substrate instead of a site-specific controller path.
+The latest real OpenTable booking artifact is:
+
+1. `~/.agenthub/logs/browser-agent-runs/96E9A240-CE69-49C4-A8CF-139F51D41C26/2026-03-09T05:18:35.672Z-stopped_at_confirmation_boundary.json`
+
+That run used the query:
+
+1. `Make a reservation for me on OpenTable. Sake House By Hikari. Culver City. March 9. 7pm. 2 people.`
+
+It reached:
+
+1. `https://www.opentable.com/r/sake-house-by-hikari-culver-city?dateTime=2026-03-09T19%3A00&covers=2`
+2. Approval boundary: `Reserve table at Sake House By Hikari at 7:00 PM on March 9, for a party of 2`
 
 ## Known Follow-Up
 
-- If desired, replace the current headless containment shutdown path with a fully graceful in-process Chromium/CEF drain. That is no longer blocking scenario execution or artifact collection.
+- Refine venue-detail/page-stage inference. The current OpenTable detail-page artifact reaches the correct approval boundary, but `pageStage` / `bookingFunnel.stage` can still stay overly coarse on some detail pages.
+- Replace the current headless containment shutdown path with a fully graceful in-process Chromium/CEF drain. Chromium/CEF can still fatal after artifacts are written.
 - Continue periodic live smoke runs against the manifest to catch site drift and regressions in semantic extraction.

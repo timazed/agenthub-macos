@@ -675,6 +675,46 @@ enum ChromiumBrowserScripts {
         const normalizedTarget = (targetText || "").replace(/\\s+/g, " ").trim().toLowerCase();
         const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
         const normalizeLower = (value) => normalize(value).toLowerCase();
+        const datePartsFor = (date) => {
+            if (!(date instanceof Date) || Number.isNaN(date.getTime())) { return null; }
+            return {
+                year: date.getFullYear(),
+                month: date.getMonth() + 1,
+                day: date.getDate()
+            };
+        };
+        const parseDateValue = (value) => {
+            const normalizedValue = normalize(value);
+            if (!normalizedValue) { return null; }
+            if (/^\\d{4}-\\d{2}-\\d{2}$/.test(normalizedValue)) {
+                return datePartsFor(new Date(`${normalizedValue}T12:00:00`));
+            }
+            const directParts = datePartsFor(new Date(normalizedValue));
+            if (directParts) {
+                return directParts;
+            }
+            const monthMatch = normalizedValue.match(/(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)/i);
+            const dayMatch = normalizedValue.match(/\\b(\\d{1,2})\\b/);
+            if (!monthMatch || !dayMatch) { return null; }
+            const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+            const month = monthNames.findIndex((prefix) => monthMatch[1].toLowerCase().startsWith(prefix)) + 1;
+            if (month <= 0) { return null; }
+            const yearMatch = normalizedValue.match(/\\b(20\\d{2})\\b/);
+            const year = yearMatch ? Number(yearMatch[1]) : new Date().getFullYear();
+            return {
+                year,
+                month,
+                day: Number(dayMatch[1])
+            };
+        };
+        const sameCalendarDay = (lhs, rhs) =>
+            !!lhs
+                && !!rhs
+                && lhs.year === rhs.year
+                && lhs.month === rhs.month
+                && lhs.day === rhs.day;
+        const targetDate = parseDateValue(targetText);
+        const targetDayNumber = targetDate?.day ?? (/^\\d{1,2}$/.test(normalizedTarget) ? Number(normalizedTarget) : null);
         const isVisible = (element) => {
             if (!element) { return false; }
             const style = window.getComputedStyle(element);
@@ -696,9 +736,13 @@ enum ChromiumBrowserScripts {
         const dateScore = (value) => {
             const normalizedValue = normalizeLower(value);
             if (!normalizedValue) { return 0; }
+            const parsedValue = parseDateValue(value);
+            if (targetDate && sameCalendarDay(targetDate, parsedValue)) { return 180; }
             if (normalizedValue === normalizedTarget) { return 140; }
             if (normalizedValue.includes(normalizedTarget)) { return 110; }
-            if (/^\\d{1,2}$/.test(normalizedTarget) && normalizedValue === normalizedTarget) { return 100; }
+            if (targetDayNumber != null && /^\\d{1,2}$/.test(normalizedValue) && Number(normalizedValue) == targetDayNumber) {
+                return 95;
+            }
             return 0;
         };
         const resolveTrigger = () => {
@@ -741,7 +785,12 @@ enum ChromiumBrowserScripts {
         ))
             .filter(isVisible)
             .map((element) => {
-                const label = normalize(element.getAttribute("aria-label") || element.textContent || "");
+                const label = normalize([
+                    element.getAttribute("aria-label"),
+                    element.getAttribute("data-date"),
+                    element.getAttribute("datetime"),
+                    element.textContent
+                ].filter(Boolean).join(" "));
                 return {
                     element,
                     label,
@@ -1203,9 +1252,30 @@ enum ChromiumBrowserScripts {
             )
             .slice(0, 6);
 
+        const scoreCardActionCandidate = (candidate, title, subtitle) => {
+            const descriptor = normalizeLower([
+                labelFor(candidate),
+                candidate.getAttribute?.("href"),
+                candidate.getAttribute?.("aria-label"),
+                candidate.getAttribute?.("title")
+            ].filter(Boolean).join(" "));
+            let score = 0;
+            if (!descriptor) { return score; }
+            if (candidate.tagName.toLowerCase() === "a") { score += 40; }
+            if (/view details|details|open|select/.test(descriptor)) { score += 35; }
+            if (/reserve|book|find next available/.test(descriptor)) { score += 25; }
+            if (title && descriptor.includes(normalizeLower(title))) { score += 80; }
+            if (subtitle && descriptor.includes(normalizeLower(subtitle))) { score += 15; }
+            if (/keyboard shortcuts|map|directions|share|save|favorite|favourite|bookmark|information|info|carousel|photo|image/.test(descriptor)) {
+                score -= 120;
+            }
+            return score;
+        };
+
         const cards = Array.from(document.querySelectorAll('article, li, [data-test], [data-testid], section'))
             .filter(isVisible)
             .map((element, index) => {
+                const isStandaloneControl = element.matches?.('button, a[href], input, select, textarea, [role="button"], [role="link"], [role="combobox"]');
                 const title = normalize(
                     element.querySelector('h1, h2, h3, h4, a[href], [role="heading"]')?.textContent
                     || element.getAttribute("aria-label")
@@ -1214,7 +1284,14 @@ enum ChromiumBrowserScripts {
                 const subtitle = normalize(
                     element.querySelector('p, small, [data-test*="subtitle"], [data-testid*="subtitle"]')?.textContent || ""
                 );
-                const action = element.querySelector('a[href], button, [role="button"]');
+                const action = Array.from(element.querySelectorAll('a[href], button, [role="button"]'))
+                    .filter((candidate) => candidate !== element)
+                    .map((candidate) => ({
+                        element: candidate,
+                        score: scoreCardActionCandidate(candidate, title, subtitle)
+                    }))
+                    .filter((candidate) => candidate.score > 0)
+                    .sort((lhs, rhs) => rhs.score - lhs.score)[0]?.element;
                 const badgeNodes = Array.from(element.querySelectorAll('span, small, [data-test*="badge"], [data-testid*="badge"]'))
                     .map((item) => normalize(item.textContent || ""))
                     .filter(Boolean)
@@ -1225,10 +1302,11 @@ enum ChromiumBrowserScripts {
                     subtitle: subtitle || null,
                     selector: selectorFor(element),
                     actionSelector: action ? selectorFor(action) : null,
-                    badges: badgeNodes
+                    badges: badgeNodes,
+                    isStandaloneControl: !!isStandaloneControl
                 };
             })
-            .filter((card) => card.title)
+            .filter((card) => card.title && !card.isStandaloneControl && (card.actionSelector || card.subtitle || card.badges.length > 0))
             .slice(0, 8);
 
         const dialogs = Array.from(document.querySelectorAll('[role="dialog"], dialog, [aria-modal="true"]'))
@@ -1250,6 +1328,8 @@ enum ChromiumBrowserScripts {
                     dismissSelector: dismiss ? selectorFor(dismiss) : null
                 };
             });
+
+        const hasDenseResults = resultLists.some((list) => list.itemCount >= 3) || cards.length >= 3;
 
         const datePickers = Array.from(document.querySelectorAll('input[type="date"], [role="grid"], [aria-label*="calendar" i], [data-testid*="calendar" i], [data-test*="calendar" i], table'))
             .filter(isVisible)
@@ -1307,18 +1387,24 @@ enum ChromiumBrowserScripts {
             .map((element, index) => {
                 const label = labelFor(element);
                 const labelLower = normalizeLower(label);
-                const descriptor = normalizeLower([
-                    label,
-                    labelFor(element.closest('form, [role="dialog"], dialog, section, article'))
-                ].filter(Boolean).join(" "));
+                const transactionalContext = labelFor(
+                    element.closest('form, [role="dialog"], dialog, [data-testid*="checkout" i], [data-testid*="payment" i], [data-testid*="booking" i], [data-testid*="availability" i], [data-test*="checkout" i], [data-test*="payment" i], [data-test*="booking" i], [data-test*="availability" i], [class*="checkout" i], [class*="payment" i], [class*="booking" i], [class*="availability" i]')
+                );
+                const descriptor = normalizeLower([label, transactionalContext].filter(Boolean).join(" "));
                 const href = normalizeLower(element.getAttribute("href") || "");
                 const isLink = element.tagName.toLowerCase() === "a";
+                const resultCardContainer = element.closest('[data-testid*="restaurant-card" i], [data-test*="restaurant-card" i], article, li, [role="listitem"]');
                 const isPromotional = /explore restaurants|exclusive tables|new cardmembers|dining credit|sapphire reserve|learn more|see details/.test(descriptor);
                 const isSavedItemAction = /save restaurant|save to favorites|save restaurant to favorites|favorite|favourite|favorites|favourites|saved items|wishlist|bookmark/.test(descriptor);
                 const isDiscoveryNavigation = /view full list|view all|see all|show all|browse all|explore all|view more/.test(labelLower);
+                const isReserveForOthers = /\\b(reserve|book)\\b.*\\bfor others\\b/.test(descriptor);
                 const labelHasFinalKeyword = /reserve|book|confirm|complete|purchase|pay|place order/.test(labelLower);
                 const hrefHasTransactionalKeyword = /reserve|book|checkout|payment|confirm|purchase|order/.test(href);
                 const hasTransactionalContainer = !!element.closest('form, [role="dialog"], dialog, [data-testid*="checkout" i], [data-test*="checkout" i], [class*="checkout" i], [class*="payment" i], [class*="booking" i]');
+                const isDenseResultAction = !!resultCardContainer && hasDenseResults && !hasTransactionalContainer;
+                const hasStepperKeyword = /\\bcontinue\\b|\\bnext\\b|\\bcheckout\\b/.test(descriptor);
+                const hasReviewKeyword = /review(?: reservation| booking| details| step| summary)\\b|go to review|continue to review|guest details|payment details/.test(descriptor);
+                const hasStrongFinalIntent = /confirm(?: reservation| booking| order)?\\b|complete(?: booking| order| reservation)?\\b|place order\\b|pay now\\b|purchase\\b|finalize(?: booking| order)?\\b|submit order\\b/.test(descriptor);
                 let kind = "";
                 let confidence = 0;
                 if (/search|find|show results/.test(descriptor)) {
@@ -1327,21 +1413,23 @@ enum ChromiumBrowserScripts {
                 } else if (/select|choose|view details|details/.test(descriptor)) {
                     kind = "result_selection";
                     confidence = 45;
-                } else if (/continue|next|review|checkout/.test(descriptor)) {
+                } else if (!isDenseResultAction && (hasReviewKeyword || (hasTransactionalContainer && hasStepperKeyword))) {
                     kind = "review_step";
                     confidence = 70;
                 } else if (
                     !isPromotional
                         && !isSavedItemAction
                         && !isDiscoveryNavigation
+                        && !isReserveForOthers
+                        && !isDenseResultAction
                         && /reserve|book|confirm|complete|purchase|pay|place order/.test(descriptor)
-                        && (labelHasFinalKeyword || hasTransactionalContainer || hrefHasTransactionalKeyword)
+                        && (hasStrongFinalIntent || hasTransactionalContainer || hrefHasTransactionalKeyword)
                 ) {
                     kind = "final_confirmation";
                     confidence = 70;
                     if (!isLink) { confidence += 15; }
                     if (hasTransactionalContainer) { confidence += 15; }
-                    if (/confirm|purchase|pay|place order|complete booking/.test(descriptor)) { confidence += 10; }
+                    if (hasStrongFinalIntent) { confidence += 10; }
                     if (isLink && /reserve|book/.test(descriptor) && !hasTransactionalContainer && !hrefHasTransactionalKeyword) {
                         confidence -= 25;
                     }
@@ -1361,8 +1449,8 @@ enum ChromiumBrowserScripts {
 
         const pageStage = (() => {
             const boundaryKinds = transactionalBoundaries.map((boundary) => boundary.kind);
-            if (boundaryKinds.includes("final_confirmation")) { return "final_confirmation"; }
-            if (boundaryKinds.includes("review_step")) { return "review"; }
+            if (boundaryKinds.includes("final_confirmation") && !hasDenseResults) { return "final_confirmation"; }
+            if (boundaryKinds.includes("review_step") && !hasDenseResults) { return "review"; }
             if (dialogs.length > 0 && primaryActions.some((action) => /continue|next|done|apply/i.test(action.label))) {
                 return "dialog";
             }
@@ -1496,9 +1584,16 @@ enum ChromiumBrowserScripts {
             .map((element, index) => {
                 const label = normalize(element.textContent || element.getAttribute("aria-label") || "");
                 const nearby = normalize(element.closest('article, li, [role="dialog"], dialog, section, div')?.textContent || "");
+                const transactionalSlotContainer = element.closest('form, [role="dialog"], dialog, [data-testid*="booking" i], [data-testid*="availability" i], [data-testid*="reservation" i], [data-test*="booking" i], [data-test*="availability" i], [data-test*="reservation" i], [class*="booking" i], [class*="availability" i], [class*="reservation" i]');
+                const resultCardContainer = element.closest('[data-testid*="restaurant-card" i], [data-test*="restaurant-card" i], article, li, [role="listitem"]');
+                const isDenseResultSlot = !!resultCardContainer && hasDenseResults && !transactionalSlotContainer;
+                const hasTimeLikeLabel = /\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/i.test(label) && label.length <= 24;
                 let score = 0;
-                if (/\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/i.test(label)) { score += 70; }
+                if (hasTimeLikeLabel) { score += 70; }
                 if (/reserve|book/i.test(nearby)) { score += 20; }
+                if (transactionalSlotContainer) { score += 20; }
+                if (isDenseResultSlot) { score -= 120; }
+                if (!hasTimeLikeLabel) { score -= 120; }
                 if (/sold out|waitlist|notify/i.test(`${label} ${nearby}`)) { score -= 100; }
                 return {
                     id: `slot-${index}`,
@@ -1515,13 +1610,146 @@ enum ChromiumBrowserScripts {
             .filter((label) => /reserve|book|confirm|complete|checkout/i.test(label))
             .slice(0, 6);
 
-        const booking = location.hostname.includes("opentable")
+        const semanticFieldValues = [
+            ...interactiveElements.map((element) => ({
+                label: normalizeLower(element.label),
+                value: normalizeLower(element.value || element.text || ""),
+                purpose: element.purpose || ""
+            })),
+            ...forms.flatMap((form) => form.fields.map((field) => ({
+                label: normalizeLower(field.label),
+                value: normalizeLower(field.value || ""),
+                purpose: inferPurpose({ getAttribute: () => field.controlType }, field.label) || ""
+            }))),
+            ...controlGroups.flatMap((group) =>
+                group.options
+                    .filter((option) => option.isSelected)
+                    .map((option) => ({
+                        label: normalizeLower(`${group.label} ${option.label}`),
+                        value: normalizeLower(option.label),
+                        purpose: inferPurpose(null, `${group.label} ${option.label}`) || ""
+                    }))
+            ),
+            ...datePickers.map((picker) => ({
+                label: normalizeLower(picker.label),
+                value: normalizeLower(picker.selectedValue || ""),
+                purpose: "date"
+            }))
+        ];
+        const hasMeaningfulValue = (value) =>
+            !!value
+                && !/^(select|choose|all day|any time|date|time|party size|guests?|people)$/i.test(value);
+        const selectedPartySize = semanticFieldValues.some((entry) =>
+            (entry.purpose === "guest_count"
+                || /guest|party|people|person|table for|traveler|traveller|passenger|room/.test(entry.label))
+            && /\\b\\d+\\b/.test(entry.value)
+        );
+        const selectedDate = semanticFieldValues.some((entry) =>
+            (entry.purpose === "date" || /date|calendar|check-in|checkout|arrival|departure/.test(entry.label))
+            && hasMeaningfulValue(entry.value)
+        );
+        const selectedTime = semanticFieldValues.some((entry) =>
+            (/time|seating/.test(entry.label) && /\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/i.test(entry.value))
+                || (/\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/i.test(entry.label) && hasMeaningfulValue(entry.value) && entry.value.length <= 24)
+        );
+        const bookingFieldLabels = [
+            ...forms.flatMap((form) => form.fields.map((field) => field.label)),
+            ...interactiveElements.map((element) => element.label),
+            ...controlGroups.map((group) => group.label),
+            ...autocompleteSurfaces.map((surface) => surface.label),
+            ...datePickers.map((picker) => picker.label)
+        ]
+            .map(normalizeLower)
+            .filter(Boolean);
+        const hasPartyControl = bookingFieldLabels.some((label) => /guest|party|people|person|table for|traveler|traveller|passenger|room/.test(label))
+            || bookingPartyOptions.length > 0;
+        const hasDateControl = bookingFieldLabels.some((label) => /date|calendar|check-in|checkout|arrival|departure/.test(label))
+            || datePickers.length > 0
+            || bookingDateOptions.length > 0;
+        const hasTimeControl = bookingFieldLabels.some((label) => /time|seating/.test(label))
+            || bookingTimeOptions.length > 0;
+        const hasBookingWidget = (hasPartyControl && hasDateControl) || (hasDateControl && hasTimeControl) || (hasPartyControl && hasTimeControl);
+        const guestDetailFieldCount = forms.reduce((total, form) => total + form.fields.filter((field) =>
+            /name|email|phone|contact|special request|occasion|notes?|guest/.test(field.label.toLowerCase())
+        ).length, 0);
+        const paymentFieldCount = forms.reduce((total, form) => total + form.fields.filter((field) =>
+            /card|credit|debit|payment|billing|cvv|security code|expiry|exp date/.test(field.label.toLowerCase())
+        ).length, 0);
+        const reviewSignalLabels = [
+            ...forms.map((form) => form.label),
+            ...dialogs.map((dialog) => dialog.label),
+            ...primaryActions.map((action) => action.label),
+            ...transactionalBoundaries.map((boundary) => boundary.label)
+        ]
+            .map(normalizeLower)
+            .filter(Boolean);
+        const hasReviewSummary = reviewSignalLabels.some((label) =>
+            /review(?: reservation| booking| details| summary| step)|trip details|booking details|reservation details|order summary|guest details|payment details/.test(label)
+        ) || transactionalBoundaries.some((boundary) => boundary.kind === "review_step");
+        const hasVenueAction = primaryActions.some((action) => /reserve|book/i.test(action.label))
+            || transactionalBoundaries.some((boundary) => /reserve|book/i.test(boundary.label.toLowerCase()));
+        const hasFinalConfirmationBoundary = transactionalBoundaries.some((boundary) => boundary.kind === "final_confirmation");
+        const selectedParameterCount = [selectedPartySize, selectedDate, selectedTime].filter(Boolean).length;
+        const hasLateStageBookingStructure = paymentFieldCount > 0 || hasReviewSummary || guestDetailFieldCount >= 2 || availableSlots.length > 0;
+        const bookingFunnelStage = (() => {
+            if (hasFinalConfirmationBoundary && hasLateStageBookingStructure && !hasDenseResults) {
+                return "final_confirmation";
+            }
+            if (paymentFieldCount > 0 || hasReviewSummary) {
+                return "review";
+            }
+            if (guestDetailFieldCount >= 2) {
+                return "guest_details";
+            }
+            if (availableSlots.length > 0) {
+                return "slot_selection";
+            }
+            if (pageStage === "results" || hasDenseResults) {
+                return "results";
+            }
+            if (hasBookingWidget || selectedParameterCount > 0) {
+                return "booking_widget";
+            }
+            if (hasVenueAction && cards.length <= 1) {
+                return "venue_detail";
+            }
+            if (pageStage === "form" || pageStage === "search" || hasSearchField) {
+                return "search";
+            }
+            return "browse";
+        })();
+        const hasBookingSignals = hasVenueAction
+            || hasBookingWidget
+            || availableSlots.length > 0
+            || guestDetailFieldCount > 0
+            || paymentFieldCount > 0
+            || hasReviewSummary
+            || hasFinalConfirmationBoundary
+            || selectedParameterCount > 0
+            || /opentable|booking\\.com|travel|flight|resy|airbnb/.test(location.hostname);
+        const booking = hasBookingSignals
             ? {
                 partySizeOptions: bookingPartyOptions,
                 dateOptions: bookingDateOptions,
                 timeOptions: bookingTimeOptions,
                 availableSlots,
                 confirmationButtons
+            }
+            : null;
+        const bookingFunnel = hasBookingSignals
+            ? {
+                stage: bookingFunnelStage,
+                selectedParameterCount,
+                hasVenueAction,
+                hasBookingWidget,
+                hasSlotSelection: availableSlots.length > 0,
+                hasGuestDetailsForm: guestDetailFieldCount >= 2,
+                hasPaymentForm: paymentFieldCount > 0,
+                hasReviewSummary,
+                hasFinalConfirmationBoundary,
+                selectedDate,
+                selectedTime,
+                selectedPartySize
             }
             : null;
 
@@ -1542,7 +1770,8 @@ enum ChromiumBrowserScripts {
             primaryActions,
             transactionalBoundaries,
             semanticTargets,
-            booking
+            booking,
+            bookingFunnel
         };
         """
 

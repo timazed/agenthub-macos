@@ -3,11 +3,11 @@
     "id": "restaurant-opentable",
     "category": "restaurant",
     "title": "OpenTable restaurant discovery and booking boundary",
-    "goalText": "Use the browser to find a restaurant on OpenTable, reach the venue page, and stop before the final reservation confirmation step.",
+    "goalText": "Make a reservation for me on OpenTable. Sake House By Hikari. Culver City. March 9. 7pm. 2 people.",
     "initialURL": "https://www.opentable.com",
     "matchAny": ["opentable", "reservation", "restaurant"],
-    "expectedOutcomes": ["done", "stopped_at_confirmation_boundary"],
-    "notes": "Use the generic browser runtime first. The deterministic OpenTable path is still acceptable as a fallback reference."
+    "expectedOutcomes": ["stopped_at_confirmation_boundary"],
+    "notes": "Use the generic browser runtime first. Reach the venue page, set date/time/party, choose an available slot, and stop only at the real reservation confirmation boundary."
   },
   {
     "id": "hotel-booking",

@@ -43,6 +43,8 @@ struct ChatBrowserIntent: Equatable {
             if let partySize = bookingParameters.partySize {
                 components.append("for \(partySize) people")
             }
+            components.append("set the reservation details on the venue page")
+            components.append("choose the closest available reservation slot if the exact time is unavailable")
             components.append("and stop before the final reservation confirmation step")
             return components.joined(separator: " ")
         }
@@ -119,7 +121,7 @@ struct ChatBrowserIntent: Equatable {
             in: loweredText,
             patterns: [
                 #"\b(today|tomorrow)\b"#,
-                #"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?\s+\d{1,2}(?:st|nd|rd|th)?)\b"#
+                #"\b((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?)\b"#
             ]
         )
 
@@ -640,6 +642,29 @@ final class ChatSessionService {
                     )
                 }
 
+                if scenarioMetadata != nil,
+                   let approvalBoundaryLabel = approvalBoundaryLabelIfNeeded(for: command, inspection: latestInspection) {
+                    let finalText = "Stopped before the final confirmation boundary at \"\(approvalBoundaryLabel)\". Approval is still required for any final transaction step."
+                    try await persistBrowserRunArtifacts(
+                        outcome: "stopped_at_confirmation_boundary",
+                        goalText: intent.goalText,
+                        initialURL: intent.initialURL,
+                        session: session,
+                        controller: browserController,
+                        inspectionHistory: inspectionHistory,
+                        recentHistory: recentHistory,
+                        finalSummary: finalText,
+                        scenarioMetadata: scenarioMetadata
+                    )
+                    try persistAssistantMessage(finalText, session: session, shouldStore: persistMessages)
+                    return BrowserScenarioRunSummary(
+                        scenarioID: scenarioMetadata?.id ?? "ad_hoc",
+                        category: scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: intent.goalText, initialURL: intent.initialURL),
+                        outcome: "stopped_at_confirmation_boundary",
+                        finalSummary: finalText
+                    )
+                }
+
                 let previousProgressSnapshot = browserProgressSnapshot(state: state, inspection: latestInspection)
                 let execution: BrowserAgentExecutionResult
                 do {
@@ -837,6 +862,7 @@ final class ChatSessionService {
         - Use selectors from the inspection JSON when needed, but do not rely on raw selectors if a semantic target is available.
         - When you use a raw selector action, also include label when you know the semantic target so runtime recovery has a stable target name.
         - If you do not have enough page information, use inspect_page.
+        - For booking, reservation, checkout, hotel, or flight goals, prefer reaching the exact item, venue, or detail page before adjusting date, time, guest, passenger, or room parameters, unless the current page clearly already represents that exact item.
         - Never mention shell commands, files, local tools, or external browsers.
         - Do not ask the user to click controls that you can operate yourself.
         - If the goal is complete, return action done with a finalResponse.
@@ -886,8 +912,11 @@ final class ChatSessionService {
                 .prefix(5)
                 .map { "\($0.label.isEmpty ? $0.text : $0.label) [\($0.selector)]" }
                 .joined(separator: ", ")
+            let bookingStageSummary = inspection.bookingFunnel.map {
+                " Booking funnel: \($0.stage) (selected params: \($0.selectedParameterCount), widget: \($0.hasBookingWidget), slots: \($0.hasSlotSelection), guest details: \($0.hasGuestDetailsForm), payment: \($0.hasPaymentForm), review: \($0.hasReviewSummary), final boundary: \($0.hasFinalConfirmationBoundary))."
+            } ?? ""
             let summary = """
-            Inspected \(inspection.title) at \(inspection.url). Stage: \(inspection.pageStage). Semantic targets: \(inspection.semanticTargets.count). Forms: \(inspection.forms.count), control groups: \(inspection.controlGroups.count), autocomplete surfaces: \(inspection.autocompleteSurfaces.count), date pickers: \(inspection.datePickers.count), result lists: \(inspection.resultLists.count), cards: \(inspection.cards.count), dialogs: \(inspection.dialogs.count), transactional boundaries: \(inspection.transactionalBoundaries.count). Top controls: \(controls).
+            Inspected \(inspection.title) at \(inspection.url). Stage: \(inspection.pageStage). Semantic targets: \(inspection.semanticTargets.count). Forms: \(inspection.forms.count), control groups: \(inspection.controlGroups.count), autocomplete surfaces: \(inspection.autocompleteSurfaces.count), date pickers: \(inspection.datePickers.count), result lists: \(inspection.resultLists.count), cards: \(inspection.cards.count), dialogs: \(inspection.dialogs.count), transactional boundaries: \(inspection.transactionalBoundaries.count).\(bookingStageSummary) Top controls: \(controls).
             """
             return BrowserAgentExecutionResult(summary: summary, inspection: inspection)
         case .openURL:
@@ -1229,6 +1258,27 @@ final class ChatSessionService {
         let targetURL = command.url ?? "-"
         let key = command.key ?? "-"
         return "\(url)|\(command.action.rawValue)|\(selector)|\(text)|\(targetURL)|\(key)"
+    }
+
+    private func approvalBoundaryLabelIfNeeded(
+        for command: BrowserAgentCommand,
+        inspection: ChromiumInspection?
+    ) -> String? {
+        let resolution = BrowserSemanticResolver.resolve(command, inspection: inspection)
+        let detail = resolution.label
+            ?? command.label
+            ?? command.text
+            ?? command.selector
+            ?? command.url
+            ?? command.action.rawValue
+        guard BrowserTransactionalGuard.approvalShouldBeRequired(
+            actionName: command.action.rawValue,
+            detail: detail,
+            transactionalKind: resolution.transactionalKind
+        ) else {
+            return nil
+        }
+        return detail
     }
 
     private func browserProgressSnapshot(state: ChromiumBrowserState, inspection: ChromiumInspection?) -> BrowserProgressSnapshot {

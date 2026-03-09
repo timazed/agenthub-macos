@@ -38,6 +38,7 @@ The generic browser loop currently supports:
 `ChromiumInspection` now exposes:
 
 - `pageStage`
+- `bookingFunnel`
 - `interactiveElements`
 - `forms`
 - `resultLists`
@@ -52,6 +53,8 @@ The generic browser loop currently supports:
 - OpenTable-specific `booking` metadata
 
 The flattened `semanticTargets` graph exists to support runtime-side target resolution and stale-target recovery without forcing the model to rediscover the page after each DOM mutation.
+The new `bookingFunnel` model captures reusable late-stage signals such as selected date/time/party, booking-widget presence, slot selection, guest-details forms, review/payment forms, and whether the current page has truly progressed far enough to treat a `reserve/book` CTA as a confirmation boundary.
+The generic date-picker action now matches normalized targets such as `2026-03-09` against visible calendar labels and day cells, and result-card action ranking now prefers venue/detail navigation over map/help/share controls.
 
 ## Runtime Behavior
 
@@ -71,6 +74,7 @@ The generic loop in `ChatSessionService` now:
 The controller now distinguishes final confirmation boundaries from earlier search/review steps more cleanly.
 
 - Generic approval gating triggers on semantic `final_confirmation` boundaries and strong transactional keywords.
+- Auto-stop now also consults `bookingFunnel.stage`, so early venue/detail CTAs like `Reserve for Others` do not stop the agent before it has progressed into guest-details/review/final-confirmation states.
 - OpenTable chat intents and smoke scenarios now run through the generic semantic browser loop by default.
 - The deterministic OpenTable controller remains available only as a manual prototype/reference path in the Chromium pane.
 
@@ -83,6 +87,7 @@ Unit coverage now includes:
 - browser command response parsing
 - semantic retargeting for stale selectors
 - approval classification and final-boundary detection
+- booking-funnel stage inference and stage-aware final-boundary gating
 
 ## Live Smoke Harness
 
@@ -102,7 +107,7 @@ python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py compar
 /private/tmp/agenthub-macos-mr-70/DerivedData/AgentHub/Build/Products/Debug/AgentHub.app/Contents/MacOS/AgentHub --run-browser-scenario hotel-booking --scenario-file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json
 ```
 
-The `run` subcommand executes the manifest through the headless app binary, then harvests the newest artifact per scenario. Headless runs now isolate Chromium profile state per process and exit cleanly after persisting artifacts, so manifest validation can be used directly in automation.
+The `run` subcommand executes the manifest through the headless app binary, then harvests the newest artifact per scenario. Headless runs now isolate Chromium profile state per process and persist usable artifacts reliably, but Chromium/CEF teardown is still brittle enough that some runs can fatal after the artifact is written.
 
 The persisted artifact JSON now contains:
 
@@ -125,10 +130,19 @@ The manifest-backed live smoke matrix is now green for the main generic validati
 - `flight-google-flights`: `stopped_at_confirmation_boundary`
 - `checkout-amazon`: `stopped_at_confirmation_boundary`
 
+The current OpenTable reservation validation uses the real booking query:
+
+- `Make a reservation for me on OpenTable. Sake House By Hikari. Culver City. March 9. 7pm. 2 people.`
+
+The latest successful artifact stops at:
+
+- `Reserve table at Sake House By Hikari at 7:00 PM on March 9, for a party of 2`
+
 ## Known Follow-Up
 
 The branch is now at the milestone where the generic browser substrate is live-validated across restaurant, hotel, flight, and checkout-style flows. Remaining work is narrower and lower priority:
 
 - repeated live smoke runs to catch site drift and selector/semantic regressions
 - tuning semantic extraction for more custom calendar, autocomplete, and modal variants
-- replacing the current headless teardown containment path with a fully graceful in-process Chromium/CEF drain if that lifecycle cleanliness becomes important
+- refining venue-detail/page-stage inference where some detail pages still report a coarse `results` stage despite reaching the correct approval boundary
+- replacing the current headless teardown containment path with a fully graceful in-process Chromium/CEF drain

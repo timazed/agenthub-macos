@@ -4,8 +4,8 @@ enum BrowserTransactionalGuard {
     nonisolated static func shouldAutoStop(goalText: String, inspection: ChromiumInspection?) -> Bool {
         guard let inspection else { return false }
         guard isTransactionalGoal(goalText) else { return false }
-
-        return highConfidenceFinalBoundary(in: inspection) != nil
+        guard let boundary = highConfidenceFinalBoundary(in: inspection) else { return false }
+        return stageAllowsAutoStop(for: inspection, boundary: boundary)
     }
 
     nonisolated static func stopReason(goalText: String, inspection: ChromiumInspection?) -> String? {
@@ -40,6 +40,30 @@ enum BrowserTransactionalGuard {
             .first
     }
 
+    nonisolated private static func stageAllowsAutoStop(
+        for inspection: ChromiumInspection,
+        boundary: ChromiumTransactionalBoundary
+    ) -> Bool {
+        guard let bookingFunnel = inspection.bookingFunnel else {
+            return true
+        }
+
+        switch bookingFunnel.stage {
+        case "guest_details", "review", "final_confirmation":
+            return true
+        case "slot_selection":
+            return bookingFunnel.hasFinalConfirmationBoundary
+                && bookingFunnel.selectedParameterCount >= 2
+                && isStrongerThanSlotSelectionLabel(boundary.label)
+        case "booking_widget", "venue_detail", "results", "search", "browse":
+            return false
+        default:
+            return bookingFunnel.hasPaymentForm
+                || bookingFunnel.hasReviewSummary
+                || bookingFunnel.hasGuestDetailsForm
+        }
+    }
+
     nonisolated private static func isTransactionalGoal(_ goalText: String) -> Bool {
         let lowered = goalText.lowercased()
         return transactionalGoalKeywords.contains { lowered.contains($0) }
@@ -63,6 +87,11 @@ enum BrowserTransactionalGuard {
     nonisolated private static func isDiscoveryNavigationLabel(_ label: String) -> Bool {
         let lowered = label.lowercased()
         return discoveryNavigationKeywords.contains { lowered.contains($0) }
+    }
+
+    nonisolated private static func isStrongerThanSlotSelectionLabel(_ label: String) -> Bool {
+        let lowered = label.lowercased()
+        return strongerLateStageKeywords.contains { lowered.contains($0) }
     }
 
     nonisolated private static let transactionalGoalKeywords = [
@@ -120,5 +149,14 @@ enum BrowserTransactionalGuard {
         "browse all",
         "explore all",
         "view more"
+    ]
+
+    nonisolated private static let strongerLateStageKeywords = [
+        "confirm",
+        "complete booking",
+        "place order",
+        "finalize",
+        "pay",
+        "purchase"
     ]
 }
