@@ -309,9 +309,57 @@ struct AuthViewModelTests {
         #expect(viewModel.onboardingState.completedSteps == [.persona, .name])
         #expect(viewModel.onboardingState.selectedPersonaId == "default")
         #expect(viewModel.onboardingState.personalitySource == .custom)
+        #expect(viewModel.onboardingState.defaultAgentName == "Operator")
+        #expect(viewModel.defaultAgentName == "Operator")
 
         let persona = try PersonaManager(paths: paths).defaultPersona()
         #expect(persona.name == "Operator")
+    }
+
+    @Test
+    func savePersonalityReusesPreviouslyCompletedNamePayload() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        let onboardingManager = makeOnboardingManager(paths: paths)
+        let onboardingState = OnboardingState(
+            completedSteps: [.name],
+            selectedPersonaId: nil,
+            personalitySource: nil,
+            defaultAgentName: "Operator",
+            updatedAt: Date()
+        )
+        try OnboardingStore(paths: paths).save(onboardingState)
+
+        let viewModel = AuthViewModel(
+            authManager: makeAuthManager(
+                paths: paths,
+                refreshedState: AuthState(
+                    status: .authenticated,
+                    accountLabel: "user@example.com",
+                    lastValidatedAt: Date(),
+                    failureReason: nil,
+                    updatedAt: Date()
+                )
+            ),
+            initialState: .default(),
+            onboardingManager: onboardingManager,
+            initialOnboardingState: onboardingState,
+            openURL: { _ in true }
+        )
+
+        await viewModel.refreshStatus()
+        #expect(viewModel.currentStep == .persona)
+        #expect(viewModel.defaultAgentName == "Operator")
+
+        viewModel.savePersonality("Be direct, skeptical, and concise.")
+
+        #expect(viewModel.onboardingState.completedSteps == [.persona, .name])
+        #expect(viewModel.onboardingState.defaultAgentName == "Operator")
+
+        let persona = try PersonaManager(paths: paths).defaultPersona()
+        let instructions = try PersonaManager(paths: paths).loadInstructions(personaId: "default")
+        #expect(persona.name == "Operator")
+        #expect(instructions == "Be direct, skeptical, and concise.\n")
     }
 
     @Test

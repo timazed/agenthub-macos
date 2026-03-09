@@ -96,6 +96,7 @@ private enum PreviewFactory {
                 completedSteps: [],
                 selectedPersonaId: nil,
                 personalitySource: nil,
+                defaultAgentName: nil,
                 updatedAt: Date()
             )
         case .persona:
@@ -103,6 +104,7 @@ private enum PreviewFactory {
                 completedSteps: [],
                 selectedPersonaId: nil,
                 personalitySource: nil,
+                defaultAgentName: nil,
                 updatedAt: Date()
             )
         case .name:
@@ -114,6 +116,7 @@ private enum PreviewFactory {
                 completedSteps: [.persona],
                 selectedPersonaId: "default",
                 personalitySource: .custom,
+                defaultAgentName: "Operator",
                 updatedAt: Date()
             )
         case .complete:
@@ -125,6 +128,7 @@ private enum PreviewFactory {
                 completedSteps: [.persona, .name],
                 selectedPersonaId: "default",
                 personalitySource: .custom,
+                defaultAgentName: "Operator",
                 updatedAt: Date()
             )
         }

@@ -62,7 +62,8 @@ final class PersonaManager {
             return try validatePersona(personaId: "default")
         }
 
-        return try createPersona(name: trimmedName, instructions: instructions)
+        try updatePersona(personaId: "default", name: trimmedName, instructions: instructions)
+        return try validatePersona(personaId: "default")
     }
 
     func updateDefaultPersonaName(_ name: String) throws {
