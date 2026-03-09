@@ -13,16 +13,14 @@ enum PersonalitySource: String, Codable, Hashable {
 }
 
 struct OnboardingState: Codable, Hashable {
-    var hasCompletedOnboarding: Bool
-    var hasCompletedNameStep: Bool?
+    var completedSteps: Set<OnboardingStep>
     var selectedPersonaId: String?
     var personalitySource: PersonalitySource?
     var updatedAt: Date
 
     static func `default`() -> OnboardingState {
         OnboardingState(
-            hasCompletedOnboarding: false,
-            hasCompletedNameStep: false,
+            completedSteps: [],
             selectedPersonaId: nil,
             personalitySource: nil,
             updatedAt: Date()

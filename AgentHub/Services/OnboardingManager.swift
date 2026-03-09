@@ -51,8 +51,7 @@ final class OnboardingManager {
         )
 
         let state = OnboardingState(
-            hasCompletedOnboarding: false,
-            hasCompletedNameStep: false,
+            completedSteps: [.persona],
             selectedPersonaId: "default",
             personalitySource: source,
             updatedAt: Date()
@@ -65,8 +64,7 @@ final class OnboardingManager {
         try personaManager.updateDefaultPersonaName(name)
 
         let state = OnboardingState(
-            hasCompletedOnboarding: true,
-            hasCompletedNameStep: true,
+            completedSteps: [.persona, .name],
             selectedPersonaId: onboardingState.selectedPersonaId ?? "default",
             personalitySource: onboardingState.personalitySource,
             updatedAt: Date()
@@ -76,8 +74,6 @@ final class OnboardingManager {
     }
 
     func currentStep(authState: AuthState, onboardingState: OnboardingState) -> OnboardingStep? {
-        let hasCompletedNameStep = onboardingState.hasCompletedNameStep ?? onboardingState.hasCompletedOnboarding
-
         for step in onboardingSteps {
             switch step {
             case .codexAuth:
@@ -85,13 +81,13 @@ final class OnboardingManager {
                     return step
                 }
             case .persona:
-                if authState.isAuthenticated && onboardingState.personalitySource == nil {
+                if authState.isAuthenticated && !onboardingState.completedSteps.contains(.persona) {
                     return step
                 }
             case .name:
                 if authState.isAuthenticated
-                    && onboardingState.personalitySource != nil
-                    && !hasCompletedNameStep {
+                    && onboardingState.completedSteps.contains(.persona)
+                    && !onboardingState.completedSteps.contains(.name) {
                     return step
                 }
             }

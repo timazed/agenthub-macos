@@ -93,16 +93,14 @@ private enum PreviewFactory {
         switch state {
         case .auth:
             onboardingState = OnboardingState(
-                hasCompletedOnboarding: false,
-                hasCompletedNameStep: false,
+                completedSteps: [],
                 selectedPersonaId: nil,
                 personalitySource: nil,
                 updatedAt: Date()
             )
         case .persona:
             onboardingState = OnboardingState(
-                hasCompletedOnboarding: false,
-                hasCompletedNameStep: false,
+                completedSteps: [],
                 selectedPersonaId: nil,
                 personalitySource: nil,
                 updatedAt: Date()
@@ -113,8 +111,7 @@ private enum PreviewFactory {
                 instructions: "You are a calm, sharp operator."
             )
             onboardingState = OnboardingState(
-                hasCompletedOnboarding: false,
-                hasCompletedNameStep: false,
+                completedSteps: [.persona],
                 selectedPersonaId: "default",
                 personalitySource: .custom,
                 updatedAt: Date()
@@ -125,8 +122,7 @@ private enum PreviewFactory {
                 instructions: "You are a calm, sharp operator."
             )
             onboardingState = OnboardingState(
-                hasCompletedOnboarding: true,
-                hasCompletedNameStep: true,
+                completedSteps: [.persona, .name],
                 selectedPersonaId: "default",
                 personalitySource: .custom,
                 updatedAt: Date()

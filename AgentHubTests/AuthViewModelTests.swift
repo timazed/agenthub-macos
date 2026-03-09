@@ -270,8 +270,7 @@ struct AuthViewModelTests {
 
         #expect(!viewModel.hasCompletedOnboarding)
         #expect(viewModel.currentStep == .name)
-        #expect(!viewModel.onboardingState.hasCompletedOnboarding)
-        #expect(viewModel.onboardingState.hasCompletedNameStep == false)
+        #expect(viewModel.onboardingState.completedSteps == [.persona])
         #expect(viewModel.onboardingState.selectedPersonaId == "default")
         #expect(viewModel.onboardingState.personalitySource == .custom)
 
@@ -307,8 +306,7 @@ struct AuthViewModelTests {
 
         #expect(viewModel.hasCompletedOnboarding)
         #expect(viewModel.currentStep == nil)
-        #expect(viewModel.onboardingState.hasCompletedOnboarding)
-        #expect(viewModel.onboardingState.hasCompletedNameStep == true)
+        #expect(viewModel.onboardingState.completedSteps == [.persona, .name])
         #expect(viewModel.onboardingState.selectedPersonaId == "default")
         #expect(viewModel.onboardingState.personalitySource == .custom)
 
