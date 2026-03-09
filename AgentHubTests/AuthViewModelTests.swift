@@ -176,6 +176,74 @@ struct AuthViewModelTests {
     }
 
     @Test
+    func authStepExposesPresentationMetadata() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        let viewModel = AuthViewModel(
+            authManager: makeAuthManager(
+                paths: paths,
+                refreshedState: AuthState(
+                    status: .unauthenticated,
+                    accountLabel: nil,
+                    lastValidatedAt: nil,
+                    failureReason: "Not logged in",
+                    updatedAt: Date()
+                )
+            ),
+            initialState: .default(),
+            onboardingManager: makeOnboardingManager(paths: paths),
+            initialOnboardingState: .default(),
+            openURL: { _ in true }
+        )
+
+        let presentation = viewModel.onboardingPresentation
+
+        #expect(viewModel.currentStep == .codexAuth)
+        #expect(presentation?.currentStepNumber == 1)
+        #expect(presentation?.totalSteps == 3)
+        #expect(presentation?.title == "Connect Codex to unlock AgentHub")
+    }
+
+    @Test
+    func personaAndNameStepsExposePresentationMetadata() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        let onboardingManager = makeOnboardingManager(paths: paths)
+        let viewModel = AuthViewModel(
+            authManager: makeAuthManager(
+                paths: paths,
+                refreshedState: AuthState(
+                    status: .authenticated,
+                    accountLabel: "user@example.com",
+                    lastValidatedAt: Date(),
+                    failureReason: nil,
+                    updatedAt: Date()
+                )
+            ),
+            initialState: .default(),
+            onboardingManager: onboardingManager,
+            initialOnboardingState: .default(),
+            openURL: { _ in true }
+        )
+
+        await viewModel.refreshStatus()
+
+        let personaPresentation = viewModel.onboardingPresentation
+        #expect(viewModel.currentStep == .persona)
+        #expect(personaPresentation?.currentStepNumber == 2)
+        #expect(personaPresentation?.totalSteps == 3)
+        #expect(personaPresentation?.title == "Shape the assistant you want to work with")
+
+        viewModel.savePersonality("Be direct, skeptical, and concise.")
+
+        let namePresentation = viewModel.onboardingPresentation
+        #expect(viewModel.currentStep == .name)
+        #expect(namePresentation?.currentStepNumber == 3)
+        #expect(namePresentation?.totalSteps == 3)
+        #expect(namePresentation?.title == "Name the assistant before you enter home")
+    }
+
+    @Test
     func savePersonalityCompletesOnboardingAndPersistsDefaultPersona() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
         let paths = AppPaths(root: root)
