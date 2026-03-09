@@ -168,7 +168,7 @@ final class CodexLoginCoordinator {
     }
 
     private func locateCodexBinary() throws -> URL {
-        try codexBinaryLocator.locateBinary(allowWorkspaceFallback: true)
+        try codexBinaryLocator.locateBinary()
     }
 
     private static func stripANSI(from text: String) -> String {
