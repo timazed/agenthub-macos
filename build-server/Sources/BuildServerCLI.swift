@@ -7,9 +7,9 @@ struct BuildServerRunSummary: Codable, Equatable, Sendable {
     var resolvedReleaseTag: String
     var targetAgentHubVersion: String
     var targetBuildNumber: Int
-    var derivedDataPath: String
-    var appBundlePath: String
-    var injectedBinaryPath: String
+    var derivedDataPath: String?
+    var appBundlePath: String?
+    var injectedBinaryPath: String?
     var universalBinaryPath: String
     var notes: [String]
 }
@@ -35,6 +35,7 @@ struct BuildServerCLI {
     }
 
     var arguments: [String]
+    var prepareArtifacts: (AgentHubReleaseRequest) throws -> AgentHubArtifactPreparation
     var planRelease: (AgentHubReleaseRequest) throws -> AgentHubReleasePlan
     var output: (String) -> Void
 
@@ -44,7 +45,26 @@ struct BuildServerCLI {
         switch parsed {
         case .help:
             output(Self.usageText)
-        case let .prepareRelease(request, outputMode):
+        case let .prepareRelease(request, outputMode, dryRunNoBuild):
+            if dryRunNoBuild {
+                let preparation = try prepareArtifacts(request)
+                let summary = BuildServerRunSummary(
+                    releaseJobID: preparation.jobID,
+                    status: "prepared-no-build",
+                    codexVersion: preparation.codexRelease.version,
+                    resolvedReleaseTag: preparation.codexRelease.releaseTag,
+                    targetAgentHubVersion: preparation.targetAgentHubVersion,
+                    targetBuildNumber: preparation.targetBuildNumber,
+                    derivedDataPath: nil,
+                    appBundlePath: nil,
+                    injectedBinaryPath: nil,
+                    universalBinaryPath: preparation.preparedArtifacts.universalBinaryURL.path,
+                    notes: preparation.steps
+                )
+                output(render(summary: summary, mode: outputMode))
+                return
+            }
+
             let plan = try planRelease(request)
             let summary = BuildServerRunSummary(
                 releaseJobID: plan.jobID,
@@ -84,6 +104,7 @@ struct BuildServerCLI {
             var releaseChannel: String?
             var force = false
             var outputMode: OutputMode = .text
+            var dryRunNoBuild = false
 
             while let argument = iterator.next() {
                 switch argument {
@@ -103,6 +124,8 @@ struct BuildServerCLI {
                     force = true
                 case "--json":
                     outputMode = .json
+                case "--dry-run-no-build":
+                    dryRunNoBuild = true
                 default:
                     throw BuildServerCLIError.invalidArgument("Unknown argument: \(argument)")
                 }
@@ -125,7 +148,8 @@ struct BuildServerCLI {
                     releaseChannel: releaseChannel,
                     force: force
                 ),
-                outputMode
+                outputMode,
+                dryRunNoBuild
             )
         default:
             throw BuildServerCLIError.usage("Unknown command: \(command)")
@@ -140,16 +164,23 @@ struct BuildServerCLI {
             let data = try? encoder.encode(summary)
             return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         case .text:
+            let optionalLines = [
+                summary.derivedDataPath.map { "DerivedData: \($0)" },
+                summary.appBundlePath.map { "App bundle: \($0)" },
+                summary.injectedBinaryPath.map { "Injected binary: \($0)" },
+            ]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+            let optionalBlock = optionalLines.isEmpty ? "" : "\(optionalLines)\n"
+
             return """
             agenthub-build-server
 
             Status: \(summary.status)
             Codex version: \(summary.codexVersion) (\(summary.resolvedReleaseTag))
             Target AgentHub version: \(summary.targetAgentHubVersion) (\(summary.targetBuildNumber))
-            DerivedData: \(summary.derivedDataPath)
-            App bundle: \(summary.appBundlePath)
-            Injected binary: \(summary.injectedBinaryPath)
             Universal binary: \(summary.universalBinaryPath)
+            \(optionalBlock)
 
             Steps:
             \(summary.notes.map { "- \($0)" }.joined(separator: "\n"))
@@ -171,12 +202,12 @@ struct BuildServerCLI {
     agenthub-build-server
 
     Usage:
-      agenthub-build-server prepare-release --agenthub-version <version> --build-number <number> --channel <stable|dev> [--force] [--json]
+      agenthub-build-server prepare-release --agenthub-version <version> --build-number <number> --channel <stable|dev> [--force] [--dry-run-no-build] [--json]
       agenthub-build-server --help
     """
 
     enum ParsedCommand: Equatable {
         case help
-        case prepareRelease(AgentHubReleaseRequest, OutputMode)
+        case prepareRelease(AgentHubReleaseRequest, OutputMode, Bool)
     }
 }

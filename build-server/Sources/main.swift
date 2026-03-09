@@ -9,6 +9,9 @@ let controller = AgentHubReleaseController(
 
 let cli = BuildServerCLI(
     arguments: Array(CommandLine.arguments.dropFirst()),
+    prepareArtifacts: { request in
+        try controller.prepareArtifacts(request)
+    },
     planRelease: { request in
         try controller.planRelease(request)
     },

@@ -7,6 +7,7 @@ struct BuildServerCLITests {
     func parsesPrepareReleaseCommand() throws {
         let cli = BuildServerCLI(
             arguments: [],
+            prepareArtifacts: { _ in makeArtifactPreparation() },
             planRelease: { _ in makePlan() },
             output: { _ in }
         )
@@ -18,6 +19,7 @@ struct BuildServerCLITests {
                 "--build-number", "42",
                 "--channel", "stable",
                 "--force",
+                "--dry-run-no-build",
                 "--json",
             ]
         )
@@ -30,7 +32,8 @@ struct BuildServerCLITests {
                     releaseChannel: "stable",
                     force: true
                 ),
-                .json
+                .json,
+                true
             )
         )
     }
@@ -46,6 +49,7 @@ struct BuildServerCLITests {
                 "--channel", "stable",
                 "--json",
             ],
+            prepareArtifacts: { _ in makeArtifactPreparation() },
             planRelease: { _ in makePlan() },
             output: { output = $0 }
         )
@@ -56,12 +60,37 @@ struct BuildServerCLITests {
         #expect(output.contains("\"resolvedReleaseTag\""))
         #expect(output.contains("\"appBundlePath\""))
     }
+
+    @Test
+    func rendersJsonSummaryForDryRunWithoutBuildPaths() throws {
+        var output = ""
+        let cli = BuildServerCLI(
+            arguments: [
+                "prepare-release",
+                "--agenthub-version", "1.4.2",
+                "--build-number", "42",
+                "--channel", "stable",
+                "--dry-run-no-build",
+                "--json",
+            ],
+            prepareArtifacts: { _ in makeArtifactPreparation() },
+            planRelease: { _ in makePlan() },
+            output: { output = $0 }
+        )
+
+        try cli.run()
+
+        #expect(output.contains("\"status\" : \"prepared-no-build\""))
+        #expect(output.contains("\"universalBinaryPath\""))
+        #expect(output.contains("\"appBundlePath\"") == false)
+        #expect(output.contains("\"injectedBinaryPath\"") == false)
+    }
 }
 
-private func makePlan() -> AgentHubReleasePlan {
+private func makeArtifactPreparation() -> AgentHubArtifactPreparation {
     let workingDirectory = URL(fileURLWithPath: "/tmp/codex-cli-work", isDirectory: true)
     let universalBinaryURL = workingDirectory.appendingPathComponent("universal/codex")
-    return AgentHubReleasePlan(
+    return AgentHubArtifactPreparation(
         jobID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
         codexRelease: CodexArtifactDescriptor(
             version: "1.2.3",
@@ -75,14 +104,6 @@ private func makePlan() -> AgentHubReleasePlan {
             x64BinaryURL: workingDirectory.appendingPathComponent("x64/codex"),
             universalBinaryURL: universalBinaryURL
         ),
-        buildResult: XcodeBuildResult(
-            appBundleURL: URL(fileURLWithPath: "/tmp/AgentHub.app", isDirectory: true),
-            derivedDataURL: URL(fileURLWithPath: "/tmp/DerivedData", isDirectory: true)
-        ),
-        bundleInjectionResult: CodexBundleInjectionResult(
-            appBundleURL: URL(fileURLWithPath: "/tmp/AgentHub.app", isDirectory: true),
-            injectedBinaryURL: URL(fileURLWithPath: "/tmp/AgentHub.app/Contents/Resources/codex")
-        ),
         targetAgentHubVersion: "1.4.3",
         targetBuildNumber: 43,
         sparklePublishPlan: SparklePublishPlan(
@@ -94,6 +115,30 @@ private func makePlan() -> AgentHubReleasePlan {
         steps: [
             "Resolve latest stable Codex release (ignore -alpha)",
             "Fetch Codex artifact 1.2.3",
+        ]
+    )
+}
+
+private func makePlan() -> AgentHubReleasePlan {
+    let preparation = makeArtifactPreparation()
+    return AgentHubReleasePlan(
+        jobID: preparation.jobID,
+        codexRelease: preparation.codexRelease,
+        preparedArtifacts: preparation.preparedArtifacts,
+        buildResult: XcodeBuildResult(
+            appBundleURL: URL(fileURLWithPath: "/tmp/AgentHub.app", isDirectory: true),
+            derivedDataURL: URL(fileURLWithPath: "/tmp/DerivedData", isDirectory: true)
+        ),
+        bundleInjectionResult: CodexBundleInjectionResult(
+            appBundleURL: URL(fileURLWithPath: "/tmp/AgentHub.app", isDirectory: true),
+            injectedBinaryURL: URL(fileURLWithPath: "/tmp/AgentHub.app/Contents/Resources/codex")
+        ),
+        targetAgentHubVersion: preparation.targetAgentHubVersion,
+        targetBuildNumber: preparation.targetBuildNumber,
+        sparklePublishPlan: preparation.sparklePublishPlan,
+        steps: preparation.steps + [
+            "Build unsigned AgentHub.app bundle",
+            "Inject latest Codex binary into AgentHub.app resources",
         ]
     )
 }

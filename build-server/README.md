@@ -34,6 +34,7 @@ This package is the first scaffold for the future Codex-triggered AgentHub relea
 
 ```bash
 swift run --package-path build-server --disable-sandbox agenthub-build-server --help
+swift run --package-path build-server --disable-sandbox agenthub-build-server prepare-release --agenthub-version 1.4.2 --build-number 42 --channel stable --dry-run-no-build --json
 swift run --package-path build-server --disable-sandbox agenthub-build-server prepare-release --agenthub-version 1.4.2 --build-number 42 --channel stable --json
 swift test --package-path build-server --disable-sandbox
 ```
