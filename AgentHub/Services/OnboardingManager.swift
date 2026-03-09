@@ -45,30 +45,27 @@ final class OnboardingManager {
     }
 
     func completePersonaStep(personality: String, source: PersonalitySource) throws -> OnboardingState {
+        var state = try store.loadOrCreateDefault()
         _ = try personaManager.upsertDefaultPersona(
-            name: personaManager.defaultAgentName(),
+            name: state.defaultAgentName ?? personaManager.defaultAgentName(),
             instructions: personality
         )
 
-        let state = OnboardingState(
-            completedSteps: [.persona],
-            selectedPersonaId: "default",
-            personalitySource: source,
-            updatedAt: Date()
-        )
+        state.selectedPersonaId = "default"
+        state.personalitySource = source
+        state.completedSteps.insert(.persona)
+        state.updatedAt = Date()
         try store.save(state)
         return state
     }
 
-    func completeNameStep(name: String, onboardingState: OnboardingState) throws -> OnboardingState {
-        try personaManager.updateDefaultPersonaName(name)
+    func completeNameStep(name: String) throws -> OnboardingState {
+        var state = try store.loadOrCreateDefault()
+        try personaManager.persistDefaultAgentName(name)
 
-        let state = OnboardingState(
-            completedSteps: [.persona, .name],
-            selectedPersonaId: onboardingState.selectedPersonaId ?? "default",
-            personalitySource: onboardingState.personalitySource,
-            updatedAt: Date()
-        )
+        state.defaultAgentName = personaManager.defaultAgentName()
+        state.completedSteps.insert(.name)
+        state.updatedAt = Date()
         try store.save(state)
         return state
     }

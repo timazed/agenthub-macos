@@ -16,6 +16,7 @@ struct OnboardingState: Codable, Hashable {
     var completedSteps: Set<OnboardingStep>
     var selectedPersonaId: String?
     var personalitySource: PersonalitySource?
+    var defaultAgentName: String? = nil
     var updatedAt: Date
 
     static func `default`() -> OnboardingState {
@@ -23,6 +24,7 @@ struct OnboardingState: Codable, Hashable {
             completedSteps: [],
             selectedPersonaId: nil,
             personalitySource: nil,
+            defaultAgentName: nil,
             updatedAt: Date()
         )
     }

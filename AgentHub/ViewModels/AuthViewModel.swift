@@ -124,7 +124,7 @@ final class AuthViewModel: ObservableObject {
     }
 
     var defaultAgentName: String {
-        onboardingManager.defaultAgentName()
+        onboardingState.defaultAgentName ?? onboardingManager.defaultAgentName()
     }
 
     var onboardingPresentation: OnboardingPresentation? {
@@ -243,7 +243,7 @@ final class AuthViewModel: ObservableObject {
         guard currentStep == .name else { return }
 
         do {
-            onboardingState = try onboardingManager.completeNameStep(name: name, onboardingState: onboardingState)
+            onboardingState = try onboardingManager.completeNameStep(name: name)
             errorMessage = nil
         } catch {
             errorMessage = presentableErrorMessage(from: error.localizedDescription)

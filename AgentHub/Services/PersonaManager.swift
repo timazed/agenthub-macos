@@ -28,10 +28,30 @@ final class PersonaManager {
     }
 
     func defaultAgentName() -> String {
-        (try? defaultPersona().name).flatMap { name in
-            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        } ?? "Default"
+        persistedDefaultAgentName() ?? "Default"
+    }
+
+    func persistDefaultAgentName(_ name: String) throws {
+        let normalizedName = normalizeName(name, fallback: defaultAgentName())
+        let directory = personaDirectory(personaId: "default")
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let existingProfile = loadProfile(for: "default")
+        try writeProfile(
+            PersonaProfile(
+                name: normalizedName,
+                profilePictureURL: existingProfile?.profilePictureURL
+            ),
+            to: directory
+        )
+    }
+
+    private func persistedDefaultAgentName() -> String? {
+        guard let name = loadProfile(for: "default")?.name else {
+            return nil
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     func upsertDefaultPersona(name: String, instructions: String) throws -> Persona {
