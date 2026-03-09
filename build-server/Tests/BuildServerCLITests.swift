@@ -85,6 +85,25 @@ struct BuildServerCLITests {
         #expect(output.contains("\"appBundlePath\"") == false)
         #expect(output.contains("\"injectedBinaryPath\"") == false)
     }
+
+    @Test
+    func printsUsageOnlyForCliErrors() {
+        #expect(
+            BuildServerCLI.shouldPrintUsage(
+                for: BuildServerCLIError.usage("Missing required --channel")
+            )
+        )
+        #expect(
+            BuildServerCLI.shouldPrintUsage(
+                for: BuildServerCLIError.invalidArgument("Unknown argument: --wat")
+            )
+        )
+        #expect(
+            BuildServerCLI.shouldPrintUsage(
+                for: CodexArtifactFetcherError.upstreamFetchFailed("GitHub releases request failed with status 401")
+            ) == false
+        )
+    }
 }
 
 private func makeArtifactPreparation() -> AgentHubArtifactPreparation {

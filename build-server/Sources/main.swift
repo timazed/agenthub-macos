@@ -25,6 +25,8 @@ do {
 } catch {
     let message = error.localizedDescription
     fputs("\(message)\n", stderr)
-    fputs("\(BuildServerCLI.usageText)\n", stderr)
+    if BuildServerCLI.shouldPrintUsage(for: error) {
+        fputs("\(BuildServerCLI.usageText)\n", stderr)
+    }
     exit(1)
 }

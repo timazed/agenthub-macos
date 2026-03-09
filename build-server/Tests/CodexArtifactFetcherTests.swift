@@ -111,6 +111,27 @@ struct CodexArtifactFetcherTests {
         #expect(fetcher.assetKind(for: "checksums.txt") == .checksums)
         #expect(fetcher.assetKind(for: "codex-linux-x86_64.tar.gz") == .other)
     }
+
+    @Test
+    func formatsUnauthorizedMessageWhenAuthTokenWasProvided() {
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/openai/codex/releases")!)
+        request.setValue("Bearer token", forHTTPHeaderField: "Authorization")
+
+        let message = GitHubReleasesHTTPErrorFormatter.message(statusCode: 401, request: request)
+
+        #expect(message.contains("GITHUB_TOKEN"))
+        #expect(message.contains("configured repository"))
+    }
+
+    @Test
+    func formatsUnauthorizedMessageWhenNoAuthTokenWasProvided() {
+        let request = URLRequest(url: URL(string: "https://api.github.com/repos/openai/codex/releases")!)
+
+        let message = GitHubReleasesHTTPErrorFormatter.message(statusCode: 401, request: request)
+
+        #expect(message.contains("Set GITHUB_TOKEN"))
+        #expect(message.contains("private"))
+    }
 }
 
 private func fixtureData(_ json: String) throws -> Data {

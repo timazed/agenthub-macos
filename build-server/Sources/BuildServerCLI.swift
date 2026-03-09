@@ -206,6 +206,15 @@ struct BuildServerCLI {
       agenthub-build-server --help
     """
 
+    static func shouldPrintUsage(for error: Error) -> Bool {
+        switch error {
+        case is BuildServerCLIError:
+            return true
+        default:
+            return false
+        }
+    }
+
     enum ParsedCommand: Equatable {
         case help
         case prepareRelease(AgentHubReleaseRequest, OutputMode, Bool)

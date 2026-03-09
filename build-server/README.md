@@ -28,7 +28,7 @@ This package is the first scaffold for the future Codex-triggered AgentHub relea
 - `CODEX_GITHUB_OWNER` — GitHub owner/org for the Codex releases
 - `CODEX_GITHUB_REPO` — GitHub repository name for the Codex releases
 - `CODEX_GITHUB_API_BASE_URL` — optional override for the GitHub API base URL
-- `GITHUB_TOKEN` — optional token for authenticated GitHub API access or rate-limit avoidance
+- `GITHUB_TOKEN` — optional for public repos, but required for private repos or any GitHub release API access that needs authentication
 
 ## Local Smoke Test
 

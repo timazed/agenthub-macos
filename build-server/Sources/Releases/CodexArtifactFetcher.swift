@@ -155,6 +155,24 @@ struct CodexArtifactFetcher {
     }
 }
 
+enum GitHubReleasesHTTPErrorFormatter {
+    static func message(statusCode: Int, request: URLRequest) -> String {
+        guard statusCode == 401 else {
+            return "GitHub releases request failed with status \(statusCode)"
+        }
+
+        if request.value(forHTTPHeaderField: "Authorization") != nil {
+            return """
+            GitHub releases request failed with status 401. Check GITHUB_TOKEN validity and ensure it has access to the configured repository.
+            """
+        }
+
+        return """
+        GitHub releases request failed with status 401. Set GITHUB_TOKEN if the repository is private or requires authenticated access.
+        """
+    }
+}
+
 private extension URLSession {
     func codexSynchronousData(for request: URLRequest) throws -> Data {
         let semaphore = DispatchSemaphore(value: 0)
@@ -191,7 +209,10 @@ private extension URLSession {
                 resultBox.store(
                     .failure(
                     CodexArtifactFetcherError.upstreamFetchFailed(
-                        "GitHub releases request failed with status \(httpResponse.statusCode)"
+                        GitHubReleasesHTTPErrorFormatter.message(
+                            statusCode: httpResponse.statusCode,
+                            request: request
+                        )
                     )
                 )
                 )
