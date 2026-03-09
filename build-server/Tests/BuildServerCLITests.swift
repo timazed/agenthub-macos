@@ -59,6 +59,7 @@ struct BuildServerCLITests {
         #expect(output.contains("\"codexVersion\""))
         #expect(output.contains("\"resolvedReleaseTag\""))
         #expect(output.contains("\"appBundlePath\""))
+        #expect(output.contains("\"bundledComparison\""))
     }
 
     @Test
@@ -82,6 +83,7 @@ struct BuildServerCLITests {
 
         #expect(output.contains("\"status\" : \"prepared-no-build\""))
         #expect(output.contains("\"universalBinaryPath\""))
+        #expect(output.contains("\"matchedLatestArtifact\" : \"arm64\""))
         #expect(output.contains("\"appBundlePath\"") == false)
         #expect(output.contains("\"injectedBinaryPath\"") == false)
     }
@@ -123,6 +125,14 @@ private func makeArtifactPreparation() -> AgentHubArtifactPreparation {
             x64BinaryURL: workingDirectory.appendingPathComponent("x64/codex"),
             universalBinaryURL: universalBinaryURL
         ),
+        bundledComparison: BundledCodexComparison(
+            bundledBinaryPath: "/tmp/repo/AgentHub/Resources/codex/codex",
+            bundledBinarySHA256: "aaaa",
+            latestArm64SHA256: "aaaa",
+            latestX64SHA256: "bbbb",
+            latestUniversalSHA256: "cccc",
+            matchedLatestArtifact: .arm64
+        ),
         targetAgentHubVersion: "1.4.3",
         targetBuildNumber: 43,
         sparklePublishPlan: SparklePublishPlan(
@@ -144,6 +154,7 @@ private func makePlan() -> AgentHubReleasePlan {
         jobID: preparation.jobID,
         codexRelease: preparation.codexRelease,
         preparedArtifacts: preparation.preparedArtifacts,
+        bundledComparison: preparation.bundledComparison,
         buildResult: XcodeBuildResult(
             appBundleURL: URL(fileURLWithPath: "/tmp/AgentHub.app", isDirectory: true),
             derivedDataURL: URL(fileURLWithPath: "/tmp/DerivedData", isDirectory: true)

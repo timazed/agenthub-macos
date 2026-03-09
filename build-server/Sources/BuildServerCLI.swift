@@ -11,6 +11,7 @@ struct BuildServerRunSummary: Codable, Equatable, Sendable {
     var appBundlePath: String?
     var injectedBinaryPath: String?
     var universalBinaryPath: String
+    var bundledComparison: BundledCodexComparison?
     var notes: [String]
 }
 
@@ -59,6 +60,7 @@ struct BuildServerCLI {
                     appBundlePath: nil,
                     injectedBinaryPath: nil,
                     universalBinaryPath: preparation.preparedArtifacts.universalBinaryURL.path,
+                    bundledComparison: preparation.bundledComparison,
                     notes: preparation.steps
                 )
                 output(render(summary: summary, mode: outputMode))
@@ -77,6 +79,7 @@ struct BuildServerCLI {
                 appBundlePath: plan.buildResult.appBundleURL.path,
                 injectedBinaryPath: plan.bundleInjectionResult.injectedBinaryURL.path,
                 universalBinaryPath: plan.preparedArtifacts.universalBinaryURL.path,
+                bundledComparison: plan.bundledComparison,
                 notes: plan.steps
             )
             output(render(summary: summary, mode: outputMode))
@@ -168,6 +171,9 @@ struct BuildServerCLI {
                 summary.derivedDataPath.map { "DerivedData: \($0)" },
                 summary.appBundlePath.map { "App bundle: \($0)" },
                 summary.injectedBinaryPath.map { "Injected binary: \($0)" },
+                summary.bundledComparison.map { "Bundled binary: \($0.bundledBinaryPath)" },
+                summary.bundledComparison.map { "Bundled SHA256: \($0.bundledBinarySHA256)" },
+                summary.bundledComparison.map { "Bundled matches latest: \($0.matchedLatestArtifact.rawValue)" },
             ]
                 .compactMap { $0 }
                 .joined(separator: "\n")

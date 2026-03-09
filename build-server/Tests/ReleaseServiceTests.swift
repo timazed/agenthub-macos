@@ -30,6 +30,7 @@ struct ReleaseServiceTests {
                 .appendingPathComponent("codex", isDirectory: false)
         )
         let service = AgentHubReleaseService(
+            fileManager: .default,
             artifactFetcher: CodexArtifactFetcher(
                 configurationProvider: {
                     GitHubReleasesConfiguration(
@@ -76,7 +77,27 @@ struct ReleaseServiceTests {
             ),
             xcodeArchiveService: XcodeArchiveService(
                 buildProvider: { _ in buildResult }
-            )
+            ),
+            versioning: AgentHubVersioning(),
+            sparklePublisher: SparklePublishService(),
+            bundledBinaryURLProvider: {
+                URL(fileURLWithPath: "/tmp/repo/AgentHub/Resources/codex/codex")
+            },
+            bundledBinaryExistsProvider: { _ in true },
+            sha256Provider: { fileURL in
+                switch fileURL.path {
+                case "/tmp/repo/AgentHub/Resources/codex/codex":
+                    return "same-as-arm64"
+                case extractedArtifacts.arm64BinaryURL.path:
+                    return "same-as-arm64"
+                case extractedArtifacts.x64BinaryURL.path:
+                    return "latest-x64"
+                case preparedArtifacts.universalBinaryURL.path:
+                    return "latest-universal"
+                default:
+                    throw TestFixtureError.invalidPath
+                }
+            }
         )
         let request = AgentHubReleaseRequest(
             currentAgentHubVersion: "1.0.0",
@@ -91,6 +112,8 @@ struct ReleaseServiceTests {
         #expect(plan.codexRelease.releaseTag == "v1.2.3")
         #expect(plan.codexRelease.assets.count == 1)
         #expect(plan.preparedArtifacts.universalBinaryURL == preparedArtifacts.universalBinaryURL)
+        #expect(plan.bundledComparison?.matchedLatestArtifact == .arm64)
+        #expect(plan.bundledComparison?.bundledBinarySHA256 == "same-as-arm64")
         #expect(plan.bundleInjectionResult.injectedBinaryURL == bundleInjectionResult.injectedBinaryURL)
         #expect(plan.targetAgentHubVersion == "1.0.1")
         #expect(plan.targetBuildNumber == 42)
@@ -126,6 +149,7 @@ struct ReleaseServiceTests {
         let controller = AgentHubReleaseController(
             worker: CodexReleaseWorker(
                 releaseService: AgentHubReleaseService(
+                    fileManager: .default,
                     artifactFetcher: CodexArtifactFetcher(
                         configurationProvider: {
                             GitHubReleasesConfiguration(
@@ -172,7 +196,27 @@ struct ReleaseServiceTests {
                     ),
                     xcodeArchiveService: XcodeArchiveService(
                         buildProvider: { _ in buildResult }
-                    )
+                    ),
+                    versioning: AgentHubVersioning(),
+                    sparklePublisher: SparklePublishService(),
+                    bundledBinaryURLProvider: {
+                        URL(fileURLWithPath: "/tmp/repo/AgentHub/Resources/codex/codex")
+                    },
+                    bundledBinaryExistsProvider: { _ in true },
+                    sha256Provider: { fileURL in
+                        switch fileURL.path {
+                        case "/tmp/repo/AgentHub/Resources/codex/codex":
+                            return "older-bundled"
+                        case extractedArtifacts.arm64BinaryURL.path:
+                            return "latest-arm64"
+                        case extractedArtifacts.x64BinaryURL.path:
+                            return "latest-x64"
+                        case preparedArtifacts.universalBinaryURL.path:
+                            return "latest-universal"
+                        default:
+                            throw TestFixtureError.invalidPath
+                        }
+                    }
                 )
             )
         )
@@ -205,4 +249,5 @@ private func releaseFixtureJSON(_ json: String) throws -> Data {
 
 private enum TestFixtureError: Error {
     case invalidUTF8
+    case invalidPath
 }

@@ -23,6 +23,7 @@ This package is the first scaffold for the future Codex-triggered AgentHub relea
 - The checked-in `AgentHub/Resources/codex/codex` binary remains in the repo as a local development fallback until the pipeline is proven out.
 - The pipeline builds an unsigned AgentHub app bundle, injects the fetched universal Codex binary into `Contents/Resources/codex`, and leaves signing/notarization for the next step of the release flow.
 - Checksum verification supports either a dedicated checksum asset or GitHub release asset `digest` metadata, which matches the official `openai/codex` release layout.
+- Dry runs and release prep also compare the repo-bundled fallback binary against the latest staged arm64, x64, and universal Codex artifacts and report which one, if any, matches by SHA256.
 
 ## Required Environment
 
