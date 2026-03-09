@@ -16,6 +16,13 @@ final class AppContainer {
     let chatSessionService: ChatSessionService
     let taskOrchestrator: TaskOrchestrator
     let scheduleRunner: ScheduleRunner
+    let iMessageIntegrationConfigStore: IMessageIntegrationConfigStore
+    let iMessageWhitelistService: IMessageWhitelistService
+    let iMessageMentionParser: IMessageMentionParser
+    let externalAgentExecutionService: ExternalAgentExecutionService
+    let iMessageReplyService: IMessageReplyService
+    let iMessageCommandRouter: IMessageCommandRouter
+    let iMessageMonitorService: IMessageMonitorService
 
     private init(
         paths: AppPaths,
@@ -32,7 +39,14 @@ final class AppContainer {
         authManager: AuthManager,
         chatSessionService: ChatSessionService,
         taskOrchestrator: TaskOrchestrator,
-        scheduleRunner: ScheduleRunner
+        scheduleRunner: ScheduleRunner,
+        iMessageIntegrationConfigStore: IMessageIntegrationConfigStore,
+        iMessageWhitelistService: IMessageWhitelistService,
+        iMessageMentionParser: IMessageMentionParser,
+        externalAgentExecutionService: ExternalAgentExecutionService,
+        iMessageReplyService: IMessageReplyService,
+        iMessageCommandRouter: IMessageCommandRouter,
+        iMessageMonitorService: IMessageMonitorService
     ) {
         self.paths = paths
         self.appExecutableURL = appExecutableURL
@@ -49,6 +63,13 @@ final class AppContainer {
         self.chatSessionService = chatSessionService
         self.taskOrchestrator = taskOrchestrator
         self.scheduleRunner = scheduleRunner
+        self.iMessageIntegrationConfigStore = iMessageIntegrationConfigStore
+        self.iMessageWhitelistService = iMessageWhitelistService
+        self.iMessageMentionParser = iMessageMentionParser
+        self.externalAgentExecutionService = externalAgentExecutionService
+        self.iMessageReplyService = iMessageReplyService
+        self.iMessageCommandRouter = iMessageCommandRouter
+        self.iMessageMonitorService = iMessageMonitorService
     }
 
     static func makeDefault() throws -> AppContainer {
@@ -70,6 +91,32 @@ final class AppContainer {
         let authManager = AuthManager(
             store: authStore,
             providerClient: CodexAuthProviderClient(runtime: chatRuntime, paths: paths)
+        )
+        let iMessageIntegrationConfigStore = IMessageIntegrationConfigStore(paths: paths)
+        _ = try iMessageIntegrationConfigStore.loadOrCreateDefault()
+        let iMessageWhitelistService = IMessageWhitelistService()
+        let iMessageMentionParser = IMessageMentionParser(personaManager: personaManager)
+        let externalAgentExecutionService = ExternalAgentExecutionService(
+            runtimeConfigStore: runtimeConfigStore,
+            sessionStore: assistantSessionStore,
+            paths: paths,
+            runtimeFactory: { CodexCLIRuntime() }
+        )
+        let iMessageReplyService = IMessageReplyService()
+        let iMessageCommandRouter = IMessageCommandRouter(
+            configStore: iMessageIntegrationConfigStore,
+            whitelistService: iMessageWhitelistService,
+            mentionParser: iMessageMentionParser,
+            executionService: externalAgentExecutionService,
+            replyService: iMessageReplyService,
+            activityLogStore: activityLogStore,
+            sessionStore: assistantSessionStore,
+            personaManager: personaManager
+        )
+        let iMessageMonitorService = IMessageMonitorService(
+            configStore: iMessageIntegrationConfigStore,
+            router: iMessageCommandRouter,
+            activityLogStore: activityLogStore
         )
         let chatSessionService = ChatSessionService(
             sessionStore: assistantSessionStore,
@@ -95,6 +142,7 @@ final class AppContainer {
             orchestrator: taskOrchestrator,
             paths: paths
         )
+        iMessageMonitorService.refresh()
 
         return AppContainer(
             paths: paths,
@@ -111,7 +159,14 @@ final class AppContainer {
             authManager: authManager,
             chatSessionService: chatSessionService,
             taskOrchestrator: taskOrchestrator,
-            scheduleRunner: scheduleRunner
+            scheduleRunner: scheduleRunner,
+            iMessageIntegrationConfigStore: iMessageIntegrationConfigStore,
+            iMessageWhitelistService: iMessageWhitelistService,
+            iMessageMentionParser: iMessageMentionParser,
+            externalAgentExecutionService: externalAgentExecutionService,
+            iMessageReplyService: iMessageReplyService,
+            iMessageCommandRouter: iMessageCommandRouter,
+            iMessageMonitorService: iMessageMonitorService
         )
     }
 

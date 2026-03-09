@@ -74,6 +74,12 @@ final class CodexCLIRuntime: AssistantRuntime {
         var data = Data()
     }
 
+    private final class RuntimeState: @unchecked Sendable {
+        let lock = NSLock()
+        var continuation: AsyncStream<AssistantEvent>.Continuation?
+        var currentProcess: Process?
+    }
+
     private enum ParsedLine {
         case ignored
         case assistantText(String)
@@ -84,9 +90,7 @@ final class CodexCLIRuntime: AssistantRuntime {
     private let bundle: Bundle
     private let fileManager: FileManager
     private let codexBinaryLocator: CodexBinaryLocator
-    private let stateLock = NSLock()
-    private var continuation: AsyncStream<AssistantEvent>.Continuation?
-    private var currentProcess: Process?
+    private let state = RuntimeState()
 
     init(
         bundle: Bundle = .main,
@@ -99,15 +103,14 @@ final class CodexCLIRuntime: AssistantRuntime {
 
     func streamEvents() -> AsyncStream<AssistantEvent> {
         AsyncStream { continuation in
-            stateLock.lock()
-            self.continuation = continuation
-            stateLock.unlock()
+            self.state.lock.lock()
+            self.state.continuation = continuation
+            self.state.lock.unlock()
 
-            continuation.onTermination = { [weak self] _ in
-                guard let self else { return }
-                self.stateLock.lock()
-                self.continuation = nil
-                self.stateLock.unlock()
+            continuation.onTermination = { [state] _ in
+                state.lock.lock()
+                state.continuation = nil
+                state.lock.unlock()
             }
         }
     }
@@ -173,9 +176,9 @@ final class CodexCLIRuntime: AssistantRuntime {
     }
 
     func cancelCurrentRun() throws {
-        stateLock.lock()
-        let process = currentProcess
-        stateLock.unlock()
+        state.lock.lock()
+        let process = state.currentProcess
+        state.lock.unlock()
         process?.terminate()
     }
 
@@ -257,13 +260,13 @@ final class CodexCLIRuntime: AssistantRuntime {
             finished.signal()
         }
 
-        stateLock.lock()
-        guard currentProcess == nil else {
-            stateLock.unlock()
+        state.lock.lock()
+        guard state.currentProcess == nil else {
+            state.lock.unlock()
             throw AssistantRuntimeError.busy
         }
-        currentProcess = process
-        stateLock.unlock()
+        state.currentProcess = process
+        state.lock.unlock()
 
         emit(.started)
 
@@ -370,17 +373,17 @@ final class CodexCLIRuntime: AssistantRuntime {
     }
 
     private func emit(_ event: AssistantEvent) {
-        stateLock.lock()
-        let continuation = continuation
-        stateLock.unlock()
+        state.lock.lock()
+        let continuation = state.continuation
+        state.lock.unlock()
         continuation?.yield(event)
     }
 
     private func finishStream() {
-        stateLock.lock()
-        let continuation = continuation
-        self.continuation = nil
-        stateLock.unlock()
+        state.lock.lock()
+        let continuation = state.continuation
+        state.continuation = nil
+        state.lock.unlock()
         continuation?.finish()
     }
 
@@ -606,9 +609,9 @@ final class CodexCLIRuntime: AssistantRuntime {
     }
 
     private func clearCurrentProcess() {
-        stateLock.lock()
-        currentProcess = nil
-        stateLock.unlock()
+        state.lock.lock()
+        state.currentProcess = nil
+        state.lock.unlock()
     }
 
     private func currentHistoryOffset(codexHome: String) -> UInt64 {

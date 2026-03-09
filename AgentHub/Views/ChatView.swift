@@ -64,7 +64,7 @@ struct ChatView: View {
             .onChange(of: viewModel.messages.count) { _, _ in
                 scrollToBottom(proxy: proxy)
             }
-            .onChange(of: viewModel.isBusy) { _, _ in
+            .onChange(of: viewModel.isThinking) { _, _ in
                 scrollToBottom(proxy: proxy)
             }
             .onAppear {
@@ -172,7 +172,7 @@ struct ChatView: View {
                     BrainMenuButton(diameter: ComposerMetrics.controlHeight)
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.isBusy)
+                .disabled(viewModel.isThinking)
                 .popover(isPresented: $isModelMenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
                     ModelPickerPopover(
                         models: viewModel.supportedModels,
@@ -191,7 +191,7 @@ struct ChatView: View {
                     ReasoningMenuButton(diameter: ComposerMetrics.controlHeight)
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.isBusy)
+                .disabled(viewModel.isThinking)
                 .popover(isPresented: $isReasoningMenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
                     ReasoningPickerPopover(
                         activeReasoning: viewModel.activeReasoning,
@@ -224,7 +224,7 @@ struct ChatView: View {
 
                 HStack(spacing: 8) {
                     CircleIconButton(
-                        systemName: viewModel.isBusy ? "stop.fill" : "arrow.up",
+                        systemName: viewModel.isThinking ? "stop.fill" : "arrow.up",
                         diameter: ComposerMetrics.controlHeight
                     ) {
                         if viewModel.isBusy {
@@ -235,6 +235,7 @@ struct ChatView: View {
                     }
                     .disabled(
                         !isInputEnabled ||
+                        viewModel.isExternalRunActive ||
                         (!viewModel.isBusy && viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     )
                 }
@@ -261,7 +262,7 @@ struct ChatView: View {
             entries.append(.init(kind: .message(message)))
         }
 
-        if viewModel.isBusy {
+        if viewModel.isThinking {
             entries.append(.init(kind: .thinking))
         }
 
@@ -281,7 +282,7 @@ struct ChatView: View {
 
     private func scrollToBottom(proxy: ScrollViewProxy) {
         let target: ConversationScrollTarget?
-        if viewModel.isBusy {
+        if viewModel.isThinking {
             target = .thinking
         } else if let lastMessageID = viewModel.messages.last?.id {
             target = .message(lastMessageID)
