@@ -23,6 +23,7 @@
 - Added a live-smoke scenario manifest and artifact-report script for cross-site validation.
 - Added a manifest runner mode to `browser_smoke_report.py` so scenario manifests can be executed and summarized from one command.
 - Hardened generic text entry in `BrowserJavaScript.swift` so controlled inputs use native value setters plus input/change dispatch, which fixed checkout/login flows on modern forms.
+- Re-routed OpenTable chat intents and smoke scenarios through the generic semantic browser loop instead of the deterministic OpenTable controller path.
 - Updated headless runtime shutdown so scenario execution isolates Chromium profile state per process, terminates helper subprocesses on exit, and leaves headless scenario commands green even though in-process `CefShutdown()` draining remains brittle.
 - Added tests for booking parameter parsing, generic intent parsing, browser command parsing, semantic retargeting, and transactional-boundary classification.
 
@@ -59,6 +60,7 @@ Latest manifest-backed outcomes:
 4. `checkout-amazon`: `stopped_at_confirmation_boundary`
 
 The checkout validation now succeeds on a checkout-style ecommerce flow after the generic text-entry fix. Headless scenario commands also exit `0` with persisted artifacts.
+OpenTable-specific chat/scenario handling now exercises the same generic semantic loop as the other domains, so failures land in the shared browser substrate instead of a site-specific controller path.
 
 ## Known Follow-Up
 

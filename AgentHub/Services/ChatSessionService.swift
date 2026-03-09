@@ -18,6 +18,43 @@ struct ChatBrowserIntent: Equatable {
     let bookingRequested: Bool
     let bookingParameters: ChromiumRestaurantBookingParameters
 
+    var genericBrowserIntent: GenericBrowserChatIntent {
+        GenericBrowserChatIntent(
+            goalText: genericGoalText,
+            initialURL: request.siteURL
+        )
+    }
+
+    private var genericGoalText: String {
+        if bookingRequested {
+            var components: [String] = [
+                "Use the browser to find \(request.venueName)"
+            ]
+            if let locationHint = request.locationHint, !locationHint.isEmpty {
+                components[0] += " in \(locationHint)"
+            }
+            components.append("on OpenTable")
+            if let dateText = bookingParameters.dateText, !dateText.isEmpty {
+                components.append("for \(dateText)")
+            }
+            if let timeText = bookingParameters.timeText, !timeText.isEmpty {
+                components.append("at \(timeText)")
+            }
+            if let partySize = bookingParameters.partySize {
+                components.append("for \(partySize) people")
+            }
+            components.append("and stop before the final reservation confirmation step")
+            return components.joined(separator: " ")
+        }
+
+        var text = "Use the browser to find \(request.venueName)"
+        if let locationHint = request.locationHint, !locationHint.isEmpty {
+            text += " in \(locationHint)"
+        }
+        text += " on OpenTable and open the venue page"
+        return text
+    }
+
     nonisolated static func parse(_ text: String) -> ChatBrowserIntent? {
         let normalized = text
             .replacingOccurrences(of: "\n", with: " ")
@@ -430,21 +467,15 @@ final class ChatSessionService {
         emit(.assistantDelta("Running browser smoke scenario \(scenario.id) (\(scenario.category))."))
 
         if let browserIntent = ChatBrowserIntent.parse(scenario.goalText) {
-            let summary = try await handleBrowserIntent(
-                browserIntent,
+            let result = try await handleGenericBrowserIntent(
+                browserIntent.genericBrowserIntent,
+                persona: persona,
                 session: &session,
                 persistMessages: false,
                 scenarioMetadata: metadata
             )
             emit(.completed)
-            return BrowserScenarioRunSummary(
-                scenarioID: scenario.id,
-                category: scenario.category,
-                outcome: browserIntent.bookingRequested && browserIntent.bookingParameters.isSpecified
-                    ? "stopped_at_confirmation_boundary"
-                    : "completed",
-                finalSummary: summary
-            )
+            return result
         }
 
         if let genericBrowserIntent = GenericBrowserChatIntent.parse(scenario.goalText) {
@@ -474,48 +505,15 @@ final class ChatSessionService {
         persistMessages: Bool = true,
         scenarioMetadata: BrowserScenarioMetadata? = nil
     ) async throws -> String {
-        let browserController = await MainActor.run { browserControllerProvider() }
-        emit(.assistantDelta("Using the embedded Chromium browser to search OpenTable for \(intent.request.venueName)."))
-
-        let finalText: String
-        let outcome: String
-        if intent.bookingRequested, intent.bookingParameters.isSpecified {
-            let result = try await browserController.runRestaurantBookingFlow(
-                request: ChromiumRestaurantBookingRequest(
-                    searchRequest: intent.request,
-                    parameters: intent.bookingParameters
-                )
-            ) { [weak self] message in
-                self?.emit(.assistantDelta(message))
-            }
-            let slotText = result.selectedSlot ?? "an available slot"
-            finalText = """
-            I navigated to the OpenTable venue page for \(result.venueName) and selected \(slotText). I stopped before the final reserve or confirm action, so approval is still required for the last transactional step.
-            """
-            outcome = "stopped_at_confirmation_boundary"
-        } else {
-            let result = try await browserController.runRestaurantSearchFlow(request: intent.request) { [weak self] message in
-                self?.emit(.assistantDelta(message))
-            }
-            finalText = """
-            I opened the exact OpenTable page for \(result.venueName)\(formattedLocationSuffix(result.locationHint)) in the embedded Chromium browser.
-            """
-            outcome = "completed"
-        }
-
-        try await persistBrowserRunArtifacts(
-            outcome: outcome,
-            goalText: intent.request.query,
-            initialURL: intent.request.siteURL,
-            session: session,
-            controller: browserController,
-            inspectionHistory: await MainActor.run { browserController.browserDebugArtifacts().lastInspection.map { [$0] } ?? [] },
-            recentHistory: [],
-            finalSummary: finalText,
+        let persona = try personaManager.defaultPersona()
+        let result = try await handleGenericBrowserIntent(
+            intent.genericBrowserIntent,
+            persona: persona,
+            session: &session,
+            persistMessages: persistMessages,
             scenarioMetadata: scenarioMetadata
         )
-        try persistAssistantMessage(finalText, session: session, shouldStore: persistMessages)
-        return finalText
+        return result.finalSummary
     }
 
     private func handleGenericBrowserIntent(
@@ -1036,20 +1034,21 @@ final class ChatSessionService {
     }
 
     private func parseAssistantResponse(_ text: String) -> (displayText: String, proposal: TaskProposal?) {
+        let browserStripped = BrowserAgentResponseParser.parse(text).displayText
         let pattern = #"<agenthub_task_proposal>([\s\S]*?)</agenthub_task_proposal>"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return (text.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+            return (browserStripped.trimmingCharacters(in: .whitespacesAndNewlines), nil)
         }
 
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        guard let match = regex.firstMatch(in: text, options: [], range: range),
-              let proposalRange = Range(match.range(at: 1), in: text),
-              let fullRange = Range(match.range(at: 0), in: text) else {
-            return (text.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+        let range = NSRange(browserStripped.startIndex..<browserStripped.endIndex, in: browserStripped)
+        guard let match = regex.firstMatch(in: browserStripped, options: [], range: range),
+              let proposalRange = Range(match.range(at: 1), in: browserStripped),
+              let fullRange = Range(match.range(at: 0), in: browserStripped) else {
+            return (browserStripped.trimmingCharacters(in: .whitespacesAndNewlines), nil)
         }
 
-        let payload = String(text[proposalRange])
-        let stripped = text.replacingCharacters(in: fullRange, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = String(browserStripped[proposalRange])
+        let stripped = browserStripped.replacingCharacters(in: fullRange, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let data = payload.data(using: .utf8),
               let decoded = try? JSONDecoder().decode(TaskProposalPayload.self, from: data) else {

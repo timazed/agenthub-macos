@@ -74,6 +74,7 @@ enum ChromiumBrowserScripts {
         return """
         \(textEntryHelpers)
         const query = \(queryLiteral);
+        const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
         const isVisible = (element) => {
             if (!element) { return false; }
             const style = window.getComputedStyle(element);
@@ -83,14 +84,32 @@ enum ChromiumBrowserScripts {
                 && rect.width > 1
                 && rect.height > 1;
         };
+        const labelFor = (element) => normalize([
+            element?.getAttribute?.("aria-label"),
+            element?.getAttribute?.("placeholder"),
+            element?.getAttribute?.("name"),
+            element?.id,
+            element?.labels ? Array.from(element.labels).map((label) => label.innerText || label.textContent).join(" ") : "",
+            element?.closest?.("label")?.innerText,
+            element?.innerText,
+            element?.textContent
+        ].filter(Boolean).join(" "));
+        const isEditableSearchField = (element) => {
+            if (!element || !isVisible(element)) { return false; }
+            if (element instanceof HTMLTextAreaElement) { return true; }
+            if (element instanceof HTMLInputElement) {
+                const type = (element.type || "text").toLowerCase();
+                return !["hidden", "submit", "button", "checkbox", "radio", "range", "file", "image", "reset", "color"].includes(type);
+            }
+            const role = (element.getAttribute?.("role") || "").toLowerCase();
+            return role === "combobox" || role === "textbox" || element.isContentEditable;
+        };
         const fieldScore = (element) => {
             const descriptor = [
-                element.getAttribute("aria-label"),
-                element.getAttribute("placeholder"),
-                element.name,
-                element.id,
-                element.getAttribute("role"),
-                element.getAttribute("type")
+                labelFor(element),
+                element.getAttribute?.("role"),
+                element.getAttribute?.("type"),
+                element.getAttribute?.("autocomplete")
             ].filter(Boolean).join(" ").toLowerCase();
             let score = 0;
             if (descriptor.includes("location") || descriptor.includes("where")) { score += 6; }
@@ -98,12 +117,42 @@ enum ChromiumBrowserScripts {
             if (descriptor.includes("cuisine")) { score += 5; }
             if (descriptor.includes("search")) { score += 5; }
             if (descriptor.includes("combobox")) { score += 3; }
+            if (descriptor.includes("textbox")) { score += 3; }
             if (descriptor.includes("text") || descriptor.length === 0) { score += 1; }
             return score;
         };
-        const candidate = Array.from(document.querySelectorAll('input, textarea, [role="combobox"]'))
-            .filter(isVisible)
+        const editableSelector = 'input, textarea, [role="combobox"], [role="textbox"], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]';
+        const rankEditableCandidates = () => Array.from(document.querySelectorAll(editableSelector))
+            .filter(isEditableSearchField)
             .sort((lhs, rhs) => fieldScore(rhs) - fieldScore(lhs))[0];
+        const clickLikelySearchTrigger = () => {
+            const triggerCandidates = Array.from(document.querySelectorAll('button, [role="button"], [role="combobox"], label, [aria-label], [placeholder], div'))
+                .filter(isVisible)
+                .map((element) => {
+                    const descriptor = labelFor(element).toLowerCase();
+                    let score = 0;
+                    if (descriptor.includes("location") || descriptor.includes("where")) { score += 8; }
+                    if (descriptor.includes("restaurant")) { score += 8; }
+                    if (descriptor.includes("cuisine")) { score += 7; }
+                    if (descriptor.includes("search")) { score += 6; }
+                    if (descriptor.includes("combobox")) { score += 4; }
+                    if (element.querySelector?.(editableSelector)) { score += 10; }
+                    return { element, score };
+                })
+                .filter((candidate) => candidate.score > 0)
+                .sort((lhs, rhs) => rhs.score - lhs.score);
+            const trigger = triggerCandidates[0]?.element;
+            if (!trigger) { return null; }
+            trigger.click?.();
+            if (isEditableSearchField(document.activeElement)) {
+                return document.activeElement;
+            }
+            return trigger.querySelector?.(editableSelector) || rankEditableCandidates() || null;
+        };
+        let candidate = rankEditableCandidates();
+        if (!candidate) {
+            candidate = clickLikelySearchTrigger();
+        }
         if (!candidate) {
             throw new Error("No visible search field found.");
         }
@@ -111,7 +160,7 @@ enum ChromiumBrowserScripts {
         return {
             query,
             value: committedValue,
-            label: candidate.getAttribute("aria-label") || candidate.getAttribute("placeholder") || candidate.name || candidate.id || candidate.tagName.toLowerCase()
+            label: labelFor(candidate) || candidate.tagName.toLowerCase()
         };
         """
     }
@@ -1261,6 +1310,10 @@ enum ChromiumBrowserScripts {
                     label,
                     labelFor(element.closest('form, [role="dialog"], dialog, section, article'))
                 ].filter(Boolean).join(" "));
+                const href = normalizeLower(element.getAttribute("href") || "");
+                const isLink = element.tagName.toLowerCase() === "a";
+                const isPromotional = /explore restaurants|exclusive tables|new cardmembers|dining credit|sapphire reserve|learn more|see details/.test(descriptor);
+                const hasTransactionalContainer = !!element.closest('form, [role="dialog"], dialog, [data-testid*="checkout" i], [data-test*="checkout" i], [class*="checkout" i], [class*="payment" i], [class*="booking" i]');
                 let kind = "";
                 let confidence = 0;
                 if (/search|find|show results/.test(descriptor)) {
@@ -1272,9 +1325,16 @@ enum ChromiumBrowserScripts {
                 } else if (/continue|next|review|checkout/.test(descriptor)) {
                     kind = "review_step";
                     confidence = 70;
-                } else if (/reserve|book|confirm|complete|purchase|pay/.test(descriptor)) {
+                } else if (!isPromotional && /reserve|book|confirm|complete|purchase|pay|place order/.test(descriptor)) {
                     kind = "final_confirmation";
-                    confidence = 90;
+                    confidence = 70;
+                    if (!isLink) { confidence += 15; }
+                    if (hasTransactionalContainer) { confidence += 15; }
+                    if (/confirm|purchase|pay|place order|complete booking/.test(descriptor)) { confidence += 10; }
+                    if (isLink && /reserve|book/.test(descriptor) && !hasTransactionalContainer && !/reserve|book|checkout|payment|confirm/.test(href)) {
+                        confidence -= 25;
+                    }
+                    if (label.length > 80) { confidence -= 20; }
                 }
                 return {
                     id: `boundary-${index}`,

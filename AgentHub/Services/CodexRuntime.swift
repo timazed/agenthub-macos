@@ -685,6 +685,14 @@ final class CodexCLIRuntime: CodexRuntime {
             candidates.append(resourcesURL.appendingPathComponent("codex/codex", isDirectory: false))
         }
 
+        let fallbackPaths = [
+            "/Applications/Codex.app/Contents/Resources/codex",
+            NSString(string: "~/Applications/Codex.app/Contents/Resources/codex").expandingTildeInPath
+        ]
+        for path in fallbackPaths {
+            candidates.append(URL(fileURLWithPath: path, isDirectory: false))
+        }
+
         let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "")
             .split(separator: ":")
             .map(String.init)

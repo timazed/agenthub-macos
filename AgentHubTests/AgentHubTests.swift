@@ -123,6 +123,18 @@ struct AgentHubTests {
     }
 
     @Test
+    func openTableIntentConvertsToGenericBrowserGoal() throws {
+        let intent = try #require(ChatBrowserIntent.parse("book opentable. Sake House By Hikari. culver city. tomorrow. 7:30pm. party of 4."))
+        let genericIntent = intent.genericBrowserIntent
+
+        #expect(genericIntent.initialURL == "https://www.opentable.com")
+        #expect(genericIntent.goalText.lowercased().contains("find sake house by hikari"))
+        #expect(genericIntent.goalText.lowercased().contains("stop before the final reservation confirmation step"))
+        #expect(genericIntent.goalText.lowercased().contains("tomorrow"))
+        #expect(genericIntent.goalText.lowercased().contains("7:30pm"))
+    }
+
+    @Test
     func genericBrowserIntentParsesKnownTravelSite() throws {
         let intent = GenericBrowserChatIntent.parse("book a hotel in tokyo on booking.com for next week")
 
@@ -267,6 +279,26 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserTransactionalGuardIgnoresPromotionalReserveLabels() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Sapphire Reserve Exclusive Tables New cardmembers can book exclusive tables and enjoy a $300 annual dining credit from Chase. Explore restaurants",
+                    selector: "a.promo-card",
+                    confidence: 90
+                )
+            ]
+        )
+
+        #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection) == nil)
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "make a reservation on opentable", inspection: inspection) == false)
+    }
+
+    @Test
     func browserScenarioClassifierCategorizesTravelAndCheckoutGoals() throws {
         #expect(
             BrowserScenarioClassifier.category(
@@ -328,6 +360,15 @@ struct AgentHubTests {
         #expect(script.contains("nativeValueSetter"))
         #expect(script.contains("Object.getOwnPropertyDescriptor"))
         #expect(script.contains("dispatchTextEntryEvents"))
+    }
+
+    @Test
+    func browserSearchFillScriptFallsBackToTextboxAndSearchTriggers() throws {
+        let script = ChromiumBrowserScripts.fillVisibleSearchField(query: "Sake House By Hikari culver city")
+
+        #expect(script.contains("[role=\"textbox\"]"))
+        #expect(script.contains("clickLikelySearchTrigger"))
+        #expect(script.contains("editableSelector"))
     }
 
     @Test

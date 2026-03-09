@@ -4,7 +4,8 @@
 
 The embedded Chromium browser now supports two layers:
 
-- Deterministic controllers for OpenTable search and venue-page booking up to the final confirmation boundary.
+- A generic Codex-driven browser loop for search/booking tasks across restaurant, hotel, flight, and checkout flows.
+- Deterministic OpenTable controllers retained only as prototype/reference tooling inside the Chromium pane.
 - A generic Codex-driven browser loop that operates against semantic page inspection rather than raw selectors alone.
 
 ## Generic Agent Capabilities
@@ -70,7 +71,8 @@ The generic loop in `ChatSessionService` now:
 The controller now distinguishes final confirmation boundaries from earlier search/review steps more cleanly.
 
 - Generic approval gating triggers on semantic `final_confirmation` boundaries and strong transactional keywords.
-- OpenTable deterministic booking still stops before the final reserve or confirm step.
+- OpenTable chat intents and smoke scenarios now run through the generic semantic browser loop by default.
+- The deterministic OpenTable controller remains available only as a manual prototype/reference path in the Chromium pane.
 
 ## Tests
 
