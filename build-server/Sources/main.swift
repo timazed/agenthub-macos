@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 let controller = AgentHubReleaseController(
     worker: CodexReleaseWorker(
@@ -6,16 +7,21 @@ let controller = AgentHubReleaseController(
     )
 )
 
-if CommandLine.arguments.contains("--help") {
-    print(
-        """
-        agenthub-build-server
+let cli = BuildServerCLI(
+    arguments: Array(CommandLine.arguments.dropFirst()),
+    planRelease: { request in
+        try controller.planRelease(request)
+    },
+    output: { message in
+        print(message)
+    }
+)
 
-        Scaffolds the future AgentHub release flow that will resolve the latest
-        stable Codex GitHub release, package a new app build, and publish it.
-        """
-    )
-} else {
-    let bootstrapState = controller.bootstrapSummary()
-    print("AgentHub build server scaffold ready: \(bootstrapState)")
+do {
+    try cli.run()
+} catch {
+    let message = error.localizedDescription
+    fputs("\(message)\n", stderr)
+    fputs("\(BuildServerCLI.usageText)\n", stderr)
+    exit(1)
 }

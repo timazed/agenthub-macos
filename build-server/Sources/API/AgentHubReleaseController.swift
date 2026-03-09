@@ -24,6 +24,10 @@ struct AgentHubReleaseController {
         worker.bootstrapSummary()
     }
 
+    func planRelease(_ request: AgentHubReleaseRequest) throws -> AgentHubReleasePlan {
+        try worker.releaseService.prepareRelease(request: request)
+    }
+
     func enqueueRelease(_ request: AgentHubReleaseRequest) throws -> AgentHubReleaseResponse {
         try worker.submit(request)
     }
