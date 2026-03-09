@@ -413,7 +413,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				AGENTHUB_SPARKLE_FEED_URL = "http://127.0.0.1:8000/dev/appcast.xml";
-				AGENTHUB_SPARKLE_PUBLIC_ED_KEY = REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY;
+				AGENTHUB_SPARKLE_PUBLIC_ED_KEY = "+DovFBdZ/5sOnZbWZ0UIDjkkjyv+Gt9P/AxAUFMK7Ug=";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -426,10 +426,9 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AgentHub/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_SUFeedURL = "$(AGENTHUB_SPARKLE_FEED_URL)";
-				INFOPLIST_KEY_SUPublicEDKey = "$(AGENTHUB_SPARKLE_PUBLIC_ED_KEY)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -451,7 +450,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				AGENTHUB_SPARKLE_FEED_URL = "https://updates.example.com/agenthub/appcast.xml";
-				AGENTHUB_SPARKLE_PUBLIC_ED_KEY = REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY;
+				AGENTHUB_SPARKLE_PUBLIC_ED_KEY = "+DovFBdZ/5sOnZbWZ0UIDjkkjyv+Gt9P/AxAUFMK7Ug=";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -464,10 +463,9 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AgentHub/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_SUFeedURL = "$(AGENTHUB_SPARKLE_FEED_URL)";
-				INFOPLIST_KEY_SUPublicEDKey = "$(AGENTHUB_SPARKLE_PUBLIC_ED_KEY)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
