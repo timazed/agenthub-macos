@@ -4,7 +4,7 @@ struct CodexReleaseWorker {
     let releaseService: AgentHubReleaseService
 
     func bootstrapSummary() -> String {
-        "release controller + worker + planning services"
+        "release controller + worker + latest stable Codex release planning"
     }
 
     func submit(_ request: AgentHubReleaseRequest) throws -> AgentHubReleaseResponse {
@@ -13,8 +13,10 @@ struct CodexReleaseWorker {
         return AgentHubReleaseResponse(
             releaseJobID: releasePlan.jobID,
             status: "queued",
-            codexVersion: request.codexVersion,
+            codexVersion: releasePlan.codexRelease.version,
+            resolvedReleaseTag: releasePlan.codexRelease.releaseTag,
             targetAgentHubVersion: releasePlan.targetAgentHubVersion,
+            targetBuildNumber: releasePlan.targetBuildNumber,
             notes: releasePlan.steps
         )
     }

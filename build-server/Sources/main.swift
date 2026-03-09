@@ -11,8 +11,8 @@ if CommandLine.arguments.contains("--help") {
         """
         agenthub-build-server
 
-        Scaffolds the future AgentHub release flow that will package a new app build
-        whenever a Codex release is detected.
+        Scaffolds the future AgentHub release flow that will resolve the latest
+        stable Codex GitHub release, package a new app build, and publish it.
         """
     )
 } else {

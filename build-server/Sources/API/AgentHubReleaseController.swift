@@ -1,10 +1,8 @@
 import Foundation
 
 struct AgentHubReleaseRequest: Codable, Equatable, Sendable {
-    var codexVersion: String
-    var codexArtifactURL: URL
-    var codexSHA256: String
     var currentAgentHubVersion: String
+    var currentBuildNumber: Int
     var releaseChannel: String
     var force: Bool
 }
@@ -13,7 +11,9 @@ struct AgentHubReleaseResponse: Codable, Equatable, Sendable {
     var releaseJobID: UUID
     var status: String
     var codexVersion: String
+    var resolvedReleaseTag: String
     var targetAgentHubVersion: String
+    var targetBuildNumber: Int
     var notes: [String]
 }
 

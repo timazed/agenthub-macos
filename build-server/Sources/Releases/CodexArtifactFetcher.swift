@@ -2,16 +2,18 @@ import Foundation
 
 struct CodexArtifactDescriptor: Equatable, Sendable {
     var version: String
-    var sourceURL: URL
-    var sha256: String
+    var releaseTag: String
 }
 
 struct CodexArtifactFetcher {
-    func describe(request: AgentHubReleaseRequest) -> CodexArtifactDescriptor {
+    var latestStableReleaseProvider: @Sendable () -> CodexArtifactDescriptor = {
         CodexArtifactDescriptor(
-            version: request.codexVersion,
-            sourceURL: request.codexArtifactURL,
-            sha256: request.codexSHA256
+            version: "latest",
+            releaseTag: "latest"
         )
+    }
+
+    func resolveLatestStableRelease() -> CodexArtifactDescriptor {
+        latestStableReleaseProvider()
     }
 }

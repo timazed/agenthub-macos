@@ -2,7 +2,7 @@ import Foundation
 
 struct AgentHubReleasePlan: Equatable, Sendable {
     var jobID: UUID
-    var codexArtifact: CodexArtifactDescriptor
+    var codexRelease: CodexArtifactDescriptor
     var targetAgentHubVersion: String
     var targetBuildNumber: Int
     var sparklePublishPlan: SparklePublishPlan
@@ -15,22 +15,22 @@ struct AgentHubReleaseService {
     var sparklePublisher = SparklePublishService()
 
     func prepareRelease(
-        request: AgentHubReleaseRequest,
-        currentBuildNumber: Int = 1
+        request: AgentHubReleaseRequest
     ) -> AgentHubReleasePlan {
-        let artifact = artifactFetcher.describe(request: request)
-        let targetVersion = versioning.nextVersion(from: request.currentAgentHubVersion, for: request.codexVersion)
+        let release = artifactFetcher.resolveLatestStableRelease()
+        let targetVersion = versioning.nextVersion(from: request.currentAgentHubVersion, for: release.version)
         let publishPlan = sparklePublisher.planPublish(agentHubVersion: targetVersion, channel: request.releaseChannel)
 
         return AgentHubReleasePlan(
             jobID: UUID(),
-            codexArtifact: artifact,
+            codexRelease: release,
             targetAgentHubVersion: targetVersion,
-            targetBuildNumber: versioning.nextBuildNumber(from: currentBuildNumber),
+            targetBuildNumber: versioning.nextBuildNumber(from: request.currentBuildNumber),
             sparklePublishPlan: publishPlan,
             steps: [
-                "Fetch Codex artifact \(artifact.version)",
-                "Verify SHA256 checksum",
+                "Resolve latest stable Codex release (ignore -alpha)",
+                "Fetch Codex artifact \(release.version)",
+                "Verify artifact checksums",
                 "Replace bundled codex binary in AgentHub.app resources",
                 "Bump AgentHub version to \(targetVersion)",
                 "Build, sign, and notarize AgentHub",
