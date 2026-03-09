@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7A1B10012FCCD00100A0AA01 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 7A1B10002FCCD00100A0AA01 /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		2206395C2F58FDC9001A14A6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7A1B10012FCCD00100A0AA01 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = AgentHub;
 			packageProductDependencies = (
+				7A1B10002FCCD00100A0AA01 /* Sparkle */,
 			);
 			productName = AgentHub;
 			productReference = 2206394E2F58FDC7001A14A6 /* AgentHub.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = 220639452F58FDC6001A14A6;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7A1B10022FCCD00100A0AA01 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2206394F2F58FDC7001A14A6 /* Products */;
 			projectDirPath = "";
@@ -267,6 +276,17 @@
 			targetProxy = 220639662F58FDC9001A14A6 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7A1B10022FCCD00100A0AA01 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCBuildConfiguration section */
 		2206396D2F58FDC9001A14A6 /* Debug */ = {
@@ -392,6 +412,8 @@
 		220639702F58FDC9001A14A6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				AGENTHUB_SPARKLE_FEED_URL = "http://127.0.0.1:8000/dev/appcast.xml";
+				AGENTHUB_SPARKLE_PUBLIC_ED_KEY = REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -406,6 +428,8 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_SUFeedURL = "$(AGENTHUB_SPARKLE_FEED_URL)";
+				INFOPLIST_KEY_SUPublicEDKey = "$(AGENTHUB_SPARKLE_PUBLIC_ED_KEY)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -426,6 +450,8 @@
 		220639712F58FDC9001A14A6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				AGENTHUB_SPARKLE_FEED_URL = "https://updates.example.com/agenthub/appcast.xml";
+				AGENTHUB_SPARKLE_PUBLIC_ED_KEY = REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -440,6 +466,8 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_SUFeedURL = "$(AGENTHUB_SPARKLE_FEED_URL)";
+				INFOPLIST_KEY_SUPublicEDKey = "$(AGENTHUB_SPARKLE_PUBLIC_ED_KEY)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -538,6 +566,14 @@
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7A1B10002FCCD00100A0AA01 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7A1B10022FCCD00100A0AA01 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCConfigurationList section */
 		220639492F58FDC7001A14A6 /* Build configuration list for PBXProject "AgentHub" */ = {

@@ -36,12 +36,18 @@ struct AgentHubApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
         .defaultSize(width: 800, height: 800)
+        .commands {
+            if let appUpdater = bootstrap.appUpdater {
+                AgentHubCommands(appUpdater: appUpdater)
+            }
+        }
     }
 }
 
 @MainActor
 private final class AppBootstrap: ObservableObject {
     @Published var container: AppContainer?
+    @Published var appUpdater: AppUpdater?
     @Published var errorMessage: String?
 
     private var didStart = false
@@ -65,6 +71,7 @@ private final class AppBootstrap: ObservableObject {
             }
 
             self.container = container
+            self.appUpdater = AppUpdater(bundle: .main)
             self.errorMessage = nil
             Self.log("bootstrap_success duration_ms=\(Self.durationMillis(since: startedAt))")
         } catch {
@@ -97,6 +104,19 @@ private final class AppBootstrap: ObservableObject {
         _ = try? handle.seekToEnd()
         try? handle.write(contentsOf: data)
         try? handle.close()
+    }
+}
+
+private struct AgentHubCommands: Commands {
+    @ObservedObject var appUpdater: AppUpdater
+
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                appUpdater.checkForUpdates()
+            }
+            .disabled(!appUpdater.canCheckForUpdates)
+        }
     }
 }
 
