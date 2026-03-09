@@ -16,8 +16,8 @@ struct AgentHubReleaseService {
 
     func prepareRelease(
         request: AgentHubReleaseRequest
-    ) -> AgentHubReleasePlan {
-        let release = artifactFetcher.resolveLatestStableRelease()
+    ) throws -> AgentHubReleasePlan {
+        let release = try artifactFetcher.resolveLatestStableRelease()
         let targetVersion = versioning.nextVersion(from: request.currentAgentHubVersion, for: release.version)
         let publishPlan = sparklePublisher.planPublish(agentHubVersion: targetVersion, channel: request.releaseChannel)
 

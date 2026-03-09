@@ -4,11 +4,37 @@ import Testing
 
 struct ReleaseServiceTests {
     @Test
-    func prepareReleaseBumpsPatchVersionAndPlansSparkleArtifacts() {
+    func prepareReleaseBumpsPatchVersionAndPlansSparkleArtifacts() throws {
         let service = AgentHubReleaseService(
             artifactFetcher: CodexArtifactFetcher(
-                latestStableReleaseProvider: {
-                    CodexArtifactDescriptor(version: "1.2.3", releaseTag: "v1.2.3")
+                configurationProvider: {
+                    GitHubReleasesConfiguration(
+                        owner: "openai",
+                        repository: "codex",
+                        apiBaseURL: URL(string: "https://api.github.com")!,
+                        authToken: nil
+                    )
+                },
+                releaseDataProvider: { _ in
+                    try releaseFixtureJSON(
+                        """
+                        [
+                          {
+                            "tag_name": "v1.2.3",
+                            "name": "v1.2.3",
+                            "draft": false,
+                            "prerelease": false,
+                            "published_at": "2026-03-08T10:00:00Z",
+                            "assets": [
+                              {
+                                "name": "codex-darwin-arm64.tar.gz",
+                                "browser_download_url": "https://example.com/codex-darwin-arm64.tar.gz"
+                              }
+                            ]
+                          }
+                        ]
+                        """
+                    )
                 }
             )
         )
@@ -19,10 +45,11 @@ struct ReleaseServiceTests {
             force: false
         )
 
-        let plan = service.prepareRelease(request: request)
+        let plan = try service.prepareRelease(request: request)
 
         #expect(plan.codexRelease.version == "1.2.3")
         #expect(plan.codexRelease.releaseTag == "v1.2.3")
+        #expect(plan.codexRelease.assets.count == 1)
         #expect(plan.targetAgentHubVersion == "1.0.1")
         #expect(plan.targetBuildNumber == 42)
         #expect(plan.sparklePublishPlan.appcastPath == "updates/dev/appcast.xml")
@@ -34,8 +61,34 @@ struct ReleaseServiceTests {
             worker: CodexReleaseWorker(
                 releaseService: AgentHubReleaseService(
                     artifactFetcher: CodexArtifactFetcher(
-                        latestStableReleaseProvider: {
-                            CodexArtifactDescriptor(version: "2.0.0", releaseTag: "v2.0.0")
+                        configurationProvider: {
+                            GitHubReleasesConfiguration(
+                                owner: "openai",
+                                repository: "codex",
+                                apiBaseURL: URL(string: "https://api.github.com")!,
+                                authToken: nil
+                            )
+                        },
+                        releaseDataProvider: { _ in
+                            try releaseFixtureJSON(
+                                """
+                                [
+                                  {
+                                    "tag_name": "v2.0.0",
+                                    "name": "v2.0.0",
+                                    "draft": false,
+                                    "prerelease": false,
+                                    "published_at": "2026-03-08T11:00:00Z",
+                                    "assets": [
+                                      {
+                                        "name": "codex-darwin-arm64.tar.gz",
+                                        "browser_download_url": "https://example.com/codex-darwin-arm64.tar.gz"
+                                      }
+                                    ]
+                                  }
+                                ]
+                                """
+                            )
                         }
                     )
                 )
@@ -57,4 +110,15 @@ struct ReleaseServiceTests {
         #expect(response.targetBuildNumber == 10)
         #expect(response.notes.isEmpty == false)
     }
+}
+
+private func releaseFixtureJSON(_ json: String) throws -> Data {
+    guard let data = json.data(using: .utf8) else {
+        throw TestFixtureError.invalidUTF8
+    }
+    return data
+}
+
+private enum TestFixtureError: Error {
+    case invalidUTF8
 }

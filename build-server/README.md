@@ -12,7 +12,6 @@ This package is the first scaffold for the future Codex-triggered AgentHub relea
 
 ## Not Yet Implemented
 
-- Querying GitHub Releases and filtering out `-alpha` releases
 - Real HTTP server or webhook receiver
 - Codex artifact download and checksum verification
 - Replacing the bundled `AgentHub/Resources/codex/codex` binary
@@ -23,6 +22,13 @@ This package is the first scaffold for the future Codex-triggered AgentHub relea
 
 - Release builds will resolve the latest stable Codex release automatically.
 - The checked-in `AgentHub/Resources/codex/codex` binary remains in the repo as a local development fallback until the pipeline is proven out.
+
+## Required Environment
+
+- `CODEX_GITHUB_OWNER` — GitHub owner/org for the Codex releases
+- `CODEX_GITHUB_REPO` — GitHub repository name for the Codex releases
+- `CODEX_GITHUB_API_BASE_URL` — optional override for the GitHub API base URL
+- `GITHUB_TOKEN` — optional token for authenticated GitHub API access or rate-limit avoidance
 
 ## Local Smoke Test
 

@@ -8,7 +8,7 @@ struct CodexReleaseWorker {
     }
 
     func submit(_ request: AgentHubReleaseRequest) throws -> AgentHubReleaseResponse {
-        let releasePlan = releaseService.prepareRelease(request: request)
+        let releasePlan = try releaseService.prepareRelease(request: request)
 
         return AgentHubReleaseResponse(
             releaseJobID: releasePlan.jobID,
