@@ -5,6 +5,19 @@ import Testing
 struct ReleaseServiceTests {
     @Test
     func prepareReleaseBumpsPatchVersionAndPlansSparkleArtifacts() throws {
+        let extractedArtifacts = CodexExtractedArtifacts(
+            workingDirectory: URL(fileURLWithPath: "/tmp/codex-work", isDirectory: true),
+            checksumFileURL: URL(fileURLWithPath: "/tmp/codex-work/checksums.txt"),
+            arm64BinaryURL: URL(fileURLWithPath: "/tmp/codex-work/arm64/codex"),
+            x64BinaryURL: URL(fileURLWithPath: "/tmp/codex-work/x64/codex")
+        )
+        let preparedArtifacts = PreparedCodexArtifacts(
+            workingDirectory: extractedArtifacts.workingDirectory,
+            checksumFileURL: extractedArtifacts.checksumFileURL,
+            arm64BinaryURL: extractedArtifacts.arm64BinaryURL,
+            x64BinaryURL: extractedArtifacts.x64BinaryURL,
+            universalBinaryURL: URL(fileURLWithPath: "/tmp/codex-work/universal/codex")
+        )
         let service = AgentHubReleaseService(
             artifactFetcher: CodexArtifactFetcher(
                 configurationProvider: {
@@ -36,6 +49,16 @@ struct ReleaseServiceTests {
                         """
                     )
                 }
+            ),
+            artifactDownloader: CodexArtifactDownloader(
+                preparedReleaseProvider: { _ in extractedArtifacts },
+                workingDirectoryProvider: { extractedArtifacts.workingDirectory },
+                dataProvider: { _ in Data() },
+                archiveExtractor: { _, _ in }
+            ),
+            universalBinaryBuilder: CodexUniversalBinaryBuilder(
+                preparedArtifactsProvider: { _ in preparedArtifacts },
+                processRunner: { _, _ in }
             )
         )
         let request = AgentHubReleaseRequest(
@@ -50,6 +73,7 @@ struct ReleaseServiceTests {
         #expect(plan.codexRelease.version == "1.2.3")
         #expect(plan.codexRelease.releaseTag == "v1.2.3")
         #expect(plan.codexRelease.assets.count == 1)
+        #expect(plan.preparedArtifacts.universalBinaryURL == preparedArtifacts.universalBinaryURL)
         #expect(plan.targetAgentHubVersion == "1.0.1")
         #expect(plan.targetBuildNumber == 42)
         #expect(plan.sparklePublishPlan.appcastPath == "updates/dev/appcast.xml")
@@ -57,6 +81,19 @@ struct ReleaseServiceTests {
 
     @Test
     func controllerQueuesReleaseResponseFromWorker() throws {
+        let extractedArtifacts = CodexExtractedArtifacts(
+            workingDirectory: URL(fileURLWithPath: "/tmp/codex-work-2", isDirectory: true),
+            checksumFileURL: URL(fileURLWithPath: "/tmp/codex-work-2/checksums.txt"),
+            arm64BinaryURL: URL(fileURLWithPath: "/tmp/codex-work-2/arm64/codex"),
+            x64BinaryURL: URL(fileURLWithPath: "/tmp/codex-work-2/x64/codex")
+        )
+        let preparedArtifacts = PreparedCodexArtifacts(
+            workingDirectory: extractedArtifacts.workingDirectory,
+            checksumFileURL: extractedArtifacts.checksumFileURL,
+            arm64BinaryURL: extractedArtifacts.arm64BinaryURL,
+            x64BinaryURL: extractedArtifacts.x64BinaryURL,
+            universalBinaryURL: URL(fileURLWithPath: "/tmp/codex-work-2/universal/codex")
+        )
         let controller = AgentHubReleaseController(
             worker: CodexReleaseWorker(
                 releaseService: AgentHubReleaseService(
@@ -90,6 +127,16 @@ struct ReleaseServiceTests {
                                 """
                             )
                         }
+                    ),
+                    artifactDownloader: CodexArtifactDownloader(
+                        preparedReleaseProvider: { _ in extractedArtifacts },
+                        workingDirectoryProvider: { extractedArtifacts.workingDirectory },
+                        dataProvider: { _ in Data() },
+                        archiveExtractor: { _, _ in }
+                    ),
+                    universalBinaryBuilder: CodexUniversalBinaryBuilder(
+                        preparedArtifactsProvider: { _ in preparedArtifacts },
+                        processRunner: { _, _ in }
                     )
                 )
             )
@@ -109,6 +156,7 @@ struct ReleaseServiceTests {
         #expect(response.targetAgentHubVersion == "1.4.3")
         #expect(response.targetBuildNumber == 10)
         #expect(response.notes.isEmpty == false)
+        #expect(preparedArtifacts.universalBinaryURL.path.contains("universal"))
     }
 }
 

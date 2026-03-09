@@ -3,6 +3,7 @@ import Foundation
 struct AgentHubReleasePlan: Equatable, Sendable {
     var jobID: UUID
     var codexRelease: CodexArtifactDescriptor
+    var preparedArtifacts: PreparedCodexArtifacts
     var targetAgentHubVersion: String
     var targetBuildNumber: Int
     var sparklePublishPlan: SparklePublishPlan
@@ -11,6 +12,8 @@ struct AgentHubReleasePlan: Equatable, Sendable {
 
 struct AgentHubReleaseService {
     var artifactFetcher = CodexArtifactFetcher()
+    var artifactDownloader = CodexArtifactDownloader()
+    var universalBinaryBuilder = CodexUniversalBinaryBuilder()
     var versioning = AgentHubVersioning()
     var sparklePublisher = SparklePublishService()
 
@@ -18,12 +21,15 @@ struct AgentHubReleaseService {
         request: AgentHubReleaseRequest
     ) throws -> AgentHubReleasePlan {
         let release = try artifactFetcher.resolveLatestStableRelease()
+        let extractedArtifacts = try artifactDownloader.prepareRelease(release)
+        let preparedArtifacts = try universalBinaryBuilder.buildUniversalBinary(from: extractedArtifacts)
         let targetVersion = versioning.nextVersion(from: request.currentAgentHubVersion, for: release.version)
         let publishPlan = sparklePublisher.planPublish(agentHubVersion: targetVersion, channel: request.releaseChannel)
 
         return AgentHubReleasePlan(
             jobID: UUID(),
             codexRelease: release,
+            preparedArtifacts: preparedArtifacts,
             targetAgentHubVersion: targetVersion,
             targetBuildNumber: versioning.nextBuildNumber(from: request.currentBuildNumber),
             sparklePublishPlan: publishPlan,
@@ -31,6 +37,7 @@ struct AgentHubReleaseService {
                 "Resolve latest stable Codex release (ignore -alpha)",
                 "Fetch Codex artifact \(release.version)",
                 "Verify artifact checksums",
+                "Assemble universal macOS Codex binary",
                 "Replace bundled codex binary in AgentHub.app resources",
                 "Bump AgentHub version to \(targetVersion)",
                 "Build, sign, and notarize AgentHub",
