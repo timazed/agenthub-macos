@@ -11,8 +11,7 @@ struct CodexBinaryLocatorTests {
         try makeExecutable(at: binaryURL)
 
         let locator = CodexBinaryLocator(
-            resourceURLProvider: { resourcesURL },
-            currentDirectoryURLProvider: { root }
+            resourceURLProvider: { resourcesURL }
         )
 
         #expect(try locator.locateBinary().path == binaryURL.path)
@@ -26,33 +25,16 @@ struct CodexBinaryLocatorTests {
         try makeExecutable(at: binaryURL)
 
         let locator = CodexBinaryLocator(
-            resourceURLProvider: { resourcesURL },
-            currentDirectoryURLProvider: { root }
+            resourceURLProvider: { resourcesURL }
         )
 
         #expect(try locator.locateBinary().path == binaryURL.path)
     }
 
     @Test
-    func usesWorkspaceFallbackWhenEnabled() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CodexBinaryLocatorTests-\(UUID().uuidString)", isDirectory: true)
-        let binaryURL = root.appendingPathComponent("AgentHub/Resources/codex/codex", isDirectory: false)
-        try makeExecutable(at: binaryURL)
-
-        let locator = CodexBinaryLocator(
-            resourceURLProvider: { nil },
-            currentDirectoryURLProvider: { root }
-        )
-
-        #expect(try locator.locateBinary(allowWorkspaceFallback: true).path == binaryURL.path)
-    }
-
-    @Test
     func throwsWhenNoExecutableExists() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CodexBinaryLocatorTests-\(UUID().uuidString)", isDirectory: true)
         let locator = CodexBinaryLocator(
-            resourceURLProvider: { nil },
-            currentDirectoryURLProvider: { root }
+            resourceURLProvider: { nil }
         )
 
         do {
