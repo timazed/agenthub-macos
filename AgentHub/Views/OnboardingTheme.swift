@@ -1,5 +1,6 @@
 import SwiftUI
 
+// TODO probably revisit this, not a big fan
 struct OnboardingPalette {
     let canvas: [Color]
     let glowA: Color
