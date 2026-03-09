@@ -40,8 +40,11 @@ struct CodexLoginGateView: View {
                             compactLayout
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .frame(minHeight: geometry.size.height - 48, alignment: .top)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .frame(
+                        minHeight: geometry.size.height - 48,
+                        alignment: layoutMode == .wide ? .center : .top
+                    )
                 }
             }
         }
@@ -54,7 +57,7 @@ struct CodexLoginGateView: View {
     }
 
     private var wideLayout: some View {
-        HStack(alignment: .top, spacing: 26) {
+        HStack(alignment: .center, spacing: 26) {
             narrativeRail(maxWidth: 340)
                 .frame(width: 340)
                 .frame(height: widePanelHeight, alignment: .top)
@@ -69,7 +72,8 @@ struct CodexLoginGateView: View {
             compactHeader
             stepSurface(maxWidth: 760)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: 760, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private func layoutMode(for size: CGSize) -> LayoutMode {
