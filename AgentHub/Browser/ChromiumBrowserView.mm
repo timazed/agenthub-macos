@@ -120,6 +120,44 @@ static BOOL AHUsesHeadlessChromiumProfile(void) {
       || AHProcessHasArgument(@"--run-task");
 }
 
+static NSView* AHDeepestFocusableDescendant(NSView* rootView) {
+  if (!rootView) {
+    return nil;
+  }
+
+  for (NSView* subview in [rootView.subviews reverseObjectEnumerator]) {
+    NSView* descendant = AHDeepestFocusableDescendant(subview);
+    if (descendant) {
+      return descendant;
+    }
+  }
+
+  if (rootView.acceptsFirstResponder) {
+    return rootView;
+  }
+
+  return nil;
+}
+
+static NSView* AHBestTextInputClientView(NSView* rootView) {
+  if (!rootView) {
+    return nil;
+  }
+
+  for (NSView* subview in [rootView.subviews reverseObjectEnumerator]) {
+    NSView* descendant = AHBestTextInputClientView(subview);
+    if (descendant) {
+      return descendant;
+    }
+  }
+
+  if ([rootView conformsToProtocol:@protocol(NSTextInputClient)] || rootView.inputContext != nil) {
+    return rootView;
+  }
+
+  return nil;
+}
+
 class AHCloseBrowserTask : public CefTask {
  public:
   AHCloseBrowserTask(CefRefPtr<CefBrowser> browser, bool force_close)
@@ -639,7 +677,7 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
 - (void)waitForBrowsersToCloseWithTimeout:(NSTimeInterval)timeout {
   NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
   while (_activeBrowserCount > 0 && [deadline timeIntervalSinceNow] > 0) {
-    [self pumpCEFAllowingShutdown:YES];
+     [self pumpCEFAllowingShutdown:YES];
     [[NSRunLoop mainRunLoop] runMode:NSRunLoopCommonModes
                          beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
   }
@@ -763,6 +801,10 @@ void AHChromiumShutdownRuntime(void) {
   return YES;
 }
 
+- (BOOL)acceptsFirstResponder {
+  return YES;
+}
+
 - (void)viewDidMoveToWindow {
   [super viewDidMoveToWindow];
   [self ensureBrowserCreated];
@@ -831,6 +873,86 @@ void AHChromiumShutdownRuntime(void) {
   if (_browser) {
     _browser->StopLoad();
   }
+}
+
+- (void)focusBrowser {
+  NSWindow* window = self.window;
+  if (!window) {
+    return;
+  }
+
+  [window makeFirstResponder:self];
+  if (_browser) {
+    CefRefPtr<CefBrowserHost> host = _browser->GetHost();
+    if (host) {
+      host->SetFocus(true);
+    }
+  }
+
+  NSView* preferredView = AHBestTextInputClientView(self);
+  if (!preferredView) {
+    preferredView = AHDeepestFocusableDescendant(self);
+  }
+  if (preferredView && preferredView != self) {
+    [window makeFirstResponder:preferredView];
+    [preferredView.inputContext activate];
+  } else {
+    [self.inputContext activate];
+  }
+}
+
+- (NSDictionary<NSString*, id>*)prepareForNativeVerificationAutofill {
+  NSWindow* window = self.window;
+  if (!window) {
+    return @{
+      @"focused" : @NO,
+      @"reason" : @"missing_window"
+    };
+  }
+
+  [window makeKeyAndOrderFront:nil];
+  [self focusBrowser];
+
+  NSResponder* responder = window.firstResponder;
+  NSView* inputClientView = AHBestTextInputClientView(self);
+  if (!inputClientView) {
+    inputClientView = AHDeepestFocusableDescendant(self);
+  }
+  if (inputClientView && inputClientView != responder) {
+    [window makeFirstResponder:inputClientView];
+    responder = window.firstResponder;
+  }
+
+  NSTextInputContext* inputContext = nil;
+  if ([responder isKindOfClass:[NSView class]]) {
+    inputContext = ((NSView*)responder).inputContext;
+  }
+  if (!inputContext) {
+    inputContext = inputClientView.inputContext ?: self.inputContext ?: NSTextInputContext.currentInputContext;
+  }
+
+  [inputContext activate];
+  if (@available(macOS 15.4, *)) {
+    [inputContext textInputClientDidUpdateSelection];
+  }
+  [inputContext invalidateCharacterCoordinates];
+
+  if ([responder respondsToSelector:@selector(complete:)]) {
+    [(id)responder complete:nil];
+  }
+
+  NSString* responderClass = responder ? NSStringFromClass([responder class]) : @"";
+  NSString* inputClientClass = inputClientView ? NSStringFromClass([inputClientView class]) : @"";
+  BOOL focused = responder != nil;
+  BOOL hasInputContext = inputContext != nil;
+
+  return @{
+    @"focused" : @(focused),
+    @"responderClass" : responderClass,
+    @"inputClientClass" : inputClientClass,
+    @"hasInputContext" : @(hasInputContext),
+    @"usedCompletion" : @([responder respondsToSelector:@selector(complete:)])
+  };
 }
 
 - (void)evaluateJavaScript:(NSString*)script

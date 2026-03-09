@@ -359,6 +359,204 @@ enum ChromiumBrowserScripts {
         """
     }
 
+    static func typeVerificationCode(_ code: String) -> String {
+        let codeLiteral = jsStringLiteral(code)
+        return """
+        \(textEntryHelpers)
+        const code = \(codeLiteral);
+        const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
+        const normalizeLower = (value) => normalize(value).toLowerCase();
+        const isVisible = (element) => {
+            if (!element) { return false; }
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== "none"
+                && style.visibility !== "hidden"
+                && rect.width > 1
+                && rect.height > 1;
+        };
+        const labelFor = (element) => normalize([
+            element?.getAttribute?.("aria-label"),
+            element?.getAttribute?.("placeholder"),
+            element?.getAttribute?.("name"),
+            element?.id,
+            element?.labels ? Array.from(element.labels).map((label) => label.textContent || "").join(" ") : "",
+            element?.closest?.("label")?.textContent,
+            element?.textContent
+        ].filter(Boolean).join(" "));
+        const selectorFor = (element) => {
+            if (!element || !(element instanceof Element)) { return ""; }
+            if (element.id) {
+                return `#${CSS.escape(element.id)}`;
+            }
+            if (element.getAttribute("name")) {
+                return `${element.tagName.toLowerCase()}[name="${element.getAttribute("name")}"]`;
+            }
+            if (element.getAttribute("aria-label")) {
+                return `${element.tagName.toLowerCase()}[aria-label="${element.getAttribute("aria-label")}"]`;
+            }
+            return element.tagName.toLowerCase();
+        };
+        const verificationRegex = /verification|verify|one time|one-time|passcode|security code|sms|text message|otp|pin|code/;
+        const editableSelector = 'input, textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]';
+        const editableFields = Array.from(document.querySelectorAll(editableSelector))
+            .filter(isVisible);
+
+        const digitGroups = Array.from(document.querySelectorAll('form, [role="dialog"], dialog, section, div'))
+            .filter(isVisible)
+            .map((container) => {
+                const fields = Array.from(container.querySelectorAll('input'))
+                    .filter(isVisible)
+                    .filter((field) => {
+                        const maxlength = Number(field.getAttribute("maxlength") || "0");
+                        const size = Number(field.getAttribute("size") || "0");
+                        const descriptor = normalizeLower([
+                            labelFor(field),
+                            field.getAttribute("autocomplete"),
+                            field.getAttribute("inputmode"),
+                            field.getAttribute("type")
+                        ].filter(Boolean).join(" "));
+                        return maxlength == 1
+                            || size == 1
+                            || descriptor.includes("one-time-code")
+                            || descriptor.includes("otp");
+                    });
+                return {
+                    fields,
+                    text: normalizeLower(container.textContent || "")
+                };
+            })
+            .filter((group) => group.fields.length >= 4 && group.fields.length <= 8)
+            .sort((lhs, rhs) => {
+                const lhsScore = (verificationRegex.test(lhs.text) ? 10 : 0) + lhs.fields.length;
+                const rhsScore = (verificationRegex.test(rhs.text) ? 10 : 0) + rhs.fields.length;
+                return rhsScore - lhsScore;
+            });
+
+        const digitGroup = digitGroups[0];
+        if (digitGroup) {
+            const digits = code.split("");
+            digitGroup.fields.slice(0, digits.length).forEach((field, index) => {
+                field.focus?.();
+                commitTextEntry(field, digits[index] || "");
+            });
+            return {
+                selector: selectorFor(digitGroup.fields[0]),
+                mode: "digit_group",
+                digits: Math.min(digitGroup.fields.length, code.length)
+            };
+        }
+
+        const bestField = editableFields
+            .map((field) => {
+                const descriptor = normalizeLower([
+                    labelFor(field),
+                    field.getAttribute("autocomplete"),
+                    field.getAttribute("inputmode"),
+                    field.getAttribute("type"),
+                    field.closest('form, [role="dialog"], dialog, section, div')?.textContent || ""
+                ].filter(Boolean).join(" "));
+                let score = 0;
+                if (verificationRegex.test(descriptor)) { score += 12; }
+                if (descriptor.includes("one-time-code")) { score += 14; }
+                if (descriptor.includes("otp")) { score += 10; }
+                if (descriptor.includes("numeric") || descriptor.includes("tel") || descriptor.includes("number")) { score += 3; }
+                return { field, score };
+            })
+            .filter((candidate) => candidate.score > 0)
+            .sort((lhs, rhs) => rhs.score - lhs.score)[0]?.field;
+
+        if (!bestField) {
+            throw new Error("No visible verification field found.");
+        }
+
+        bestField.focus?.();
+        const committedValue = commitTextEntry(bestField, code);
+        return {
+            selector: selectorFor(bestField),
+            mode: "single_field",
+            value: committedValue
+        };
+        """
+    }
+
+    static let prepareVerificationCodeAutofill = """
+        const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
+        const normalizeLower = (value) => normalize(value).toLowerCase();
+        const isVisible = (element) => {
+            if (!element) { return false; }
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== "none"
+                && style.visibility !== "hidden"
+                && rect.width > 1
+                && rect.height > 1;
+        };
+        const labelFor = (element) => normalize([
+            element?.getAttribute?.("aria-label"),
+            element?.getAttribute?.("placeholder"),
+            element?.getAttribute?.("name"),
+            element?.id,
+            element?.labels ? Array.from(element.labels).map((label) => label.textContent || "").join(" ") : "",
+            element?.closest?.("label")?.textContent,
+            element?.textContent
+        ].filter(Boolean).join(" "));
+        const selectorFor = (element) => {
+            if (!element || !(element instanceof Element)) { return ""; }
+            if (element.id) {
+                return `#${CSS.escape(element.id)}`;
+            }
+            if (element.getAttribute("name")) {
+                return `${element.tagName.toLowerCase()}[name="${element.getAttribute("name")}"]`;
+            }
+            if (element.getAttribute("aria-label")) {
+                return `${element.tagName.toLowerCase()}[aria-label="${element.getAttribute("aria-label")}"]`;
+            }
+            return element.tagName.toLowerCase();
+        };
+        const verificationRegex = /verification|verify|one time|one-time|passcode|security code|sms|text message|otp|pin|code/;
+        const candidates = Array.from(document.querySelectorAll('input, textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'))
+            .filter(isVisible)
+            .map((field) => {
+                const descriptor = normalizeLower([
+                    labelFor(field),
+                    field.getAttribute("autocomplete"),
+                    field.getAttribute("inputmode"),
+                    field.getAttribute("type"),
+                    field.closest('form, [role="dialog"], dialog, section, div')?.textContent || ""
+                ].filter(Boolean).join(" "));
+                let score = 0;
+                if (verificationRegex.test(descriptor)) { score += 20; }
+                if (descriptor.includes("one-time-code")) { score += 25; }
+                if (descriptor.includes("otp")) { score += 12; }
+                if (descriptor.includes("numeric") || descriptor.includes("tel") || descriptor.includes("number")) { score += 5; }
+                return { field, score };
+            })
+            .filter((candidate) => candidate.score > 0)
+            .sort((lhs, rhs) => rhs.score - lhs.score);
+        const bestField = candidates[0]?.field;
+        if (!bestField) {
+            throw new Error("No visible verification field found.");
+        }
+        bestField.setAttribute("autocomplete", "one-time-code");
+        if (!bestField.getAttribute("inputmode")) {
+            bestField.setAttribute("inputmode", "numeric");
+        }
+        bestField.setAttribute("autocapitalize", "off");
+        bestField.setAttribute("spellcheck", "false");
+        bestField.click?.();
+        bestField.focus?.();
+        if (typeof bestField.select === "function") {
+            bestField.select();
+        }
+        return {
+            selector: selectorFor(bestField),
+            label: labelFor(bestField),
+            autocomplete: bestField.getAttribute("autocomplete") || "",
+            inputMode: bestField.getAttribute("inputmode") || ""
+        };
+        """
+
     static func selectOption(selector: String, text: String) -> String {
         let selectorLiteral = jsStringLiteral(selector)
         let textLiteral = jsStringLiteral(text.lowercased())
@@ -370,6 +568,63 @@ enum ChromiumBrowserScripts {
             throw new Error(`No element matched ${selector}.`);
         }
         const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+        const isVisible = (candidate) => {
+            if (!candidate) { return false; }
+            const style = window.getComputedStyle(candidate);
+            const rect = candidate.getBoundingClientRect();
+            return style.display !== "none"
+                && style.visibility !== "hidden"
+                && rect.width > 1
+                && rect.height > 1;
+        };
+        const optionLabel = (candidate) => normalize([
+            candidate?.textContent,
+            candidate?.innerText,
+            candidate?.getAttribute?.("aria-label"),
+            candidate?.getAttribute?.("title"),
+            candidate?.getAttribute?.("value")
+        ].filter(Boolean).join(" "));
+        const controlDescriptor = normalize([
+            element.getAttribute("aria-label"),
+            element.getAttribute("placeholder"),
+            element.getAttribute("name"),
+            element.getAttribute("role"),
+            element.textContent,
+            element.closest("label, form, section, div")?.textContent
+        ].filter(Boolean).join(" "));
+        const isTimeTarget = /\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/.test(targetText);
+        const isDateTarget = /(today|tomorrow|mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\\d{1,2})/.test(targetText);
+        const controlIntent = /time|seating/.test(controlDescriptor) ? "time"
+            : (/date|calendar|check-in|checkout|arrival|departure|day/.test(controlDescriptor) ? "date"
+            : (/guest|party|people|traveler|traveller|passenger|room/.test(controlDescriptor) ? "guest" : ""));
+        const collectRoots = () => {
+            const roots = [];
+            const pushRoot = (candidate) => {
+                if (!candidate || roots.includes(candidate)) { return; }
+                roots.push(candidate);
+            };
+            const controlledIDs = [
+                element.getAttribute("aria-controls"),
+                element.getAttribute("aria-owns")
+            ]
+                .filter(Boolean)
+                .flatMap((value) => value.split(/\\s+/))
+                .filter(Boolean);
+            for (const id of controlledIDs) {
+                pushRoot(document.getElementById(id));
+            }
+            const popupContainers = Array.from(document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], dialog, [aria-modal="true"], [data-testid*="popover" i], [data-testid*="dropdown" i], [data-testid*="picker" i], [data-test*="popover" i], [data-test*="dropdown" i], [data-test*="picker" i], [class*="popover" i], [class*="dropdown" i], [class*="picker" i], [class*="menu" i]'))
+                .filter(isVisible);
+            popupContainers.forEach(pushRoot);
+            pushRoot(element.closest('[role="dialog"], dialog, form, section, article, div'));
+            pushRoot(element.parentElement);
+            pushRoot(document.body);
+            return roots;
+        };
+        const clickLike = (candidate) => {
+            candidate.scrollIntoView({ block: "center", inline: "center" });
+            candidate.click?.();
+        };
         if (element instanceof HTMLSelectElement) {
             const option = Array.from(element.options).find((candidate) => {
                 const label = normalize(candidate.textContent || candidate.label || candidate.value);
@@ -383,7 +638,41 @@ enum ChromiumBrowserScripts {
             element.dispatchEvent(new Event("change", { bubbles: true }));
             return { selector, value: option.value, label: option.textContent || option.label || option.value };
         }
-        throw new Error(`Element matched by ${selector} is not a native select element.`);
+        clickLike(element);
+        const roots = collectRoots();
+        const candidates = Array.from(new Set(
+            roots.flatMap((root) => Array.from(root.querySelectorAll('option, [role="option"], button, [role="button"], [role="menuitem"], [role="link"], a[href], li, td, [aria-selected="true"], [aria-selected="false"]')))
+        ))
+            .filter((candidate) => candidate !== element && isVisible(candidate))
+            .map((candidate) => {
+                const label = optionLabel(candidate);
+                const nearby = normalize(candidate.closest('[role="option"], [role="menuitem"], li, td, [role="dialog"], dialog, [role="listbox"], [role="menu"], section, article, div')?.textContent || "");
+                let score = -200;
+                if (!label) {
+                    return { candidate, label, score };
+                }
+                if (label === targetText) { score += 260; }
+                else if (label.includes(targetText) || targetText.includes(label)) { score += 200; }
+                if (nearby.includes(targetText)) { score += 60; }
+                if (isTimeTarget && /\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/.test(label)) { score += 70; }
+                if (isDateTarget && /(today|tomorrow|mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\\d{1,2})/.test(label)) { score += 55; }
+                if (controlIntent === "time" && /time|seating/.test(`${label} ${nearby}`)) { score += 35; }
+                if (controlIntent === "date" && /date|calendar|arrival|departure|day/.test(`${label} ${nearby}`)) { score += 35; }
+                if (controlIntent === "guest" && /guest|party|people|traveler|traveller|passenger|room/.test(`${label} ${nearby}`)) { score += 35; }
+                if (candidate.closest('[role="listbox"], [role="menu"], [role="dialog"], dialog, [aria-modal="true"]')) { score += 40; }
+                if (candidate.closest('[data-testid*="popover" i], [data-testid*="dropdown" i], [data-testid*="picker" i], [data-test*="popover" i], [data-test*="dropdown" i], [data-test*="picker" i], [class*="popover" i], [class*="dropdown" i], [class*="picker" i], [class*="menu" i]')) { score += 25; }
+                if (label.length > 80) { score -= 50; }
+                if (/save|favorite|share|help|map|directions/.test(`${label} ${nearby}`)) { score -= 120; }
+                return { candidate, label, score };
+            })
+            .filter((entry) => entry.score > 0)
+            .sort((lhs, rhs) => rhs.score - lhs.score);
+        const match = candidates[0];
+        if (!match) {
+            throw new Error(`Element matched by ${selector} is not a native select element and no custom option matched ${targetText}.`);
+        }
+        clickLike(match.candidate);
+        return { selector, value: targetText, label: match.label, custom: true };
         """
     }
 
@@ -1101,14 +1390,53 @@ enum ChromiumBrowserScripts {
                 element?.getAttribute?.("autocomplete"),
                 element?.getAttribute?.("inputmode")
             ].filter(Boolean).join(" "));
+            if (/one-time-code|verification|passcode|otp|security code|auth code/.test(descriptor)) { return "verification_code"; }
+            if (/email|e-mail/.test(descriptor)) { return "email"; }
+            if (/phone|mobile|telephone|contact number|tel/.test(descriptor)) { return "phone_number"; }
+            if (/first name|given name/.test(descriptor)) { return "first_name"; }
+            if (/last name|family name|surname/.test(descriptor)) { return "last_name"; }
+            if (/\\bfull name\\b|\\byour name\\b|\\bguest name\\b|\\btraveler name\\b|\\bpassenger name\\b/.test(descriptor)) { return "full_name"; }
+            if (/address line 1|street address|billing address|delivery address|shipping address/.test(descriptor)) { return "address_line1"; }
+            if (/address line 2|apt|suite|unit|apartment/.test(descriptor)) { return "address_line2"; }
+            if (/\\bcity\\b|\\btown\\b/.test(descriptor)) { return "city"; }
+            if (/\\bstate\\b|\\bprovince\\b|\\bregion\\b/.test(descriptor)) { return "state"; }
+            if (/zip|postal/.test(descriptor)) { return "postal_code"; }
+            if (/\\bcountry\\b/.test(descriptor)) { return "country"; }
+            if (/card number|credit card|debit card|payment card/.test(descriptor)) { return "payment_card_number"; }
+            if (/cvv|cvc|security code/.test(descriptor)) { return "payment_security_code"; }
+            if (/exp|expiry|expiration/.test(descriptor)) { return "payment_expiry"; }
+            if (/terms|conditions|consent|agree|newsletter|marketing|updates|reminders|text updates|text reminders/.test(descriptor)) { return "consent"; }
             if (/destination|where|location|from|to|city|airport/.test(descriptor)) { return "location"; }
             if (/search|find|look up/.test(descriptor)) { return "search"; }
             if (/date|calendar|check-in|check out|checkout|arrival|departure/.test(descriptor)) { return "date"; }
+            if (/time|seating/.test(descriptor)) { return "time"; }
             if (/guest|traveler|traveller|passenger|party|people|room/.test(descriptor)) { return "guest_count"; }
             if (/continue|next|search|submit|done|apply/.test(descriptor)) { return "continue"; }
             if (/reserve|book|checkout|confirm|purchase|pay/.test(descriptor)) { return "confirm"; }
             if (/tab/.test(descriptor)) { return "tab"; }
             return null;
+        };
+        const validationMessageFor = (element) => {
+            if (!element) { return null; }
+            const nativeMessage = normalize(typeof element.validationMessage === "string" ? element.validationMessage : "");
+            if (nativeMessage) { return nativeMessage; }
+            const describedByIds = [
+                element.getAttribute?.("aria-errormessage"),
+                element.getAttribute?.("aria-describedby")
+            ]
+                .filter(Boolean)
+                .flatMap((value) => value.split(/\\s+/))
+                .filter(Boolean);
+            for (const id of describedByIds) {
+                const describedBy = document.getElementById(id);
+                const text = normalize(describedBy?.innerText || describedBy?.textContent || "");
+                if (text && /required|invalid|incorrect|enter|provide|missing|error|code|phone|email|name|address/.test(text.toLowerCase())) {
+                    return text;
+                }
+            }
+            const errorNode = element.closest('label, form, section, div')?.querySelector?.('[role="alert"], [aria-live="assertive"], [aria-invalid="true"], .error, .field-error, [class*="error" i], [data-testid*="error" i], [data-test*="error" i]');
+            const nearbyText = normalize(errorNode?.innerText || errorNode?.textContent || "");
+            return nearbyText || null;
         };
         const actionPriority = (element, label) => {
             const descriptor = normalizeLower([
@@ -1119,6 +1447,7 @@ enum ChromiumBrowserScripts {
             let score = 0;
             if (/destination|where|location|from|to|city|airport/.test(descriptor)) { score += 60; }
             if (/date|calendar|arrival|departure|check-in|check out/.test(descriptor)) { score += 55; }
+            if (/time|seating/.test(descriptor)) { score += 52; }
             if (/guest|traveler|traveller|passenger|party|people|room/.test(descriptor)) { score += 50; }
             if (/search|find|continue|next|submit|apply/.test(descriptor)) { score += 45; }
             if (/reserve|book|checkout|confirm|purchase|pay/.test(descriptor)) { score += 80; }
@@ -1145,6 +1474,11 @@ enum ChromiumBrowserScripts {
                     href: element.getAttribute("href"),
                     purpose: inferPurpose(element, label),
                     groupLabel: groupLabelFor(element) || null,
+                    isRequired: element.required === true || element.getAttribute("aria-required") === "true",
+                    isSelected: element.checked === true
+                        || element.getAttribute("aria-selected") === "true"
+                        || element.getAttribute("aria-checked") === "true",
+                    validationMessage: validationMessageFor(element),
                     priority: actionPriority(element, label)
                 };
             })
@@ -1168,7 +1502,14 @@ enum ChromiumBrowserScripts {
                         options: field instanceof HTMLSelectElement
                             ? Array.from(field.options).map((option) => normalize(option.textContent || option.label || option.value)).filter(Boolean).slice(0, 8)
                             : [],
-                        isRequired: field.required || field.getAttribute("aria-required") === "true"
+                        autocomplete: field.getAttribute("autocomplete"),
+                        inputMode: field.getAttribute("inputmode"),
+                        fieldPurpose: inferPurpose(field, labelFor(field)),
+                        isRequired: field.required || field.getAttribute("aria-required") === "true",
+                        isSelected: field.checked === true
+                            || field.getAttribute("aria-selected") === "true"
+                            || field.getAttribute("aria-checked") === "true",
+                        validationMessage: validationMessageFor(field)
                     }));
                 const submit = Array.from(form.querySelectorAll('button, input[type="submit"], [role="button"]'))
                     .filter(isVisible)[0];
@@ -1361,6 +1702,62 @@ enum ChromiumBrowserScripts {
             .filter((picker) => picker.visibleDays.length > 0 || picker.label.toLowerCase().includes("date"))
             .slice(0, 4);
 
+        const notices = Array.from(document.querySelectorAll('[role="alert"], [role="status"], [aria-live], .error, .success, .warning, [class*="error" i], [class*="success" i], [class*="warning" i], [data-testid*="error" i], [data-testid*="success" i], [data-testid*="warning" i], [data-test*="error" i], [data-test*="success" i], [data-test*="warning" i]'))
+            .filter(isVisible)
+            .map((element, index) => {
+                const label = normalize(element.innerText || element.textContent || element.getAttribute("aria-label") || "");
+                const descriptor = normalizeLower([
+                    label,
+                    element.getAttribute("role"),
+                    element.getAttribute("aria-live"),
+                    element.className
+                ].filter(Boolean).join(" "));
+                let kind = "info";
+                if (/error|invalid|required|missing|failed|incorrect|expired|try again|warning/.test(descriptor)) {
+                    kind = "error";
+                } else if (/success|confirmed|complete|completed|placed|thank you/.test(descriptor)) {
+                    kind = "success";
+                }
+                return {
+                    id: `notice-${index}`,
+                    kind,
+                    label,
+                    selector: selectorFor(element)
+                };
+            })
+            .filter((notice, index, collection) =>
+                notice.label
+                && collection.findIndex((candidate) => candidate.kind === notice.kind && candidate.label === notice.label) === index
+            )
+            .slice(0, 8);
+
+        const stepIndicators = Array.from(document.querySelectorAll('[aria-current="step"], [data-step], [data-testid*="step" i], [data-test*="step" i], [class*="step" i], [class*="progress" i], nav li, ol li'))
+            .filter(isVisible)
+            .map((element, index) => {
+                const label = normalize(element.innerText || element.textContent || element.getAttribute("aria-label") || "");
+                const descriptor = normalizeLower([
+                    label,
+                    element.getAttribute("aria-current"),
+                    element.getAttribute("data-step"),
+                    element.className
+                ].filter(Boolean).join(" "));
+                const isCurrent = element.getAttribute("aria-current") === "step"
+                    || element.getAttribute("aria-current") === "true"
+                    || element.getAttribute("aria-selected") === "true"
+                    || /current|active|selected/.test(descriptor);
+                return {
+                    id: `step-${index}`,
+                    label,
+                    selector: selectorFor(element),
+                    isCurrent
+                };
+            })
+            .filter((step, index, collection) =>
+                (step.isCurrent || /step|review|details|payment|shipping|confirmation|verify|guest|traveler|traveller|contact/.test(step.label.toLowerCase()))
+                && collection.findIndex((candidate) => candidate.label === step.label && candidate.isCurrent === step.isCurrent) === index
+            )
+            .slice(0, 8);
+
         const primaryActions = Array.from(document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]'))
             .filter(isVisible)
             .map((element, index) => {
@@ -1382,6 +1779,12 @@ enum ChromiumBrowserScripts {
             .sort((lhs, rhs) => rhs.priority - lhs.priority)
             .slice(0, 10);
 
+        const reviewPageSignal = normalizeLower([
+            window.location.pathname,
+            document.title,
+            document.querySelector('h1, h2, [role="heading"]')?.textContent
+        ].filter(Boolean).join(" "));
+
         const transactionalBoundaries = Array.from(document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]'))
             .filter(isVisible)
             .map((element, index) => {
@@ -1397,6 +1800,7 @@ enum ChromiumBrowserScripts {
                 const isPromotional = /explore restaurants|exclusive tables|new cardmembers|dining credit|sapphire reserve|learn more|see details/.test(descriptor);
                 const isSavedItemAction = /save restaurant|save to favorites|save restaurant to favorites|favorite|favourite|favorites|favourites|saved items|wishlist|bookmark/.test(descriptor);
                 const isDiscoveryNavigation = /view full list|view all|see all|show all|browse all|explore all|view more/.test(labelLower);
+                const isAccountChoiceAction = /use email instead|continue with email|continue with phone|sign in|log in|login|verify account|verify your account|phone number/.test(labelLower);
                 const isReserveForOthers = /\\b(reserve|book)\\b.*\\bfor others\\b/.test(descriptor);
                 const labelHasFinalKeyword = /reserve|book|confirm|complete|purchase|pay|place order/.test(labelLower);
                 const hrefHasTransactionalKeyword = /reserve|book|checkout|payment|confirm|purchase|order/.test(href);
@@ -1404,36 +1808,39 @@ enum ChromiumBrowserScripts {
                 const isDenseResultAction = !!resultCardContainer && hasDenseResults && !hasTransactionalContainer;
                 const hasStepperKeyword = /\\bcontinue\\b|\\bnext\\b|\\bcheckout\\b/.test(descriptor);
                 const hasReviewKeyword = /review(?: reservation| booking| details| step| summary)\\b|go to review|continue to review|guest details|payment details/.test(descriptor);
-                const hasStrongFinalIntent = /confirm(?: reservation| booking| order)?\\b|complete(?: booking| order| reservation)?\\b|place order\\b|pay now\\b|purchase\\b|finalize(?: booking| order)?\\b|submit order\\b/.test(descriptor);
+                const hasStrongFinalIntent = /confirm(?: reservation| booking| order)?\\b|complete(?: booking| order| reservation)?\\b|place order\\b|pay now\\b|purchase\\b|finalize(?: booking| order)?\\b|submit order\\b/.test(labelLower);
+                const hasReviewPageSignal = /booking\\/details|guest details|reservation details|booking details|complete your reservation|review/.test(reviewPageSignal);
                 let kind = "";
                 let confidence = 0;
                 if (/search|find|show results/.test(descriptor)) {
                     kind = "search_submit";
                     confidence = 50;
-                } else if (/select|choose|view details|details/.test(descriptor)) {
-                    kind = "result_selection";
-                    confidence = 45;
-                } else if (!isDenseResultAction && (hasReviewKeyword || (hasTransactionalContainer && hasStepperKeyword))) {
-                    kind = "review_step";
-                    confidence = 70;
                 } else if (
                     !isPromotional
                         && !isSavedItemAction
                         && !isDiscoveryNavigation
+                        && !isAccountChoiceAction
                         && !isReserveForOthers
                         && !isDenseResultAction
-                        && /reserve|book|confirm|complete|purchase|pay|place order/.test(descriptor)
-                        && (hasStrongFinalIntent || hasTransactionalContainer || hrefHasTransactionalKeyword)
+                        && (labelHasFinalKeyword || hrefHasTransactionalKeyword)
+                        && (hasStrongFinalIntent || hrefHasTransactionalKeyword || (hasReviewPageSignal && labelHasFinalKeyword))
                 ) {
                     kind = "final_confirmation";
                     confidence = 70;
                     if (!isLink) { confidence += 15; }
                     if (hasTransactionalContainer) { confidence += 15; }
                     if (hasStrongFinalIntent) { confidence += 10; }
-                    if (isLink && /reserve|book/.test(descriptor) && !hasTransactionalContainer && !hrefHasTransactionalKeyword) {
+                    if (hasReviewPageSignal) { confidence += 15; }
+                    if (isLink && /reserve|book/.test(descriptor) && !hasTransactionalContainer && !hrefHasTransactionalKeyword && !hasReviewPageSignal) {
                         confidence -= 25;
                     }
                     if (label.length > 80) { confidence -= 20; }
+                } else if (/^(select|choose)\\b/.test(labelLower) || /view details\\b/.test(labelLower) || labelLower === "details") {
+                    kind = "result_selection";
+                    confidence = 45;
+                } else if (!isDenseResultAction && (hasReviewKeyword || (hasTransactionalContainer && hasStepperKeyword))) {
+                    kind = "review_step";
+                    confidence = 70;
                 }
                 return {
                     id: `boundary-${index}`,
@@ -1460,7 +1867,7 @@ enum ChromiumBrowserScripts {
             return "browse";
         })();
 
-        const semanticTargets = [
+        const baseSemanticTargets = [
             ...interactiveElements.map((element) => ({
                 id: `target-interactive-${element.id}`,
                 kind: /input|textarea|select|combobox/.test(element.role) ? "field" : "action",
@@ -1560,9 +1967,7 @@ enum ChromiumBrowserScripts {
                 return targets;
             })
         ]
-            .filter((target) => target.label && target.selector)
-            .sort((lhs, rhs) => rhs.priority - lhs.priority)
-            .slice(0, 40);
+            .filter((target) => target.label && target.selector);
 
         const bookingPartyOptions = Array.from(document.querySelectorAll('select option, [role="option"], button, [role="button"]'))
             .filter(isVisible)
@@ -1585,15 +1990,29 @@ enum ChromiumBrowserScripts {
                 const label = normalize(element.textContent || element.getAttribute("aria-label") || "");
                 const nearby = normalize(element.closest('article, li, [role="dialog"], dialog, section, div')?.textContent || "");
                 const transactionalSlotContainer = element.closest('form, [role="dialog"], dialog, [data-testid*="booking" i], [data-testid*="availability" i], [data-testid*="reservation" i], [data-test*="booking" i], [data-test*="availability" i], [data-test*="reservation" i], [class*="booking" i], [class*="availability" i], [class*="reservation" i]');
+                const slotGroupContainer = element.closest('[data-testid*="time" i], [data-testid*="slot" i], [data-testid*="availability" i], [data-test*="time" i], [data-test*="slot" i], [data-test*="availability" i], [class*="time" i], [class*="slot" i], [class*="availability" i], section, div');
+                const slotGroupText = normalize(slotGroupContainer?.textContent || "");
                 const resultCardContainer = element.closest('[data-testid*="restaurant-card" i], [data-test*="restaurant-card" i], article, li, [role="listitem"]');
                 const isDenseResultSlot = !!resultCardContainer && hasDenseResults && !transactionalSlotContainer;
-                const hasTimeLikeLabel = /\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/i.test(label) && label.length <= 24;
+                const hasTimeLikeLabel = /\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/i.test(label);
+                const hasReserveTableLabel = /reserve table at|book table at|reserve at/.test(label);
+                const hasSelectTimeContext = /select a time|available times?|choose a time|pick a time/.test(slotGroupText);
+                const inlineTimeButtonCount = slotGroupContainer
+                    ? Array.from(slotGroupContainer.querySelectorAll('button, [role="button"], a[href], [role="link"]'))
+                        .filter(isVisible)
+                        .map((candidate) => normalize(candidate.textContent || candidate.getAttribute("aria-label") || ""))
+                        .filter((candidateLabel) => /\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/i.test(candidateLabel))
+                        .length
+                    : 0;
                 let score = 0;
                 if (hasTimeLikeLabel) { score += 70; }
                 if (/reserve|book/i.test(nearby)) { score += 20; }
                 if (transactionalSlotContainer) { score += 20; }
+                if (hasReserveTableLabel) { score += 40; }
+                if (hasSelectTimeContext) { score += 35; }
+                if (inlineTimeButtonCount >= 2) { score += 25; }
                 if (isDenseResultSlot) { score -= 120; }
-                if (!hasTimeLikeLabel) { score -= 120; }
+                if (!hasTimeLikeLabel && !hasReserveTableLabel) { score -= 120; }
                 if (/sold out|waitlist|notify/i.test(`${label} ${nearby}`)) { score -= 100; }
                 return {
                     id: `slot-${index}`,
@@ -1609,6 +2028,22 @@ enum ChromiumBrowserScripts {
             .map((action) => action.label)
             .filter((label) => /reserve|book|confirm|complete|checkout/i.test(label))
             .slice(0, 6);
+        const semanticTargets = [
+            ...baseSemanticTargets,
+            ...availableSlots.map((slot) => ({
+                id: `target-${slot.id}`,
+                kind: "slot_option",
+                label: slot.label,
+                selector: slot.selector,
+                purpose: "time",
+                groupLabel: "available reservation slots",
+                transactionalKind: "booking_slot",
+                priority: 118 + Math.min(slot.score, 40)
+            }))
+        ]
+            .filter((target) => target.label && target.selector)
+            .sort((lhs, rhs) => rhs.priority - lhs.priority)
+            .slice(0, 40);
 
         const semanticFieldValues = [
             ...interactiveElements.map((element) => ({
@@ -1767,6 +2202,8 @@ enum ChromiumBrowserScripts {
             controlGroups,
             autocompleteSurfaces,
             datePickers,
+            notices,
+            stepIndicators,
             primaryActions,
             transactionalBoundaries,
             semanticTargets,

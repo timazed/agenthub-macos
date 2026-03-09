@@ -4,10 +4,12 @@ final class PersonaManager {
     private struct PersonaProfile: Codable {
         var name: String
         var profilePictureURL: String?
+        var contactProfile: PersonaContactProfile?
 
         enum CodingKeys: String, CodingKey {
             case name
             case profilePictureURL = "profilePictureUrl"
+            case contactProfile
         }
     }
 
@@ -69,7 +71,8 @@ final class PersonaManager {
         try writeProfile(
             PersonaProfile(
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                profilePictureURL: nil
+                profilePictureURL: nil,
+                contactProfile: nil
             ),
             to: dir
         )
@@ -94,10 +97,29 @@ final class PersonaManager {
         try writeProfile(
             PersonaProfile(
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                profilePictureURL: existingProfile?.profilePictureURL
+                profilePictureURL: existingProfile?.profilePictureURL,
+                contactProfile: existingProfile?.contactProfile
             ),
             to: dir
         )
+    }
+
+    func loadContactProfile(personaId: String) -> PersonaContactProfile? {
+        loadProfile(for: personaId)?.contactProfile
+    }
+
+    func updateContactProfile(personaId: String, contactProfile: PersonaContactProfile?) throws {
+        let safeId = slugify(personaId)
+        let dir = paths.personasDirectory.appendingPathComponent(safeId, isDirectory: true)
+        try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let existingProfile = loadProfile(for: safeId)
+        let profile = PersonaProfile(
+            name: existingProfile?.name ?? displayName(from: safeId),
+            profilePictureURL: existingProfile?.profilePictureURL,
+            contactProfile: contactProfile
+        )
+        try writeProfile(profile, to: dir)
     }
 
     func loadInstructions(personaId: String) throws -> String {
@@ -203,7 +225,7 @@ final class PersonaManager {
 
     private func migrateLegacyProfileIfNeeded(for id: String, directory: URL) -> PersonaProfile? {
         guard let legacyName = legacyDisplayName(for: id) else { return nil }
-        let profile = PersonaProfile(name: legacyName, profilePictureURL: nil)
+        let profile = PersonaProfile(name: legacyName, profilePictureURL: nil, contactProfile: nil)
         try? writeProfile(profile, to: directory)
         return profile
     }

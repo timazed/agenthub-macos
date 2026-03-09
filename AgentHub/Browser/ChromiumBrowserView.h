@@ -32,6 +32,8 @@ typedef void (^AHChromiumSnapshotCompletion)(NSData* _Nullable pngData,
 - (void)goForward;
 - (void)reloadPage;
 - (void)stopLoading;
+- (void)focusBrowser;
+- (nullable NSDictionary<NSString*, id>*)prepareForNativeVerificationAutofill;
 - (void)evaluateJavaScript:(NSString*)script
                 completion:(AHChromiumEvaluationCompletion)completion;
 - (void)capturePNGSnapshot:(AHChromiumSnapshotCompletion)completion;

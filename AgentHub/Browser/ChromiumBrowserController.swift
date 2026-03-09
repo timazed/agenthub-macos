@@ -374,6 +374,56 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         return result
     }
 
+    func typeVerificationCodeForAgent(_ code: String) async throws -> String {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCode.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Verification code requires a non-empty value.")
+        }
+        let result = try await performRetriedAsyncAction(
+            name: "type_verification_code",
+            detail: trimmedCode,
+            policy: RetryPolicy(attempts: 2, delay: 0.3)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.typeVerificationCode(trimmedCode),
+                label: "Type verification code for agent"
+            )
+        } shouldRetry: { _ in
+            false
+        }
+        appendLog("Entered verification code into the current browser page.")
+        return result
+    }
+
+    func prepareVerificationCodeAutofillForAgent() async throws -> String {
+        await MainActor.run {
+            browserView.focusBrowser()
+        }
+        let result = try await performRetriedAsyncAction(
+            name: "prepare_verification_autofill",
+            detail: "Focus one-time-code field",
+            policy: RetryPolicy(attempts: 2, delay: 0.2)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.prepareVerificationCodeAutofill,
+                label: "Prepare verification code autofill for agent"
+            )
+        } shouldRetry: { _ in
+            false
+        }
+        let nativeFocusDetails = await MainActor.run {
+            browserView.prepareForNativeVerificationAutofill()
+        }
+        appendLog("Prepared the verification field for native one-time-code autofill.")
+        if let nativeFocusDetails,
+           let data = try? JSONSerialization.data(withJSONObject: nativeFocusDetails, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8),
+           !json.isEmpty {
+            return "\(result) \(json)"
+        }
+        return result
+    }
+
     func selectOptionForAgent(_ text: String, selector: String) async throws -> String {
         let trimmedSelector = selector.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -473,16 +523,18 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         return result
     }
 
-    func submitFormForAgent(selector: String?, label: String?, transactionalKind: String? = nil) async throws -> String {
+    func submitFormForAgent(selector: String?, label: String?, transactionalKind: String? = nil, requireApproval: Bool = true) async throws -> String {
         let trimmedSelector = selector?.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
         let detail = trimmedLabel ?? trimmedSelector ?? "best matching form"
-        try await requestApprovalIfNeeded(
-            actionName: "submit_form",
-            detail: detail,
-            rationale: "Submitting a form may trigger a booking, checkout, or confirmation step.",
-            transactionalKind: transactionalKind
-        )
+        if requireApproval {
+            try await requestApprovalIfNeeded(
+                actionName: "submit_form",
+                detail: detail,
+                rationale: "Submitting a form may trigger a booking, checkout, or confirmation step.",
+                transactionalKind: transactionalKind
+            )
+        }
         let baselineInspection = lastInspection
         let result = try await performRetriedAsyncAction(
             name: "submit_form",
@@ -505,19 +557,21 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         return result
     }
 
-    func clickSelectorForAgent(_ selector: String, label: String? = nil, transactionalKind: String? = nil) async throws -> String {
+    func clickSelectorForAgent(_ selector: String, label: String? = nil, transactionalKind: String? = nil, requireApproval: Bool = true) async throws -> String {
         let trimmedSelector = selector.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSelector.isEmpty else {
             throw ChromiumBrowserActionError(message: "Click selector requires a selector.")
         }
         let normalizedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
         let detail = (normalizedLabel?.isEmpty == false ? normalizedLabel : nil) ?? trimmedSelector
-        try await requestApprovalIfNeeded(
-            actionName: "click_selector",
-            detail: detail,
-            rationale: "This selector click may trigger a booking, checkout, or confirmation action.",
-            transactionalKind: transactionalKind
-        )
+        if requireApproval {
+            try await requestApprovalIfNeeded(
+                actionName: "click_selector",
+                detail: detail,
+                rationale: "This selector click may trigger a booking, checkout, or confirmation action.",
+                transactionalKind: transactionalKind
+            )
+        }
         let baselineURL = state.urlString
         let baselineTitle = state.title
         let baselineInspection = lastInspection
@@ -535,7 +589,14 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
             if self.didPageRespond(afterSubmittingFromURL: baselineURL, title: baselineTitle) {
                 return false
             }
-            try await self.waitForPageToSettle(timeout: 2)
+            do {
+                try await self.waitForPageToSettle(timeout: 6)
+            } catch {
+                if self.didPageRespond(afterSubmittingFromURL: baselineURL, title: baselineTitle) {
+                    return false
+                }
+                throw error
+            }
             if try await self.didPageProgress(from: baselineInspection) {
                 return false
             }
@@ -545,19 +606,21 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         return result
     }
 
-    func clickTextForAgent(_ text: String, label: String? = nil, transactionalKind: String? = nil) async throws -> String {
+    func clickTextForAgent(_ text: String, label: String? = nil, transactionalKind: String? = nil, requireApproval: Bool = true) async throws -> String {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else {
             throw ChromiumBrowserActionError(message: "Click text requires visible text.")
         }
         let normalizedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
         let detail = (normalizedLabel?.isEmpty == false ? normalizedLabel : nil) ?? trimmedText
-        try await requestApprovalIfNeeded(
-            actionName: "click_text",
-            detail: detail,
-            rationale: "This click may trigger a booking, checkout, or confirmation action.",
-            transactionalKind: transactionalKind
-        )
+        if requireApproval {
+            try await requestApprovalIfNeeded(
+                actionName: "click_text",
+                detail: detail,
+                rationale: "This click may trigger a booking, checkout, or confirmation action.",
+                transactionalKind: transactionalKind
+            )
+        }
         let baselineInspection = lastInspection
         let result = try await performRetriedAsyncAction(
             name: "click_text",
@@ -570,7 +633,14 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
             )
         } shouldRetry: { [weak self] _ in
             guard let self else { return false }
-            try await self.waitForPageToSettle(timeout: 2)
+            do {
+                try await self.waitForPageToSettle(timeout: 6)
+            } catch {
+                if self.state.isLoading {
+                    return false
+                }
+                throw error
+            }
             if try await self.didPageProgress(from: baselineInspection) {
                 return false
             }
@@ -723,6 +793,11 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         try await waitForPageToSettle(timeout: timeout)
         appendLog("Page settled at \(state.urlString).")
         return state
+    }
+
+    func settlePageForAgent(timeout: TimeInterval) async throws {
+        try await waitForPageToSettle(timeout: timeout)
+        appendLog("Settled current page before follow-up inspection.")
     }
 
     func captureSnapshotForAgent(label: String?) async throws -> ChromiumSnapshotArtifact {
@@ -1299,11 +1374,17 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         return remaining
     }
 
-    private func shouldRequireApproval(actionName: String, detail: String, transactionalKind: String?) -> Bool {
+    private func shouldRequireApproval(
+        actionName: String,
+        detail: String,
+        transactionalKind: String?,
+        inspection: ChromiumInspection?
+    ) -> Bool {
         BrowserTransactionalGuard.approvalShouldBeRequired(
             actionName: actionName,
             detail: detail,
-            transactionalKind: transactionalKind
+            transactionalKind: transactionalKind,
+            inspection: inspection
         )
     }
 
@@ -1313,7 +1394,12 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         rationale: String,
         transactionalKind: String? = nil
     ) async throws {
-        guard shouldRequireApproval(actionName: actionName, detail: detail, transactionalKind: transactionalKind) else { return }
+        guard shouldRequireApproval(
+            actionName: actionName,
+            detail: detail,
+            transactionalKind: transactionalKind,
+            inspection: lastInspection
+        ) else { return }
         lastApprovalDecision = nil
         let pending = ChromiumPendingApproval(actionName: actionName, detail: detail, rationale: rationale, createdAt: Date())
         approvalStatus = .pending(pending)

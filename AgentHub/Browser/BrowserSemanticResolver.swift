@@ -172,8 +172,8 @@ enum BrowserSemanticResolver {
             in: inspection.semanticTargets,
             matching: command.label,
             fallbackText: command.text,
-            preferredKinds: ["dialog_action", "primary_action", "result_card", "action", "dialog_dismiss"],
-            preferredPurposes: ["continue", "confirm", "dismiss"],
+            preferredKinds: ["slot_option", "dialog_action", "primary_action", "result_card", "action", "dialog_dismiss"],
+            preferredPurposes: ["time", "continue", "confirm", "dismiss"],
             selectorHint: command.selector
         )
     }
@@ -269,6 +269,7 @@ enum BrowserSemanticResolver {
         }
 
         if target.transactionalKind == "final_confirmation" { score += 20 }
+        if target.transactionalKind == "booking_slot" { score += 30 }
         return score
     }
 

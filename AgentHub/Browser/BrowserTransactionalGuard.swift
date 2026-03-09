@@ -19,12 +19,22 @@ enum BrowserTransactionalGuard {
         return "Stopped before the final confirmation boundary."
     }
 
-    nonisolated static func approvalShouldBeRequired(actionName: String, detail: String, transactionalKind: String?) -> Bool {
+    nonisolated static func approvalShouldBeRequired(
+        actionName: String,
+        detail: String,
+        transactionalKind: String?,
+        inspection: ChromiumInspection?
+    ) -> Bool {
         if transactionalKind == "final_confirmation" {
-            return true
+            guard let inspection else { return true }
+            return stageAllowsApprovalGate(for: inspection, detail: detail)
         }
         let haystack = "\(actionName) \(detail)".lowercased()
-        return finalConfirmationKeywords.contains { haystack.contains($0) }
+        guard finalConfirmationKeywords.contains(where: { haystack.contains($0) }) else {
+            return false
+        }
+        guard let inspection else { return true }
+        return stageAllowsApprovalGate(for: inspection, detail: detail)
     }
 
     nonisolated static func highConfidenceFinalBoundary(in inspection: ChromiumInspection) -> ChromiumTransactionalBoundary? {
@@ -34,6 +44,7 @@ enum BrowserTransactionalGuard {
                     && !isPromotionalOrDiscoveryLabel($0.label)
                     && !isNonTransactionalSavedItemAction($0.label)
                     && !isDiscoveryNavigationLabel($0.label)
+                    && !isAccountChoiceLabel($0.label)
                     && ($0.confidence >= 85 || isFinalConfirmationLabel($0.label))
             }
             .sorted { lhs, rhs in lhs.confidence > rhs.confidence }
@@ -44,23 +55,43 @@ enum BrowserTransactionalGuard {
         for inspection: ChromiumInspection,
         boundary: ChromiumTransactionalBoundary
     ) -> Bool {
-        guard let bookingFunnel = inspection.bookingFunnel else {
-            return true
+        guard let workflow = BrowserPageAnalyzer.workflow(for: inspection) else { return false }
+        if workflow.hasSuccessSignal || workflow.hasFailureSignal {
+            return false
         }
+        guard workflow.requirements.isEmpty else { return false }
 
-        switch bookingFunnel.stage {
-        case "guest_details", "review", "final_confirmation":
+        switch workflow.stage {
+        case "final_submit":
             return true
-        case "slot_selection":
-            return bookingFunnel.hasFinalConfirmationBoundary
-                && bookingFunnel.selectedParameterCount >= 2
-                && isStrongerThanSlotSelectionLabel(boundary.label)
-        case "booking_widget", "venue_detail", "results", "search", "browse":
+        case "review":
+            return isStrongerThanSlotSelectionLabel(boundary.label)
+        case "verification", "details_form", "selection", "discovery", "browse", "dialog":
             return false
         default:
-            return bookingFunnel.hasPaymentForm
-                || bookingFunnel.hasReviewSummary
-                || bookingFunnel.hasGuestDetailsForm
+            return false
+        }
+    }
+
+    nonisolated private static func stageAllowsApprovalGate(
+        for inspection: ChromiumInspection,
+        detail: String
+    ) -> Bool {
+        guard let workflow = BrowserPageAnalyzer.workflow(for: inspection) else { return true }
+        if workflow.hasSuccessSignal || workflow.hasFailureSignal {
+            return false
+        }
+        guard workflow.requirements.isEmpty else { return false }
+
+        switch workflow.stage {
+        case "final_submit":
+            return true
+        case "review":
+            return isStrongerThanSlotSelectionLabel(detail)
+        case "verification", "details_form", "selection", "discovery", "browse", "dialog":
+            return false
+        default:
+            return false
         }
     }
 
@@ -89,6 +120,11 @@ enum BrowserTransactionalGuard {
         return discoveryNavigationKeywords.contains { lowered.contains($0) }
     }
 
+    nonisolated private static func isAccountChoiceLabel(_ label: String) -> Bool {
+        let lowered = label.lowercased()
+        return accountChoiceKeywords.contains { lowered.contains($0) }
+    }
+
     nonisolated private static func isStrongerThanSlotSelectionLabel(_ label: String) -> Bool {
         let lowered = label.lowercased()
         return strongerLateStageKeywords.contains { lowered.contains($0) }
@@ -112,7 +148,9 @@ enum BrowserTransactionalGuard {
         "purchase",
         "pay",
         "confirm",
+        "confirm reservation",
         "complete booking",
+        "complete reservation",
         "place order",
         "book now",
         "finalize"
@@ -151,9 +189,23 @@ enum BrowserTransactionalGuard {
         "view more"
     ]
 
+    nonisolated private static let accountChoiceKeywords = [
+        "use email instead",
+        "continue with email",
+        "continue with phone",
+        "phone number",
+        "verify your account",
+        "verify account",
+        "sign in",
+        "log in",
+        "login"
+    ]
+
     nonisolated private static let strongerLateStageKeywords = [
         "confirm",
+        "confirm reservation",
         "complete booking",
+        "complete reservation",
         "place order",
         "finalize",
         "pay",

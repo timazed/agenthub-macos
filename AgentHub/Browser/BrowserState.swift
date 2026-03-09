@@ -20,6 +20,9 @@ struct ChromiumInteractiveElement: Codable, Equatable, Identifiable {
     let href: String?
     let purpose: String?
     let groupLabel: String?
+    let isRequired: Bool
+    let isSelected: Bool
+    let validationMessage: String?
     let priority: Int
 }
 
@@ -30,7 +33,12 @@ struct ChromiumSemanticFormField: Codable, Equatable, Identifiable {
     let controlType: String
     let value: String?
     let options: [String]
+    let autocomplete: String?
+    let inputMode: String?
+    let fieldPurpose: String?
     let isRequired: Bool
+    let isSelected: Bool
+    let validationMessage: String?
 }
 
 struct ChromiumSemanticForm: Codable, Equatable, Identifiable {
@@ -118,6 +126,20 @@ struct ChromiumDatePickerSemanticState: Codable, Equatable, Identifiable {
     let navigationActions: [String]
 }
 
+struct ChromiumSemanticNotice: Codable, Equatable, Identifiable {
+    let id: String
+    let kind: String
+    let label: String
+    let selector: String
+}
+
+struct ChromiumStepIndicator: Codable, Equatable, Identifiable {
+    let id: String
+    let label: String
+    let selector: String
+    let isCurrent: Bool
+}
+
 struct ChromiumTransactionalBoundary: Codable, Equatable, Identifiable {
     let id: String
     let kind: String
@@ -170,6 +192,8 @@ struct ChromiumInspection: Codable, Equatable {
     let controlGroups: [ChromiumSemanticControlGroup]
     let autocompleteSurfaces: [ChromiumAutocompleteSurface]
     let datePickers: [ChromiumDatePickerSemanticState]
+    let notices: [ChromiumSemanticNotice]
+    let stepIndicators: [ChromiumStepIndicator]
     let primaryActions: [ChromiumSemanticAction]
     let transactionalBoundaries: [ChromiumTransactionalBoundary]
     let semanticTargets: [ChromiumSemanticTarget]

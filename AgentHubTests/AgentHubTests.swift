@@ -123,6 +123,65 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserApprovalResponseParserRecognizesAffirmativeReplies() throws {
+        let yes = try #require(BrowserApprovalResponseParser.parse("yes"))
+        #expect(yes.approved)
+        #expect(yes.phoneNumber == nil)
+
+        let goAhead = try #require(BrowserApprovalResponseParser.parse("go ahead and do it"))
+        #expect(goAhead.approved)
+        #expect(goAhead.phoneNumber == nil)
+
+        let reservation = try #require(BrowserApprovalResponseParser.parse("make the reservation"))
+        #expect(reservation.approved)
+        #expect(reservation.phoneNumber == nil)
+    }
+
+    @Test
+    func browserApprovalResponseParserRecognizesNegativeReplies() throws {
+        let no = try #require(BrowserApprovalResponseParser.parse("no"))
+        #expect(no.approved == false)
+
+        let reject = try #require(BrowserApprovalResponseParser.parse("reject it"))
+        #expect(reject.approved == false)
+
+        let stop = try #require(BrowserApprovalResponseParser.parse("do not continue"))
+        #expect(stop.approved == false)
+    }
+
+    @Test
+    func browserApprovalResponseParserExtractsPhoneNumber() throws {
+        let response = try #require(BrowserApprovalResponseParser.parse("yes using my number 4244134321"))
+
+        #expect(response.approved)
+        #expect(response.phoneNumber == "4244134321")
+    }
+
+    @Test
+    func browserSessionFollowUpParserExtractsVerificationCode() throws {
+        let followUp = try #require(BrowserSessionFollowUpParser.parse("use the verification code 957244"))
+
+        #expect(followUp.verificationCode == "957244")
+        #expect(followUp.phoneNumber == nil)
+    }
+
+    @Test
+    func browserSessionFollowUpParserExtractsEmailAndName() throws {
+        let followUp = try #require(BrowserSessionFollowUpParser.parse("yes use my email tima@example.com and my name is Tima Zelinsky"))
+
+        #expect(followUp.email == "tima@example.com")
+        #expect(followUp.fullName == "Tima Zelinsky")
+    }
+
+    @Test
+    func browserSessionFollowUpParserExtractsAddressLine2AndConsent() throws {
+        let followUp = try #require(BrowserSessionFollowUpParser.parse("apt 4B and yes I agree to the required consent"))
+
+        #expect(followUp.addressLine2 == "4B and yes I agree to the required consent" || followUp.addressLine2 == "4B")
+        #expect(followUp.consentDecision == true)
+    }
+
+    @Test
     func openTableBookingIntentPreservesMonthAndDay() throws {
         let intent = ChatBrowserIntent.parse("make a reservation for me on opentable. Sake House By Hikari. culver city. march 9. 7pm. 2 people.")
 
@@ -137,10 +196,13 @@ struct AgentHubTests {
         let genericIntent = intent.genericBrowserIntent
 
         #expect(genericIntent.initialURL == "https://www.opentable.com")
-        #expect(genericIntent.goalText.lowercased().contains("find sake house by hikari"))
+        #expect(genericIntent.goalFocusTerms == ["Sake House By Hikari", "culver city"])
+        #expect(genericIntent.providedData == nil)
+        #expect(genericIntent.goalText.lowercased().contains("first open the exact venue page for sake house by hikari"))
         #expect(genericIntent.goalText.lowercased().contains("stop before the final reservation confirmation step"))
         #expect(genericIntent.goalText.lowercased().contains("tomorrow"))
         #expect(genericIntent.goalText.lowercased().contains("7:30pm"))
+        #expect(genericIntent.goalText.lowercased().contains("only after reaching the exact venue page"))
         #expect(genericIntent.goalText.lowercased().contains("choose the closest available reservation slot"))
     }
 
@@ -155,6 +217,15 @@ struct AgentHubTests {
         }
         #expect(intent.initialURL == "https://www.booking.com")
         #expect(intent.goalText.lowercased().contains("tokyo"))
+    }
+
+    @Test
+    func genericBrowserIntentCapturesInlineProfileData() throws {
+        let intent = try #require(GenericBrowserChatIntent.parse("book a hotel in tokyo on booking.com using my email tima@example.com and my number 4244134321"))
+
+        #expect(intent.initialURL == "https://www.booking.com")
+        #expect(intent.providedData?.email == "tima@example.com")
+        #expect(intent.providedData?.phoneNumber == "4244134321")
     }
 
     @Test
@@ -245,14 +316,16 @@ struct AgentHubTests {
             BrowserTransactionalGuard.approvalShouldBeRequired(
                 actionName: "submit_form",
                 detail: "Confirm booking",
-                transactionalKind: "final_confirmation"
+                transactionalKind: "final_confirmation",
+                inspection: nil
             )
         )
         #expect(
             BrowserTransactionalGuard.approvalShouldBeRequired(
                 actionName: "click_selector",
                 detail: "Place order",
-                transactionalKind: nil
+                transactionalKind: nil,
+                inspection: nil
             )
         )
     }
@@ -263,8 +336,71 @@ struct AgentHubTests {
             BrowserTransactionalGuard.approvalShouldBeRequired(
                 actionName: "submit_form",
                 detail: "Continue to review",
-                transactionalKind: "review_step"
+                transactionalKind: "review_step",
+                inspection: nil
             ) == false
+        )
+    }
+
+    @Test
+    func browserTransactionalGuardDoesNotRequireApprovalForVenuePageSlotSelection() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "results",
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "results",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: false,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: false,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(
+            BrowserTransactionalGuard.approvalShouldBeRequired(
+                actionName: "click_selector",
+                detail: "Reserve table at Sake House By Hikari at 7:00 PM on March 9, for a party of 2",
+                transactionalKind: "final_confirmation",
+                inspection: inspection
+            ) == false
+        )
+    }
+
+    @Test
+    func browserTransactionalGuardRequiresApprovalAtReviewStageReservationConfirmation() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "review",
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(
+            BrowserTransactionalGuard.approvalShouldBeRequired(
+                actionName: "click_selector",
+                detail: "Confirm reservation",
+                transactionalKind: "final_confirmation",
+                inspection: inspection
+            )
         )
     }
 
@@ -349,6 +485,26 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserTransactionalGuardIgnoresAuthChoiceActions() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Use email instead",
+                    selector: "button.use-email-instead",
+                    confidence: 95
+                )
+            ]
+        )
+
+        #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection) == nil)
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "make a reservation on opentable", inspection: inspection) == false)
+    }
+
+    @Test
     func browserTransactionalGuardDoesNotAutoStopAtVenueDetailReserveCTA() throws {
         let inspection = sampleInspection(
             destinationSelector: "#destination",
@@ -414,6 +570,82 @@ struct AgentHubTests {
 
         #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection)?.selector == "div.results-card-cta")
         #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "make a reservation on opentable", inspection: inspection) == false)
+    }
+
+    @Test
+    func browserSemanticResolverPrefersVisibleReservationSlots() throws {
+        let slotTarget = ChromiumSemanticTarget(
+            id: "target-slot-0",
+            kind: "slot_option",
+            label: "Reserve table at Sake House By Hikari at 7:00 PM on March 9, for a party of 2",
+            selector: "button.slot-700",
+            purpose: "time",
+            groupLabel: "available reservation slots",
+            transactionalKind: "booking_slot",
+            priority: 140
+        )
+        let genericReserveTarget = ChromiumSemanticTarget(
+            id: "target-primary-0",
+            kind: "primary_action",
+            label: "Reserve for Others",
+            selector: "button.reserve-for-others",
+            purpose: "confirm",
+            groupLabel: nil,
+            transactionalKind: "final_confirmation",
+            priority: 90
+        )
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "results",
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "slot_selection",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: false,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            ),
+            semanticTargets: [genericReserveTarget, slotTarget],
+            booking: ChromiumBookingSemanticState(
+                partySizeOptions: [],
+                dateOptions: [],
+                timeOptions: ["7:00 PM"],
+                availableSlots: [
+                    ChromiumBookingSlot(
+                        id: "slot-0",
+                        label: slotTarget.label,
+                        selector: slotTarget.selector,
+                        score: 155
+                    )
+                ],
+                confirmationButtons: [genericReserveTarget.label]
+            )
+        )
+
+        let resolution = BrowserSemanticResolver.resolve(
+            BrowserAgentCommand(
+                action: .clickText,
+                url: nil,
+                selector: nil,
+                text: "7:00 PM",
+                key: nil,
+                timeoutSeconds: nil,
+                deltaY: nil,
+                label: "7:00 PM reservation slot",
+                finalResponse: nil,
+                rationale: "Pick the visible reservation slot."
+            ),
+            inspection: inspection
+        )
+
+        #expect(resolution.selector == "button.slot-700")
+        #expect(resolution.transactionalKind == "booking_slot")
     }
 
     @Test
@@ -514,6 +746,16 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserVerificationAutofillScriptPromotesOneTimeCodeAutocomplete() throws {
+        let script = ChromiumBrowserScripts.prepareVerificationCodeAutofill
+
+        #expect(script.contains("one-time-code"))
+        #expect(script.contains("inputmode"))
+        #expect(script.contains("bestField.click"))
+        #expect(script.contains("bestField.focus"))
+    }
+
+    @Test
     func browserSearchFillScriptFallsBackToTextboxAndSearchTriggers() throws {
         let script = ChromiumBrowserScripts.fillVisibleSearchField(query: "Sake House By Hikari culver city")
 
@@ -548,7 +790,7 @@ struct AgentHubTests {
 
         #expect(script.contains("isDiscoveryNavigation"))
         #expect(script.contains("view full list"))
-        #expect(script.contains("hasStrongFinalIntent || hasTransactionalContainer || hrefHasTransactionalKeyword"))
+        #expect(script.contains("(labelHasFinalKeyword || hrefHasTransactionalKeyword)"))
     }
 
     @Test
@@ -561,6 +803,17 @@ struct AgentHubTests {
         #expect(script.contains("review(?: reservation| booking| details| step| summary)"))
         #expect(script.contains("hasLateStageBookingStructure"))
         #expect(script.contains("isStandaloneControl"))
+    }
+
+    @Test
+    func browserInspectionScriptPromotesReviewPageCompleteReservationAsFinalConfirmation() throws {
+        let script = ChromiumBrowserScripts.inspectPage
+
+        #expect(script.contains("hasReviewPageSignal"))
+        #expect(script.contains("complete(?: booking| order| reservation)?"))
+        #expect(script.contains("window.location.pathname"))
+        #expect(script.contains("isAccountChoiceAction"))
+        #expect(script.contains("use email instead"))
     }
 
     @Test
@@ -578,12 +831,19 @@ struct AgentHubTests {
         let script = ChromiumBrowserScripts.inspectPage
 
         #expect(script.contains("const bookingFunnelStage"))
+        #expect(script.contains("const notices = Array.from"))
+        #expect(script.contains("const stepIndicators = Array.from"))
         #expect(script.contains("hasGuestDetailsForm"))
         #expect(script.contains("selectedParameterCount"))
         #expect(script.contains("bookingFunnel"))
         #expect(script.contains("hasDenseResults"))
         #expect(script.contains("transactionalSlotContainer"))
         #expect(script.contains("hasTimeLikeLabel"))
+        #expect(script.contains("hasReserveTableLabel"))
+        #expect(script.contains("kind: \"slot_option\""))
+        #expect(script.contains("transactionalKind: \"booking_slot\""))
+        #expect(script.contains("select a time|available times?|choose a time|pick a time"))
+        #expect(script.contains("inlineTimeButtonCount"))
     }
 
     @Test
@@ -610,6 +870,291 @@ struct AgentHubTests {
         #expect(inspection.bookingFunnel?.stage == "review")
         #expect(inspection.bookingFunnel?.selectedParameterCount == 3)
         #expect(inspection.bookingFunnel?.hasSlotSelection == true)
+    }
+
+    @Test
+    func transactionalGuardTreatsCompleteReservationAsHighConfidenceBoundary() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 70
+                )
+            ],
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let boundary = BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection)
+
+        #expect(boundary?.label == "Complete reservation")
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "Make a reservation for me", inspection: inspection))
+    }
+
+    @Test
+    func browserTransactionalGuardDoesNotAutoStopDuringVerificationStep() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Verify your phone",
+            url: "https://www.opentable.com/booking/details",
+            pageStage: "final_confirmation",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [
+                ChromiumInteractiveElement(
+                    id: "element-0",
+                    role: "input",
+                    label: "Verification code",
+                    text: "",
+                selector: "input[name=\"verificationCode\"]",
+                value: nil,
+                href: nil,
+                purpose: nil,
+                groupLabel: "Verification",
+                isRequired: true,
+                isSelected: false,
+                validationMessage: nil,
+                priority: 95
+            )
+        ],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "form-0",
+                    label: "Verification",
+                    selector: "form.verify",
+                    submitLabel: "Continue",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "field-0",
+                            label: "Verification code",
+                            selector: "input[name=\"verificationCode\"]",
+                            controlType: "one-time-code",
+                            value: nil,
+                            options: [],
+                            autocomplete: "one-time-code",
+                            inputMode: "numeric",
+                            fieldPurpose: "verification_code",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-0",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "Make a reservation for me", inspection: inspection) == false)
+        #expect(BrowserTransactionalGuard.approvalShouldBeRequired(
+            actionName: "click_selector",
+            detail: "Complete reservation",
+            transactionalKind: "final_confirmation",
+            inspection: inspection
+        ) == false)
+    }
+
+    @Test
+    func browserPageAnalyzerInfersMissingPhoneRequirement() throws {
+        let inspectionWithPhone = ChromiumInspection(
+            title: "Checkout details",
+            url: "https://example.com/checkout",
+            pageStage: "form",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "contact-form",
+                    label: "Contact details",
+                    selector: "form.contact",
+                    submitLabel: "Continue",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "field-phone",
+                            label: "Phone number",
+                            selector: "input[name=\"phone\"]",
+                            controlType: "tel",
+                            value: nil,
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: "Phone number is required."
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [],
+            transactionalBoundaries: [],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: nil
+        )
+
+        let requirements = BrowserPageAnalyzer.requirements(for: inspectionWithPhone)
+        let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspectionWithPhone))
+
+        #expect(requirements.first?.kind == "phone_number")
+        #expect(workflow.stage == "details_form")
+        #expect(workflow.readyToContinue == false)
+    }
+
+    @Test
+    func browserPageAnalyzerInfersFinalSubmitWhenRequirementsAreSatisfied() throws {
+        let inspection = ChromiumInspection(
+            title: "Complete reservation",
+            url: "https://example.com/review",
+            pageStage: "final_confirmation",
+            formCount: 0,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 98
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: nil
+        )
+
+        let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspection))
+
+        #expect(workflow.stage == "final_submit")
+        #expect(workflow.readyToContinue)
+        #expect(workflow.finalBoundaryLabel == "Complete reservation")
+    }
+
+    @Test
+    func browserPageAnalyzerInfersVerificationFromStepIndicatorsAndNotices() throws {
+        let inspection = ChromiumInspection(
+            title: "Verify your code",
+            url: "https://example.com/verify",
+            pageStage: "form",
+            formCount: 0,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [
+                ChromiumSemanticNotice(
+                    id: "notice-0",
+                    kind: "info",
+                    label: "Enter the 6-digit verification code we texted you",
+                    selector: ".verification-message"
+                )
+            ],
+            stepIndicators: [
+                ChromiumStepIndicator(
+                    id: "step-0",
+                    label: "Verify phone",
+                    selector: ".step.verify",
+                    isCurrent: true
+                )
+            ],
+            primaryActions: [],
+            transactionalBoundaries: [],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: nil
+        )
+
+        let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspection))
+        #expect(workflow.stage == "verification")
     }
 
     @Test
@@ -654,7 +1199,9 @@ private func sampleInspection(
     destinationSelector: String,
     pageStage: String = "form",
     boundaries: [ChromiumTransactionalBoundary] = [],
-    bookingFunnel: ChromiumBookingFunnelState? = nil
+    bookingFunnel: ChromiumBookingFunnelState? = nil,
+    semanticTargets: [ChromiumSemanticTarget]? = nil,
+    booking: ChromiumBookingSemanticState? = nil
 ) -> ChromiumInspection {
     ChromiumInspection(
         title: "Travel Search",
@@ -673,6 +1220,9 @@ private func sampleInspection(
                 href: nil,
                 purpose: "location",
                 groupLabel: "Search form",
+                isRequired: true,
+                isSelected: false,
+                validationMessage: nil,
                 priority: 90
             )
         ],
@@ -690,7 +1240,12 @@ private func sampleInspection(
                         controlType: "text",
                         value: nil,
                         options: [],
-                        isRequired: true
+                        autocomplete: nil,
+                        inputMode: nil,
+                        fieldPurpose: "location",
+                        isRequired: true,
+                        isSelected: false,
+                        validationMessage: nil
                     )
                 ]
             )
@@ -709,9 +1264,11 @@ private func sampleInspection(
             )
         ],
         datePickers: [],
+        notices: [],
+        stepIndicators: [],
         primaryActions: [],
         transactionalBoundaries: boundaries,
-        semanticTargets: [
+        semanticTargets: semanticTargets ?? [
             ChromiumSemanticTarget(
                 id: "target-destination",
                 kind: "autocomplete",
@@ -723,7 +1280,7 @@ private func sampleInspection(
                 priority: 95
             )
         ],
-        booking: nil,
+        booking: booking,
         bookingFunnel: bookingFunnel
     )
 }

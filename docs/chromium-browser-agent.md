@@ -6,7 +6,7 @@ The embedded Chromium browser now supports two layers:
 
 - A generic Codex-driven browser loop for search/booking tasks across restaurant, hotel, flight, and checkout flows.
 - Deterministic OpenTable controllers retained only as prototype/reference tooling inside the Chromium pane.
-- A generic Codex-driven browser loop that operates against semantic page inspection rather than raw selectors alone.
+- A generic semantic browser substrate that can infer workflow state, missing requirements, verification blockers, and final-submit readiness from page inspection instead of relying on site-specific booking branches.
 
 ## Generic Agent Capabilities
 
@@ -39,6 +39,8 @@ The generic browser loop currently supports:
 
 - `pageStage`
 - `bookingFunnel`
+- `notices`
+- `stepIndicators`
 - `interactiveElements`
 - `forms`
 - `resultLists`
@@ -55,6 +57,16 @@ The generic browser loop currently supports:
 The flattened `semanticTargets` graph exists to support runtime-side target resolution and stale-target recovery without forcing the model to rediscover the page after each DOM mutation.
 The new `bookingFunnel` model captures reusable late-stage signals such as selected date/time/party, booking-widget presence, slot selection, guest-details forms, review/payment forms, and whether the current page has truly progressed far enough to treat a `reserve/book` CTA as a confirmation boundary.
 The generic date-picker action now matches normalized targets such as `2026-03-09` against visible calendar labels and day cells, and result-card action ranking now prefers venue/detail navigation over map/help/share controls.
+Inspection also emits normalized field metadata such as `autocomplete`, `inputMode`, `fieldPurpose`, `isRequired`, `isSelected`, and `validationMessage`, which is what the generic requirement engine uses to infer missing profile data, verification codes, consents, payment fields, and validation errors.
+
+## Generic Requirements And Workflow
+
+`BrowserPageAnalyzer` now derives two reusable models from the live page:
+
+- `requirements`: missing phone/email/name/address/payment/OTP/consent/date/time/guest fields
+- `workflow`: `discovery`, `selection`, `details_form`, `verification`, `review`, `final_submit`, `success`, `failure`, `dialog`, or `browse`
+
+This is the layer that lets the browser agent ask for exactly the missing data when it cannot proceed autonomously, instead of relying on OpenTable-specific fallbacks.
 
 ## Runtime Behavior
 
@@ -68,6 +80,38 @@ The generic loop in `ChatSessionService` now:
 - captures browser snapshots through the controller
 - persists browser-run artifacts under `~/.agenthub/logs/browser-agent-runs/<session-id>/...`
 - captures an automatic final snapshot when a browser run stops, fails, or reaches a confirmation boundary
+- pauses on missing promptable requirements and asks the user only for the exact missing data
+- auto-fills known inline request data or saved persona contact data into semantic form fields before asking again
+- keeps follow-up messages attached to the active Chromium session first, so later replies like phone/email/address/OTP/`yes` continue the current page instead of restarting the goal
+
+## Profile And Follow-Up Data
+
+The browser loop now accepts structured data from two generic sources:
+
+- inline user data parsed from the original goal or later follow-up messages
+- saved persona contact data loaded from `PersonaManager`
+
+Supported generic fields currently include:
+
+- full name / first name / last name
+- phone number
+- email
+- address line 1 / address line 2
+- city / state / postal code / country
+- verification code
+- consent toggles
+
+This means flows like checkout, inspections, booking forms, or grocery ordering can continue from the current page using the same generic continuation path.
+
+## Verification And OTP
+
+The runtime now has a generic verification-code path:
+
+- verification blockers are inferred from page semantics, notices, and step indicators
+- follow-up messages containing OTP digits are applied to the active CEF page
+- the browser can prepare the focused verification field for native macOS one-time-code autofill by setting `autocomplete="one-time-code"`, numeric input mode, promoting the embedded Chromium text-input view to first responder, and nudging AppKit’s text-input context to surface completion candidates
+
+This is best-effort native OTP support inside CEF; it does not read Messages directly.
 
 ## Transaction Safety
 
@@ -88,6 +132,10 @@ Unit coverage now includes:
 - semantic retargeting for stale selectors
 - approval classification and final-boundary detection
 - booking-funnel stage inference and stage-aware final-boundary gating
+- generic missing-requirement inference
+- generic workflow-state inference
+- inline follow-up data parsing for profile fields and consent
+- verification-code autofill preparation
 
 ## Live Smoke Harness
 
