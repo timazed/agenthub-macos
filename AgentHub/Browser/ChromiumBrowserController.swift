@@ -310,6 +310,17 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         state
     }
 
+    func browserDebugArtifacts() -> ChromiumBrowserDebugArtifacts {
+        ChromiumBrowserDebugArtifacts(
+            state: state,
+            lastInspection: lastInspection,
+            actionTrace: actionTrace,
+            snapshots: snapshots,
+            flowStatusSummary: flowStatusSummary(),
+            approvalStatusSummary: approvalStatusSummary()
+        )
+    }
+
     func openURLForAgent(_ url: String) async throws -> ChromiumBrowserState {
         let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedURL.isEmpty else {
@@ -1274,16 +1285,11 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
     }
 
     private func shouldRequireApproval(actionName: String, detail: String, transactionalKind: String?) -> Bool {
-        if transactionalKind == "final_confirmation" {
-            return true
-        }
-        let haystack = "\(actionName) \(detail)".lowercased()
-        return haystack.contains("reserve")
-            || haystack.contains("purchase")
-            || haystack.contains("pay")
-            || haystack.contains("confirm")
-            || haystack.contains("complete booking")
-            || haystack.contains("place order")
+        BrowserTransactionalGuard.approvalShouldBeRequired(
+            actionName: actionName,
+            detail: detail,
+            transactionalKind: transactionalKind
+        )
     }
 
     private func requestApprovalIfNeeded(
@@ -1306,6 +1312,28 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         }
         if lastApprovalDecision == false {
             throw ChromiumBrowserActionError(message: "Browser action rejected by user.")
+        }
+    }
+
+    private func flowStatusSummary() -> String {
+        switch flowStatus {
+        case .idle:
+            return "idle"
+        case let .running(message):
+            return "running: \(message)"
+        case let .succeeded(message):
+            return "succeeded: \(message)"
+        case let .failed(message):
+            return "failed: \(message)"
+        }
+    }
+
+    private func approvalStatusSummary() -> String {
+        switch approvalStatus {
+        case .idle:
+            return "idle"
+        case let .pending(pending):
+            return "pending: \(pending.actionName) - \(pending.detail)"
         }
     }
 }

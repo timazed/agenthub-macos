@@ -200,7 +200,7 @@ struct ChromiumDialogProbe: Codable, Equatable {
     let selector: String
 }
 
-enum ChromiumActionStatus: String, Equatable {
+enum ChromiumActionStatus: String, Codable, Equatable {
     case running
     case succeeded
     case failed
@@ -266,23 +266,57 @@ struct ChromiumRestaurantBookingFlowResult: Equatable {
     let confirmationButtons: [String]
 }
 
-struct ChromiumActionTraceEntry: Identifiable, Equatable {
-    let id = UUID()
-    let createdAt = Date()
+struct ChromiumActionTraceEntry: Codable, Identifiable, Equatable {
+    let id: UUID
+    let createdAt: Date
     let name: String
     let detail: String
     let status: ChromiumActionStatus
     let attempt: Int
     let url: String
+
+    init(
+        id: UUID = UUID(),
+        createdAt: Date = Date(),
+        name: String,
+        detail: String,
+        status: ChromiumActionStatus,
+        attempt: Int,
+        url: String
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.name = name
+        self.detail = detail
+        self.status = status
+        self.attempt = attempt
+        self.url = url
+    }
 }
 
-struct ChromiumSnapshotArtifact: Identifiable, Equatable {
-    let id = UUID()
+struct ChromiumSnapshotArtifact: Codable, Identifiable, Equatable {
+    let id: UUID
     let createdAt: Date
     let label: String
     let filePath: String
     let url: String
     let title: String
+
+    init(
+        id: UUID = UUID(),
+        createdAt: Date,
+        label: String,
+        filePath: String,
+        url: String,
+        title: String
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.label = label
+        self.filePath = filePath
+        self.url = url
+        self.title = title
+    }
 }
 
 struct ChromiumPendingApproval: Identifiable, Equatable {
@@ -297,4 +331,13 @@ struct ChromiumLogEntry: Identifiable, Equatable {
     let id = UUID()
     let createdAt = Date()
     let message: String
+}
+
+struct ChromiumBrowserDebugArtifacts: Codable, Equatable {
+    let state: ChromiumBrowserState
+    let lastInspection: ChromiumInspection?
+    let actionTrace: [ChromiumActionTraceEntry]
+    let snapshots: [ChromiumSnapshotArtifact]
+    let flowStatusSummary: String
+    let approvalStatusSummary: String
 }

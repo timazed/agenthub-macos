@@ -1,0 +1,42 @@
+[
+  {
+    "id": "restaurant-opentable",
+    "category": "restaurant",
+    "title": "OpenTable restaurant discovery and booking boundary",
+    "goalText": "Use the browser to find a restaurant on OpenTable, reach the venue page, and stop before the final reservation confirmation step.",
+    "initialURL": "https://www.opentable.com",
+    "matchAny": ["opentable", "reservation", "restaurant"],
+    "expectedOutcomes": ["done", "stopped_at_confirmation_boundary"],
+    "notes": "Use the generic browser runtime first. The deterministic OpenTable path is still acceptable as a fallback reference."
+  },
+  {
+    "id": "hotel-booking",
+    "category": "hotel",
+    "title": "Hotel search and property flow",
+    "goalText": "Use the browser to search for a hotel on Booking.com, open a property page, and stop before any final confirmation or payment step.",
+    "initialURL": "https://www.booking.com",
+    "matchAny": ["booking.com", "hotel", "property"],
+    "expectedOutcomes": ["done", "stopped_at_confirmation_boundary"],
+    "notes": "Prefer generic semantics for destination, dates, guests, results, and property selection."
+  },
+  {
+    "id": "flight-google-flights",
+    "category": "flight",
+    "title": "Flight search and itinerary selection",
+    "goalText": "Use the browser to search for flights on Google Flights or Kayak and make progress to itinerary selection without confirming any purchase.",
+    "initialURL": "https://www.google.com/travel/flights",
+    "matchAny": ["google flights", "kayak", "flight"],
+    "expectedOutcomes": ["done", "stopped_at_confirmation_boundary"],
+    "notes": "Validate generic handling of origin, destination, dates, passenger controls, and result cards."
+  },
+  {
+    "id": "checkout-amazon",
+    "category": "checkout",
+    "title": "Checkout-adjacent transaction boundary",
+    "goalText": "Use the browser to navigate an e-commerce checkout-style flow and stop at the final place-order boundary without confirming the purchase.",
+    "initialURL": "https://www.amazon.com",
+    "matchAny": ["amazon", "checkout", "place order"],
+    "expectedOutcomes": ["stopped_at_confirmation_boundary", "done"],
+    "notes": "This scenario exists to validate generic final-boundary detection beyond travel sites."
+  }
+]

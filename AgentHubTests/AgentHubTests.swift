@@ -177,13 +177,105 @@ struct AgentHubTests {
         #expect(resolution?.selector == "#destination-new")
         #expect(resolution?.label == "Destination")
     }
+
+    @Test
+    func browserTransactionalGuardAutoStopsAtFinalConfirmationBoundary() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Confirm booking",
+                    selector: "#confirm-booking",
+                    confidence: 95
+                )
+            ]
+        )
+
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "book this hotel in tokyo", inspection: inspection))
+        #expect(BrowserTransactionalGuard.stopReason(goalText: "book this hotel in tokyo", inspection: inspection)?.contains("Confirm booking") == true)
+    }
+
+    @Test
+    func browserTransactionalGuardDoesNotAutoStopForNonTransactionalGoal() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Confirm booking",
+                    selector: "#confirm-booking",
+                    confidence: 95
+                )
+            ]
+        )
+
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "inspect this page", inspection: inspection) == false)
+    }
+
+    @Test
+    func browserTransactionalGuardRequiresApprovalForFinalConfirmationActions() throws {
+        #expect(
+            BrowserTransactionalGuard.approvalShouldBeRequired(
+                actionName: "submit_form",
+                detail: "Confirm booking",
+                transactionalKind: "final_confirmation"
+            )
+        )
+        #expect(
+            BrowserTransactionalGuard.approvalShouldBeRequired(
+                actionName: "click_selector",
+                detail: "Place order",
+                transactionalKind: nil
+            )
+        )
+    }
+
+    @Test
+    func browserTransactionalGuardIgnoresReviewOnlyActions() throws {
+        #expect(
+            BrowserTransactionalGuard.approvalShouldBeRequired(
+                actionName: "submit_form",
+                detail: "Continue to review",
+                transactionalKind: "review_step"
+            ) == false
+        )
+    }
+
+    @Test
+    func browserTransactionalGuardAcceptsStrongFinalLabelsEvenBelowConfidenceThreshold() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "review",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Book now",
+                    selector: "#book-now",
+                    confidence: 70
+                )
+            ]
+        )
+
+        #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection)?.selector == "#book-now")
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "book this flight", inspection: inspection))
+    }
 }
 
-private func sampleInspection(destinationSelector: String) -> ChromiumInspection {
+private func sampleInspection(
+    destinationSelector: String,
+    pageStage: String = "form",
+    boundaries: [ChromiumTransactionalBoundary] = []
+) -> ChromiumInspection {
     ChromiumInspection(
         title: "Travel Search",
         url: "https://example.com/search",
-        pageStage: "form",
+        pageStage: pageStage,
         formCount: 1,
         hasSearchField: true,
         interactiveElements: [
@@ -234,7 +326,7 @@ private func sampleInspection(destinationSelector: String) -> ChromiumInspection
         ],
         datePickers: [],
         primaryActions: [],
-        transactionalBoundaries: [],
+        transactionalBoundaries: boundaries,
         semanticTargets: [
             ChromiumSemanticTarget(
                 id: "target-destination",

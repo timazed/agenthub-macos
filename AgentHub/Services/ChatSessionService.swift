@@ -470,173 +470,236 @@ final class ChatSessionService {
             ? "The browser can open \(intent.initialURL!)."
             : "No browser action has run yet."
         var latestInspection: ChromiumInspection?
+        var inspectionHistory: [ChromiumInspection] = []
         var recentHistory: [String] = []
         var actionSignatureCounts: [String: Int] = [:]
         var lastProgressSnapshot: BrowserProgressSnapshot?
         var stalledStepCount = 0
         var recoveryCount = 0
         let maxSteps = 12
-
-        for step in 1...maxSteps {
-            let state = await MainActor.run { browserController.browserSnapshot() }
-            let prompt = buildBrowserAgentPrompt(
-                goalText: intent.goalText,
-                initialURL: intent.initialURL,
-                state: state,
-                inspection: latestInspection,
-                lastResultSummary: lastResultSummary,
-                recentHistory: recentHistory,
-                step: step,
-                maxSteps: maxSteps
-            )
-
-            let turn = try await performCodexTurn(
-                prompt: prompt,
-                session: &session,
-                config: launchConfig,
-                forwardAssistantLines: false
-            )
-
-            if turn.result.exitCode != 0 {
-                let message = turn.stderrText.isEmpty
-                    ? "Browser agent turn failed with exit code \(turn.result.exitCode)"
-                    : turn.stderrText
-                throw ChromiumBrowserActionError(message: message)
-            }
-
-            let parsed = parseBrowserAssistantResponse(turn.assistantText)
-            if !parsed.displayText.isEmpty {
-                emit(.assistantDelta(parsed.displayText))
-            }
-
-            guard let command = parsed.command else {
-                throw ChromiumBrowserActionError(message: "Codex did not return a browser command.")
-            }
-
-            let signature = browserActionSignature(command, url: state.urlString)
-            actionSignatureCounts[signature, default: 0] += 1
-            if actionSignatureCounts[signature, default: 0] >= 3 {
-                let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
-                latestInspection = refreshedInspection
-                lastResultSummary = browserRecoverySummary(
-                    for: command,
-                    message: "The same action repeated without changing the page.",
-                    inspection: refreshedInspection,
-                    progressChanged: false
-                )
-                recentHistory.append("Recovery: repeated \(command.action.rawValue) without progress.")
-                emit(.assistantDelta(lastResultSummary))
-                actionSignatureCounts[signature] = 0
-                stalledStepCount = 0
-                recoveryCount += 1
-                if recoveryCount >= 4 {
-                    throw ChromiumBrowserActionError(message: "Browser agent is stuck on stale targets and repeated replans.")
-                }
-                continue
-            }
-
-            if command.action == .done {
-                let finalText = parsed.displayText.isEmpty
-                    ? (command.finalResponse?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Finished the browser task.")
-                    : parsed.displayText
-                let assistantMessage = Message(
-                    id: UUID(),
-                    sessionId: session.id,
-                    role: .assistant,
-                    text: finalText,
-                    source: .codexStdout,
-                    createdAt: Date()
-                )
-                try sessionStore.appendMessage(assistantMessage)
-                return
-            }
-
-            let previousProgressSnapshot = browserProgressSnapshot(state: state, inspection: latestInspection)
-            let execution: BrowserAgentExecutionResult
-            do {
-                execution = try await executeBrowserAgentCommand(command, inspection: latestInspection, controller: browserController)
-            } catch {
-                let message = (error as? ChromiumBrowserActionError)?.message ?? error.localizedDescription
-                guard isRecoverableBrowserError(message) else {
-                    throw error
-                }
-                let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
-                if let recoveredExecution = try await retryBrowserAgentCommandIfPossible(
-                    command,
-                    staleInspection: latestInspection,
-                    refreshedInspection: refreshedInspection,
-                    controller: browserController
-                ) {
-                    latestInspection = recoveredExecution.inspection ?? refreshedInspection
-                    lastResultSummary = recoveredExecution.summary
-                    recentHistory.append("Recovery: \(command.action.rawValue) -> \(recoveredExecution.summary)")
-                    if recentHistory.count > 6 {
-                        recentHistory.removeFirst(recentHistory.count - 6)
-                    }
-                    emit(.assistantDelta(recoveredExecution.summary))
-                    let recoveredState = await MainActor.run { browserController.browserSnapshot() }
-                    lastProgressSnapshot = browserProgressSnapshot(state: recoveredState, inspection: latestInspection)
-                    stalledStepCount = 0
-                    recoveryCount += 1
-                    continue
-                }
-                latestInspection = refreshedInspection
-                let currentState = await MainActor.run { browserController.browserSnapshot() }
-                let refreshedProgressSnapshot = browserProgressSnapshot(state: currentState, inspection: refreshedInspection)
-                lastResultSummary = browserRecoverySummary(
-                    for: command,
-                    message: message,
-                    inspection: refreshedInspection,
-                    progressChanged: refreshedProgressSnapshot != previousProgressSnapshot
-                )
-                recentHistory.append("Recovery: \(command.action.rawValue) -> \(message)")
-                emit(.assistantDelta(lastResultSummary))
-                stalledStepCount = 0
-                recoveryCount += 1
-                if recoveryCount >= 4 {
-                    throw ChromiumBrowserActionError(message: "Browser agent exceeded the recovery budget while trying to re-target the page.")
-                }
-                continue
-            }
-
-            latestInspection = execution.inspection ?? latestInspection
-            lastResultSummary = execution.summary
-            recentHistory.append("Step \(step): \(command.action.rawValue) -> \(execution.summary)")
-            if recentHistory.count > 6 {
-                recentHistory.removeFirst(recentHistory.count - 6)
-            }
-            emit(.assistantDelta(execution.summary))
-
-            let currentState = await MainActor.run { browserController.browserSnapshot() }
-            let progressSnapshot = browserProgressSnapshot(state: currentState, inspection: latestInspection)
-            if progressSnapshot == lastProgressSnapshot && command.action != .inspectPage {
-                stalledStepCount += 1
-            } else {
-                stalledStepCount = 0
-                recoveryCount = 0
-            }
-            lastProgressSnapshot = progressSnapshot
-
-            if stalledStepCount >= 2 {
-                let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
-                latestInspection = refreshedInspection
-                lastResultSummary = browserRecoverySummary(
-                    for: command,
-                    message: "The last actions did not visibly change the page state.",
-                    inspection: refreshedInspection,
-                    progressChanged: false
-                )
-                recentHistory.append("Recovery: refreshed inspection after stalled browser progress.")
-                emit(.assistantDelta(lastResultSummary))
-                stalledStepCount = 0
-                recoveryCount += 1
-                if recoveryCount >= 4 {
-                    throw ChromiumBrowserActionError(message: "Browser agent exceeded the recovery budget after repeated stalled steps.")
-                }
+        func recordInspection(_ inspection: ChromiumInspection?) {
+            guard let inspection else { return }
+            inspectionHistory.append(inspection)
+            if inspectionHistory.count > 20 {
+                inspectionHistory.removeFirst(inspectionHistory.count - 20)
             }
         }
 
-        throw ChromiumBrowserActionError(message: "Browser agent loop exceeded the maximum number of steps.")
+        do {
+            for step in 1...maxSteps {
+                let state = await MainActor.run { browserController.browserSnapshot() }
+                let prompt = buildBrowserAgentPrompt(
+                    goalText: intent.goalText,
+                    initialURL: intent.initialURL,
+                    state: state,
+                    inspection: latestInspection,
+                    lastResultSummary: lastResultSummary,
+                    recentHistory: recentHistory,
+                    step: step,
+                    maxSteps: maxSteps
+                )
+
+                let turn = try await performCodexTurn(
+                    prompt: prompt,
+                    session: &session,
+                    config: launchConfig,
+                    forwardAssistantLines: false
+                )
+
+                if turn.result.exitCode != 0 {
+                    let message = turn.stderrText.isEmpty
+                        ? "Browser agent turn failed with exit code \(turn.result.exitCode)"
+                        : turn.stderrText
+                    throw ChromiumBrowserActionError(message: message)
+                }
+
+                let parsed = parseBrowserAssistantResponse(turn.assistantText)
+                if !parsed.displayText.isEmpty {
+                    emit(.assistantDelta(parsed.displayText))
+                }
+
+                guard let command = parsed.command else {
+                    throw ChromiumBrowserActionError(message: "Codex did not return a browser command.")
+                }
+
+                let signature = browserActionSignature(command, url: state.urlString)
+                actionSignatureCounts[signature, default: 0] += 1
+                if actionSignatureCounts[signature, default: 0] >= 3 {
+                    let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
+                    latestInspection = refreshedInspection
+                    recordInspection(refreshedInspection)
+                    lastResultSummary = browserRecoverySummary(
+                        for: command,
+                        message: "The same action repeated without changing the page.",
+                        inspection: refreshedInspection,
+                        progressChanged: false
+                    )
+                    recentHistory.append("Recovery: repeated \(command.action.rawValue) without progress.")
+                    emit(.assistantDelta(lastResultSummary))
+                    actionSignatureCounts[signature] = 0
+                    stalledStepCount = 0
+                    recoveryCount += 1
+                    if recoveryCount >= 4 {
+                        throw ChromiumBrowserActionError(message: "Browser agent is stuck on stale targets and repeated replans.")
+                    }
+                    continue
+                }
+
+                if command.action == .done {
+                    let finalText = parsed.displayText.isEmpty
+                        ? (command.finalResponse?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Finished the browser task.")
+                        : parsed.displayText
+                    try await persistBrowserRunArtifacts(
+                        outcome: "completed",
+                        goalText: intent.goalText,
+                        initialURL: intent.initialURL,
+                        session: session,
+                        controller: browserController,
+                        inspectionHistory: inspectionHistory,
+                        recentHistory: recentHistory,
+                        finalSummary: finalText
+                    )
+                    let assistantMessage = Message(
+                        id: UUID(),
+                        sessionId: session.id,
+                        role: .assistant,
+                        text: finalText,
+                        source: .codexStdout,
+                        createdAt: Date()
+                    )
+                    try sessionStore.appendMessage(assistantMessage)
+                    return
+                }
+
+                let previousProgressSnapshot = browserProgressSnapshot(state: state, inspection: latestInspection)
+                let execution: BrowserAgentExecutionResult
+                do {
+                    execution = try await executeBrowserAgentCommand(command, inspection: latestInspection, controller: browserController)
+                } catch {
+                    let message = (error as? ChromiumBrowserActionError)?.message ?? error.localizedDescription
+                    guard isRecoverableBrowserError(message) else {
+                        throw error
+                    }
+                    let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
+                    recordInspection(refreshedInspection)
+                    if let recoveredExecution = try await retryBrowserAgentCommandIfPossible(
+                        command,
+                        staleInspection: latestInspection,
+                        refreshedInspection: refreshedInspection,
+                        controller: browserController
+                    ) {
+                        latestInspection = recoveredExecution.inspection ?? refreshedInspection
+                        recordInspection(latestInspection)
+                        lastResultSummary = recoveredExecution.summary
+                        recentHistory.append("Recovery: \(command.action.rawValue) -> \(recoveredExecution.summary)")
+                        if recentHistory.count > 6 {
+                            recentHistory.removeFirst(recentHistory.count - 6)
+                        }
+                        emit(.assistantDelta(recoveredExecution.summary))
+                        let recoveredState = await MainActor.run { browserController.browserSnapshot() }
+                        lastProgressSnapshot = browserProgressSnapshot(state: recoveredState, inspection: latestInspection)
+                        stalledStepCount = 0
+                        recoveryCount += 1
+                        continue
+                    }
+                    latestInspection = refreshedInspection
+                    let currentState = await MainActor.run { browserController.browserSnapshot() }
+                    let refreshedProgressSnapshot = browserProgressSnapshot(state: currentState, inspection: refreshedInspection)
+                    lastResultSummary = browserRecoverySummary(
+                        for: command,
+                        message: message,
+                        inspection: refreshedInspection,
+                        progressChanged: refreshedProgressSnapshot != previousProgressSnapshot
+                    )
+                    recentHistory.append("Recovery: \(command.action.rawValue) -> \(message)")
+                    emit(.assistantDelta(lastResultSummary))
+                    stalledStepCount = 0
+                    recoveryCount += 1
+                    if recoveryCount >= 4 {
+                        throw ChromiumBrowserActionError(message: "Browser agent exceeded the recovery budget while trying to re-target the page.")
+                    }
+                    continue
+                }
+
+                latestInspection = execution.inspection ?? latestInspection
+                recordInspection(latestInspection)
+                lastResultSummary = execution.summary
+                recentHistory.append("Step \(step): \(command.action.rawValue) -> \(execution.summary)")
+                if recentHistory.count > 6 {
+                    recentHistory.removeFirst(recentHistory.count - 6)
+                }
+                emit(.assistantDelta(execution.summary))
+
+                if let stopReason = BrowserTransactionalGuard.stopReason(goalText: intent.goalText, inspection: latestInspection) {
+                    let finalText = "\(stopReason) Approval is still required for any final transaction step."
+                    try await persistBrowserRunArtifacts(
+                        outcome: "stopped_at_confirmation_boundary",
+                        goalText: intent.goalText,
+                        initialURL: intent.initialURL,
+                        session: session,
+                        controller: browserController,
+                        inspectionHistory: inspectionHistory,
+                        recentHistory: recentHistory,
+                        finalSummary: finalText
+                    )
+                    let assistantMessage = Message(
+                        id: UUID(),
+                        sessionId: session.id,
+                        role: .assistant,
+                        text: finalText,
+                        source: .codexStdout,
+                        createdAt: Date()
+                    )
+                    try sessionStore.appendMessage(assistantMessage)
+                    return
+                }
+
+                let currentState = await MainActor.run { browserController.browserSnapshot() }
+                let progressSnapshot = browserProgressSnapshot(state: currentState, inspection: latestInspection)
+                if progressSnapshot == lastProgressSnapshot && command.action != .inspectPage {
+                    stalledStepCount += 1
+                } else {
+                    stalledStepCount = 0
+                    recoveryCount = 0
+                }
+                lastProgressSnapshot = progressSnapshot
+
+                if stalledStepCount >= 2 {
+                    let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
+                    latestInspection = refreshedInspection
+                    recordInspection(refreshedInspection)
+                    lastResultSummary = browserRecoverySummary(
+                        for: command,
+                        message: "The last actions did not visibly change the page state.",
+                        inspection: refreshedInspection,
+                        progressChanged: false
+                    )
+                    recentHistory.append("Recovery: refreshed inspection after stalled browser progress.")
+                    emit(.assistantDelta(lastResultSummary))
+                    stalledStepCount = 0
+                    recoveryCount += 1
+                    if recoveryCount >= 4 {
+                        throw ChromiumBrowserActionError(message: "Browser agent exceeded the recovery budget after repeated stalled steps.")
+                    }
+                }
+            }
+
+            throw ChromiumBrowserActionError(message: "Browser agent loop exceeded the maximum number of steps.")
+        } catch {
+            let message = (error as? ChromiumBrowserActionError)?.message ?? error.localizedDescription
+            try await persistBrowserRunArtifacts(
+                outcome: "failed",
+                goalText: intent.goalText,
+                initialURL: intent.initialURL,
+                session: session,
+                controller: browserController,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                finalSummary: message
+            )
+            emit(.failed(message))
+            throw error
+        }
     }
 
     private func buildChatPrompt(userText: String) -> String {
@@ -969,6 +1032,57 @@ final class ChatSessionService {
         return BrowserCodexTurnResult(assistantText: assistantText, stderrText: stderrText, result: result)
     }
 
+    private func persistBrowserRunArtifacts(
+        outcome: String,
+        goalText: String,
+        initialURL: String?,
+        session: AssistantSession,
+        controller: ChromiumBrowserController,
+        inspectionHistory: [ChromiumInspection],
+        recentHistory: [String],
+        finalSummary: String
+    ) async throws {
+        var captureWarnings: [String] = []
+        do {
+            _ = try await controller.captureSnapshotForAgent(label: outcome)
+        } catch {
+            captureWarnings.append("Automatic final snapshot failed: \(error.localizedDescription)")
+        }
+        let artifacts = await MainActor.run { controller.browserDebugArtifacts() }
+        let record = BrowserRunArtifactRecord(
+            createdAt: Date(),
+            sessionId: session.id.uuidString,
+            threadId: session.codexThreadId,
+            outcome: outcome,
+            goalText: goalText,
+            initialURL: initialURL,
+            finalSummary: finalSummary,
+            recentHistory: recentHistory,
+            inspectionHistory: inspectionHistory,
+            captureWarnings: captureWarnings,
+            browserArtifacts: artifacts
+        )
+
+        let directory = paths.logsDirectory
+            .appendingPathComponent("browser-agent-runs", isDirectory: true)
+            .appendingPathComponent(session.id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let slug = outcome
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
+        let fileURL = directory.appendingPathComponent("\(formatter.string(from: Date()))-\(slug).json")
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(record)
+        try data.write(to: fileURL, options: .atomic)
+    }
+
     private func retryBrowserAgentCommandIfPossible(
         _ command: BrowserAgentCommand,
         staleInspection: ChromiumInspection?,
@@ -1118,6 +1232,20 @@ private struct BrowserCodexTurnResult {
     let assistantText: String
     let stderrText: String
     let result: CodexExecutionResult
+}
+
+private struct BrowserRunArtifactRecord: Codable {
+    let createdAt: Date
+    let sessionId: String
+    let threadId: String?
+    let outcome: String
+    let goalText: String
+    let initialURL: String?
+    let finalSummary: String
+    let recentHistory: [String]
+    let inspectionHistory: [ChromiumInspection]
+    let captureWarnings: [String]
+    let browserArtifacts: ChromiumBrowserDebugArtifacts
 }
 
 private struct BrowserProgressSnapshot: Equatable {
