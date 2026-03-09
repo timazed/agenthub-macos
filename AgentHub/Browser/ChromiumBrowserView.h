@@ -35,7 +35,10 @@ typedef void (^AHChromiumSnapshotCompletion)(NSData* _Nullable pngData,
 - (void)evaluateJavaScript:(NSString*)script
                 completion:(AHChromiumEvaluationCompletion)completion;
 - (void)capturePNGSnapshot:(AHChromiumSnapshotCompletion)completion;
+- (void)prepareForShutdown;
 
 @end
+
+FOUNDATION_EXPORT void AHChromiumShutdownRuntime(void);
 
 NS_ASSUME_NONNULL_END

@@ -11,7 +11,6 @@
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_registration.h"
-#include "include/cef_request_context.h"
 #include "include/internal/cef_types_mac.h"
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_library_loader.h"
@@ -96,6 +95,31 @@ static std::string AHUTF8String(NSString* value) {
   return std::string(utf8);
 }
 
+class AHCloseBrowserTask : public CefTask {
+ public:
+  AHCloseBrowserTask(CefRefPtr<CefBrowser> browser, bool force_close)
+      : browser_(browser), force_close_(force_close) {}
+
+  void Execute() override {
+    CEF_REQUIRE_UI_THREAD();
+    if (!browser_) {
+      return;
+    }
+    CefRefPtr<CefBrowserHost> host = browser_->GetHost();
+    if (!host) {
+      return;
+    }
+    host->CloseBrowser(force_close_);
+  }
+
+ private:
+  CefRefPtr<CefBrowser> browser_;
+  bool force_close_;
+
+  IMPLEMENT_REFCOUNTING(AHCloseBrowserTask);
+  DISALLOW_COPY_AND_ASSIGN(AHCloseBrowserTask);
+};
+
 static NSNotificationName const AHChromiumContextInitializedNotification =
     @"AHChromiumContextInitializedNotification";
 
@@ -107,11 +131,15 @@ static NSNotificationName const AHChromiumContextInitializedNotification =
 - (BOOL)isContextInitialized;
 - (void)scheduleMessagePumpWorkAfterDelay:(NSTimeInterval)delay;
 - (void)contextDidInitialize;
+- (void)browserDidCreate;
+- (void)browserDidClose;
+- (void)waitForBrowsersToCloseWithTimeout:(NSTimeInterval)timeout;
 @end
 
 @interface AHChromiumBrowserView ()
 - (void)didCreateBrowser:(CefRefPtr<CefBrowser>)browser;
 - (void)browserWillClose:(CefRefPtr<CefBrowser>)browser;
+- (void)completeBrowserDoClose;
 - (void)didReceiveTitle:(NSString*)title;
 - (void)didReceiveMainFrameURL:(NSString*)urlString;
 - (void)didReceiveLoadingState:(BOOL)isLoading
@@ -215,6 +243,13 @@ class AHChromiumClient : public CefClient,
     });
   }
 
+  bool DoClose(CefRefPtr<CefBrowser> browser) override {
+    AHDispatchToOwner(owner_, ^(AHChromiumBrowserView* owner) {
+      [owner completeBrowserDoClose];
+    });
+    return true;
+  }
+
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
                             bool isLoading,
                             bool canGoBack,
@@ -286,6 +321,7 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
   BOOL _contextInitialized;
   NSUInteger _scheduledPumpGeneration;
   dispatch_source_t _fallbackPumpTimer;
+  NSInteger _activeBrowserCount;
 }
 
 + (instancetype)sharedRuntime {
@@ -410,6 +446,20 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
                     object:self];
 }
 
+- (void)browserDidCreate {
+  _activeBrowserCount += 1;
+  NSLog(@"[AgentHub][ChromiumPrototype] Active Chromium browsers: %ld",
+        static_cast<long>(_activeBrowserCount));
+}
+
+- (void)browserDidClose {
+  if (_activeBrowserCount > 0) {
+    _activeBrowserCount -= 1;
+  }
+  NSLog(@"[AgentHub][ChromiumPrototype] Active Chromium browsers after close: %ld",
+        static_cast<long>(_activeBrowserCount));
+}
+
 - (void)pumpCEF {
   if (!_initialized || _isPumping) {
     return;
@@ -465,6 +515,22 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
   dispatch_resume(_fallbackPumpTimer);
 }
 
+- (void)waitForBrowsersToCloseWithTimeout:(NSTimeInterval)timeout {
+  NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+  while (_activeBrowserCount > 0 && [deadline timeIntervalSinceNow] > 0) {
+    [self pumpCEF];
+    [[NSRunLoop mainRunLoop] runMode:NSRunLoopCommonModes
+                         beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+  }
+
+  NSDate* drainDeadline = [NSDate dateWithTimeIntervalSinceNow:0.2];
+  while ([drainDeadline timeIntervalSinceNow] > 0) {
+    [self pumpCEF];
+    [[NSRunLoop mainRunLoop] runMode:NSRunLoopCommonModes
+                         beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+  }
+}
+
 - (void)applicationWillTerminate:(NSNotification*)notification {
   if (!_initialized) {
     return;
@@ -475,10 +541,12 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
     _fallbackPumpTimer = nil;
   }
   _scheduledPumpGeneration += 1;
+  [self waitForBrowsersToCloseWithTimeout:2.0];
   CefShutdown();
   _app = nullptr;
   _initialized = NO;
   _contextInitialized = NO;
+  _activeBrowserCount = 0;
 
   if (_libraryLoader) {
     delete _libraryLoader;
@@ -487,6 +555,10 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
 }
 
 @end
+
+void AHChromiumShutdownRuntime(void) {
+  [[AHChromiumRuntime sharedRuntime] applicationWillTerminate:nil];
+}
 
 @implementation AHChromiumBrowserView {
   CefRefPtr<AHChromiumClient> _client;
@@ -682,6 +754,51 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
   completion(pngData, nil);
 }
 
+- (void)prepareForShutdown {
+  [_statePollTimer invalidate];
+  _statePollTimer = nil;
+  [_pendingCompletions removeAllObjects];
+  _queuedURLString = nil;
+
+  if (!_browser) {
+    NSLog(@"[AgentHub][ChromiumPrototype] No Chromium browser needed shutdown preparation.");
+    [self.delegate browserView:self didLogMessage:@"No Chromium browser needed shutdown preparation."];
+    return;
+  }
+
+  NSLog(@"[AgentHub][ChromiumPrototype] Requesting Chromium browser shutdown.");
+  [self.delegate browserView:self didLogMessage:@"Requesting Chromium browser shutdown."];
+  CefPostTask(TID_UI, new AHCloseBrowserTask(_browser, false));
+
+  NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:2.0];
+  while (_browser && [deadline timeIntervalSinceNow] > 0) {
+    [[AHChromiumRuntime sharedRuntime] pumpCEF];
+    [[NSRunLoop mainRunLoop] runMode:NSRunLoopCommonModes
+                         beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+  }
+
+  if (_browser) {
+    NSLog(@"[AgentHub][ChromiumPrototype] Escalating to forced Chromium browser shutdown.");
+    CefPostTask(TID_UI, new AHCloseBrowserTask(_browser, true));
+    NSDate* forceDeadline = [NSDate dateWithTimeIntervalSinceNow:2.0];
+    while (_browser && [forceDeadline timeIntervalSinceNow] > 0) {
+      [[AHChromiumRuntime sharedRuntime] pumpCEF];
+      [[NSRunLoop mainRunLoop] runMode:NSRunLoopCommonModes
+                           beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    }
+  }
+
+  [[AHChromiumRuntime sharedRuntime] waitForBrowsersToCloseWithTimeout:2.0];
+  NSLog(@"[AgentHub][ChromiumPrototype] Shutdown preparation finished. browser=%s",
+        _browser ? "alive" : "closed");
+  [self.delegate browserView:self
+           didLogMessage:[NSString stringWithFormat:@"Shutdown preparation finished. browser=%@",
+                                                    _browser ? @"alive" : @"closed"]];
+  _devToolsRegistration = nullptr;
+  _devToolsObserver = nullptr;
+  _client = nullptr;
+}
+
 - (void)ensureBrowserCreated {
   if (_browser || _browserCreationRequested || self.window == nil) {
     return;
@@ -732,7 +849,7 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
                                                     initialURLString]];
   CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
       windowInfo, _client, AHUTF8String(initialURLString), browserSettings,
-      nullptr, CefRequestContext::GetGlobalContext());
+      nullptr, nullptr);
 
   if (!browser) {
     _browserCreationRequested = NO;
@@ -752,6 +869,7 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
   }
 
   _browser = browser;
+  [[AHChromiumRuntime sharedRuntime] browserDidCreate];
   _browserCreationRequested = NO;
   _lastErrorMessage = nil;
 
@@ -788,11 +906,28 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
     return;
   }
 
+  NSLog(@"[AgentHub][ChromiumPrototype] Chromium browser will close.");
+  [self.delegate browserView:self didLogMessage:@"Chromium browser will close."];
   [_statePollTimer invalidate];
   _statePollTimer = nil;
   _devToolsRegistration = nullptr;
   _browser = nullptr;
+  _devToolsObserver = nullptr;
+  _client = nullptr;
+  [[AHChromiumRuntime sharedRuntime] browserDidClose];
   [self.delegate browserViewDidUpdateState:self];
+}
+
+- (void)completeBrowserDoClose {
+  NSLog(@"[AgentHub][ChromiumPrototype] Completing host window close for Chromium browser.");
+  NSWindow* hostWindow = self.window;
+  if (self.superview) {
+    [self removeFromSuperview];
+  }
+  if (hostWindow) {
+    [hostWindow orderOut:nil];
+    [hostWindow close];
+  }
 }
 
 - (void)didReceiveTitle:(NSString*)title {

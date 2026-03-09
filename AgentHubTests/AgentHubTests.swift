@@ -293,6 +293,70 @@ struct AgentHubTests {
             ) == "checkout"
         )
     }
+
+    @Test
+    func browserSmokeScenarioManifestLoadsDefinitions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BrowserSmokeManifest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let fileURL = root.appendingPathComponent("browser-live-smoke-scenarios.json")
+        try """
+        [
+          {
+            "id": "example",
+            "category": "other",
+            "title": "Example",
+            "goalText": "open https://example.com and inspect the page",
+            "initialURL": "https://example.com",
+            "matchAny": ["example.com"],
+            "expectedOutcomes": ["completed"],
+            "notes": "fixture"
+          }
+        ]
+        """.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let scenarios = try BrowserSmokeScenarioManifest.load(from: fileURL)
+
+        #expect(scenarios.count == 1)
+        #expect(scenarios.first?.id == "example")
+        #expect(scenarios.first?.expectedOutcomes == ["completed"])
+    }
+
+    @Test
+    func codexRuntimeParsesCurrentThreadStartedEventSchema() throws {
+        let runtime = CodexCLIRuntime()
+
+        let parsed = runtime.parseCodexLine(
+            #"{"type":"thread.started","thread_id":"thread-123"}"#,
+            isStdErr: false
+        )
+
+        switch parsed {
+        case let .threadId(threadId):
+            #expect(threadId == "thread-123")
+        default:
+            Issue.record("Expected thread.started to produce a thread id event.")
+        }
+    }
+
+    @Test
+    func codexRuntimeParsesCurrentAssistantMessageEventSchema() throws {
+        let runtime = CodexCLIRuntime()
+
+        let parsed = runtime.parseCodexLine(
+            #"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"<agenthub_browser_command>{\"action\":\"inspect_page\",\"selector\":null,\"text\":null,\"url\":null,\"key\":null,\"timeoutSeconds\":null,\"deltaY\":null,\"label\":null,\"finalResponse\":null,\"rationale\":\"Inspect the current page.\"}</agenthub_browser_command>"}}"#,
+            isStdErr: false
+        )
+
+        switch parsed {
+        case let .assistantText(text):
+            #expect(
+                text
+                    == #"<agenthub_browser_command>{"action":"inspect_page","selector":null,"text":null,"url":null,"key":null,"timeoutSeconds":null,"deltaY":null,"label":null,"finalResponse":null,"rationale":"Inspect the current page."}</agenthub_browser_command>"#
+            )
+        default:
+            Issue.record("Expected item.completed to surface assistant text.")
+        }
+    }
 }
 
 private func sampleInspection(

@@ -95,11 +95,16 @@ Useful commands:
 python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py summary
 python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py matrix
 python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py scenarios --file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json
+python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py run --file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json --selection restaurant-opentable,hotel-booking
 python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py compare --baseline /path/to/old.json --candidate /path/to/new.json
+/private/tmp/agenthub-macos-mr-70/DerivedData/AgentHub/Build/Products/Debug/AgentHub.app/Contents/MacOS/AgentHub --run-browser-scenario hotel-booking --scenario-file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json
 ```
+
+The `run` subcommand executes the manifest through the headless app binary, then harvests the newest artifact per scenario so validation still produces a usable matrix even if the app exits non-zero after persisting artifacts.
 
 The persisted artifact JSON now contains:
 
+- optional scenario id/title when launched from the scenario runner
 - inferred scenario category (`restaurant`, `hotel`, `flight`, `checkout`, or `other`)
 - run outcome and final summary
 - recent browser history
@@ -117,3 +122,4 @@ The branch is materially more generic, but a few items still require live valida
 - tuning semantic extraction for more custom calendar and autocomplete variants
 - validating final-confirmation boundary detection on unfamiliar checkout flows
 - iterating on scenario-specific regressions that the smoke harness exposes
+- fixing the remaining headless Chromium teardown bug where the scenario process can exit non-zero after artifacts are already written

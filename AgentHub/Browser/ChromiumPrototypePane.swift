@@ -78,6 +78,7 @@ struct ChromiumPrototypePane: View {
     private var browserSurface: some View {
         ZStack(alignment: .bottomLeading) {
             ChromiumBrowserRepresentable(controller: controller)
+                .id(controller.browserViewIdentity)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)

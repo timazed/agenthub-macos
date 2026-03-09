@@ -325,7 +325,7 @@ final class ChatSessionService {
         }
 
         if let genericBrowserIntent = GenericBrowserChatIntent.parse(text) {
-            try await handleGenericBrowserIntent(genericBrowserIntent, persona: persona, session: &session)
+            _ = try await handleGenericBrowserIntent(genericBrowserIntent, persona: persona, session: &session)
             session.updatedAt = Date()
             try sessionStore.save(session)
             emit(.completed)
@@ -409,11 +409,76 @@ final class ChatSessionService {
         emit(.completed)
     }
 
-    private func handleBrowserIntent(_ intent: ChatBrowserIntent, session: inout AssistantSession) async throws {
+    func runBrowserScenario(_ scenario: BrowserSmokeScenarioDefinition) async throws -> BrowserScenarioRunSummary {
+        defer { finishStream() }
+
+        let persona = try personaManager.defaultPersona()
+        var session = AssistantSession(
+            id: UUID(),
+            codexThreadId: nil,
+            personaId: persona.id,
+            mode: .chatOnly,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        let metadata = BrowserScenarioMetadata(
+            id: scenario.id,
+            title: scenario.title,
+            category: scenario.category
+        )
+
+        emit(.assistantDelta("Running browser smoke scenario \(scenario.id) (\(scenario.category))."))
+
+        if let browserIntent = ChatBrowserIntent.parse(scenario.goalText) {
+            let summary = try await handleBrowserIntent(
+                browserIntent,
+                session: &session,
+                persistMessages: false,
+                scenarioMetadata: metadata
+            )
+            emit(.completed)
+            return BrowserScenarioRunSummary(
+                scenarioID: scenario.id,
+                category: scenario.category,
+                outcome: browserIntent.bookingRequested && browserIntent.bookingParameters.isSpecified
+                    ? "stopped_at_confirmation_boundary"
+                    : "completed",
+                finalSummary: summary
+            )
+        }
+
+        if let genericBrowserIntent = GenericBrowserChatIntent.parse(scenario.goalText) {
+            let result = try await handleGenericBrowserIntent(
+                genericBrowserIntent,
+                persona: persona,
+                session: &session,
+                persistMessages: false,
+                scenarioMetadata: metadata
+            )
+            emit(.completed)
+            return BrowserScenarioRunSummary(
+                scenarioID: scenario.id,
+                category: scenario.category,
+                outcome: result.outcome,
+                finalSummary: result.finalSummary
+            )
+        }
+
+        throw ChromiumBrowserActionError(message: "Scenario \(scenario.id) does not parse into a browser intent.")
+    }
+
+    @discardableResult
+    private func handleBrowserIntent(
+        _ intent: ChatBrowserIntent,
+        session: inout AssistantSession,
+        persistMessages: Bool = true,
+        scenarioMetadata: BrowserScenarioMetadata? = nil
+    ) async throws -> String {
         let browserController = await MainActor.run { browserControllerProvider() }
         emit(.assistantDelta("Using the embedded Chromium browser to search OpenTable for \(intent.request.venueName)."))
 
         let finalText: String
+        let outcome: String
         if intent.bookingRequested, intent.bookingParameters.isSpecified {
             let result = try await browserController.runRestaurantBookingFlow(
                 request: ChromiumRestaurantBookingRequest(
@@ -427,6 +492,7 @@ final class ChatSessionService {
             finalText = """
             I navigated to the OpenTable venue page for \(result.venueName) and selected \(slotText). I stopped before the final reserve or confirm action, so approval is still required for the last transactional step.
             """
+            outcome = "stopped_at_confirmation_boundary"
         } else {
             let result = try await browserController.runRestaurantSearchFlow(request: intent.request) { [weak self] message in
                 self?.emit(.assistantDelta(message))
@@ -434,24 +500,31 @@ final class ChatSessionService {
             finalText = """
             I opened the exact OpenTable page for \(result.venueName)\(formattedLocationSuffix(result.locationHint)) in the embedded Chromium browser.
             """
+            outcome = "completed"
         }
 
-        let assistantMessage = Message(
-            id: UUID(),
-            sessionId: session.id,
-            role: .assistant,
-            text: finalText,
-            source: .codexStdout,
-            createdAt: Date()
+        try await persistBrowserRunArtifacts(
+            outcome: outcome,
+            goalText: intent.request.query,
+            initialURL: intent.request.siteURL,
+            session: session,
+            controller: browserController,
+            inspectionHistory: await MainActor.run { browserController.browserDebugArtifacts().lastInspection.map { [$0] } ?? [] },
+            recentHistory: [],
+            finalSummary: finalText,
+            scenarioMetadata: scenarioMetadata
         )
-        try sessionStore.appendMessage(assistantMessage)
+        try persistAssistantMessage(finalText, session: session, shouldStore: persistMessages)
+        return finalText
     }
 
     private func handleGenericBrowserIntent(
         _ intent: GenericBrowserChatIntent,
         persona: Persona,
-        session: inout AssistantSession
-    ) async throws {
+        session: inout AssistantSession,
+        persistMessages: Bool = true,
+        scenarioMetadata: BrowserScenarioMetadata? = nil
+    ) async throws -> BrowserScenarioRunSummary {
         let browserController = await MainActor.run { browserControllerProvider() }
         emit(.assistantDelta("Using the embedded Chromium browser for this web task."))
 
@@ -557,18 +630,16 @@ final class ChatSessionService {
                         controller: browserController,
                         inspectionHistory: inspectionHistory,
                         recentHistory: recentHistory,
+                        finalSummary: finalText,
+                        scenarioMetadata: scenarioMetadata
+                    )
+                    try persistAssistantMessage(finalText, session: session, shouldStore: persistMessages)
+                    return BrowserScenarioRunSummary(
+                        scenarioID: scenarioMetadata?.id ?? "ad_hoc",
+                        category: scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: intent.goalText, initialURL: intent.initialURL),
+                        outcome: "completed",
                         finalSummary: finalText
                     )
-                    let assistantMessage = Message(
-                        id: UUID(),
-                        sessionId: session.id,
-                        role: .assistant,
-                        text: finalText,
-                        source: .codexStdout,
-                        createdAt: Date()
-                    )
-                    try sessionStore.appendMessage(assistantMessage)
-                    return
                 }
 
                 let previousProgressSnapshot = browserProgressSnapshot(state: state, inspection: latestInspection)
@@ -640,18 +711,16 @@ final class ChatSessionService {
                         controller: browserController,
                         inspectionHistory: inspectionHistory,
                         recentHistory: recentHistory,
+                        finalSummary: finalText,
+                        scenarioMetadata: scenarioMetadata
+                    )
+                    try persistAssistantMessage(finalText, session: session, shouldStore: persistMessages)
+                    return BrowserScenarioRunSummary(
+                        scenarioID: scenarioMetadata?.id ?? "ad_hoc",
+                        category: scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: intent.goalText, initialURL: intent.initialURL),
+                        outcome: "stopped_at_confirmation_boundary",
                         finalSummary: finalText
                     )
-                    let assistantMessage = Message(
-                        id: UUID(),
-                        sessionId: session.id,
-                        role: .assistant,
-                        text: finalText,
-                        source: .codexStdout,
-                        createdAt: Date()
-                    )
-                    try sessionStore.appendMessage(assistantMessage)
-                    return
                 }
 
                 let currentState = await MainActor.run { browserController.browserSnapshot() }
@@ -695,7 +764,8 @@ final class ChatSessionService {
                 controller: browserController,
                 inspectionHistory: inspectionHistory,
                 recentHistory: recentHistory,
-                finalSummary: message
+                finalSummary: message,
+                scenarioMetadata: scenarioMetadata
             )
             emit(.failed(message))
             throw error
@@ -1015,6 +1085,31 @@ final class ChatSessionService {
         config: CodexLaunchConfig,
         forwardAssistantLines: Bool
     ) async throws -> BrowserCodexTurnResult {
+        let runtimeStream = runtime.streamEvents()
+        var assistantLines: [String] = []
+        var stderrLines: [String] = []
+        var identifiedThreadId: String?
+
+        let bridgeTask = Task {
+            for await event in runtimeStream {
+                switch event {
+                case let .stdoutLine(line):
+                    assistantLines.append(line)
+                    if forwardAssistantLines {
+                        emit(.assistantDelta(line))
+                    }
+                case let .stderrLine(line):
+                    stderrLines.append(line)
+                case let .threadIdentified(threadId):
+                    identifiedThreadId = threadId
+                case .started, .completed:
+                    break
+                case let .failed(message):
+                    stderrLines.append(message)
+                }
+            }
+        }
+
         let result: CodexExecutionResult
         if let threadId = session.codexThreadId {
             result = try await runtime.resumeThread(threadId: threadId, prompt: prompt, config: config)
@@ -1024,11 +1119,16 @@ final class ChatSessionService {
                 session.codexThreadId = threadId
             }
         }
-        let assistantText = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        if forwardAssistantLines, !assistantText.isEmpty {
-            assistantText.split(separator: "\n").forEach { emit(.assistantDelta(String($0))) }
+
+        _ = await bridgeTask.result
+
+        if let identifiedThreadId {
+            session.codexThreadId = identifiedThreadId
         }
-        let stderrText = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let assistantText = assistantLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let stderrText = (stderrLines.isEmpty ? result.stderr : stderrLines.joined(separator: "\n"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return BrowserCodexTurnResult(assistantText: assistantText, stderrText: stderrText, result: result)
     }
 
@@ -1040,7 +1140,8 @@ final class ChatSessionService {
         controller: ChromiumBrowserController,
         inspectionHistory: [ChromiumInspection],
         recentHistory: [String],
-        finalSummary: String
+        finalSummary: String,
+        scenarioMetadata: BrowserScenarioMetadata? = nil
     ) async throws {
         var captureWarnings: [String] = []
         do {
@@ -1056,7 +1157,9 @@ final class ChatSessionService {
             outcome: outcome,
             goalText: goalText,
             initialURL: initialURL,
-            scenarioCategory: BrowserScenarioClassifier.category(forGoalText: goalText, initialURL: initialURL),
+            scenarioID: scenarioMetadata?.id,
+            scenarioTitle: scenarioMetadata?.title,
+            scenarioCategory: scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: goalText, initialURL: initialURL),
             finalSummary: finalSummary,
             recentHistory: recentHistory,
             inspectionHistory: inspectionHistory,
@@ -1216,6 +1319,19 @@ final class ChatSessionService {
         }
         return " in \(locationHint)"
     }
+
+    private func persistAssistantMessage(_ text: String, session: AssistantSession, shouldStore: Bool) throws {
+        guard shouldStore else { return }
+        let assistantMessage = Message(
+            id: UUID(),
+            sessionId: session.id,
+            role: .assistant,
+            text: text,
+            source: .codexStdout,
+            createdAt: Date()
+        )
+        try sessionStore.appendMessage(assistantMessage)
+    }
 }
 
 private struct TaskProposalPayload: Decodable {
@@ -1242,6 +1358,8 @@ private struct BrowserRunArtifactRecord: Codable {
     let outcome: String
     let goalText: String
     let initialURL: String?
+    let scenarioID: String?
+    let scenarioTitle: String?
     let scenarioCategory: String
     let finalSummary: String
     let recentHistory: [String]

@@ -1,8 +1,52 @@
+import AppKit
 import Foundation
 
 private final class BrowserControllerStore {
     @MainActor
     lazy var controller = ChromiumBrowserController()
+}
+
+@MainActor
+private final class HeadlessBrowserHost {
+    let window: NSWindow
+    private weak var browserView: AHChromiumBrowserView?
+
+    init(controller: ChromiumBrowserController) {
+        let frame = NSRect(x: 0, y: 0, width: 1440, height: 960)
+        let window = NSWindow(
+            contentRect: frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.level = .normal
+        window.alphaValue = 0.0
+        window.ignoresMouseEvents = true
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+        let contentView = NSView(frame: frame)
+        contentView.wantsLayer = true
+        contentView.layer?.backgroundColor = NSColor.clear.cgColor
+        window.contentView = contentView
+
+        controller.browserView.frame = contentView.bounds
+        controller.browserView.autoresizingMask = [.width, .height]
+        contentView.addSubview(controller.browserView)
+        contentView.layoutSubtreeIfNeeded()
+        window.orderFrontRegardless()
+        window.orderOut(nil)
+
+        self.window = window
+        self.browserView = controller.browserView
+    }
+
+    func teardown(controller: ChromiumBrowserController) {
+        browserView?.removeFromSuperview()
+        window.orderOut(nil)
+        window.close()
+        controller.resetBrowserView()
+    }
 }
 
 final class AppContainer {
@@ -20,6 +64,7 @@ final class AppContainer {
     let taskOrchestrator: TaskOrchestrator
     let scheduleRunner: ScheduleRunner
     private let browserControllerStore: BrowserControllerStore
+    private var headlessBrowserHost: HeadlessBrowserHost?
 
     private init(
         paths: AppPaths,
@@ -56,6 +101,18 @@ final class AppContainer {
     @MainActor
     var browserController: ChromiumBrowserController {
         browserControllerStore.controller
+    }
+
+    @MainActor
+    func installHeadlessBrowserHostIfNeeded() {
+        guard headlessBrowserHost == nil else { return }
+        headlessBrowserHost = HeadlessBrowserHost(controller: browserControllerStore.controller)
+    }
+
+    @MainActor
+    func teardownHeadlessBrowserHost() {
+        headlessBrowserHost?.teardown(controller: browserControllerStore.controller)
+        headlessBrowserHost = nil
     }
 
     static func makeDefault() throws -> AppContainer {

@@ -64,7 +64,7 @@ final class CodexCLIRuntime: CodexRuntime {
         var data = Data()
     }
 
-    private enum ParsedLine {
+    enum ParsedLine {
         case ignored
         case assistantText(String)
         case diagnostic(String)
@@ -355,7 +355,7 @@ final class CodexCLIRuntime: CodexRuntime {
         }
     }
 
-    private func parseCodexLine(_ line: String, isStdErr: Bool) -> ParsedLine {
+    func parseCodexLine(_ line: String, isStdErr: Bool) -> ParsedLine {
         if let parsed = parseStructuredJSONLine(from: line) {
             return parsed
         }
@@ -367,11 +367,17 @@ final class CodexCLIRuntime: CodexRuntime {
         return .assistantText(line)
     }
 
-    private func parseStructuredJSONLine(from line: String) -> ParsedLine? {
+    func parseStructuredJSONLine(from line: String) -> ParsedLine? {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
               let dictionary = object as? [String: Any] else {
             return nil
+        }
+
+        if let type = dictionary["type"] as? String {
+            if let parsed = parseTypedJSONLine(type: type, dictionary: dictionary) {
+                return parsed
+            }
         }
 
         let method = dictionary["method"] as? String
@@ -403,6 +409,45 @@ final class CodexCLIRuntime: CodexRuntime {
                 return .assistantText(text)
             }
             if let diagnostic = extractDiagnosticText(from: params ?? dictionary) {
+                return .diagnostic(diagnostic)
+            }
+            return .ignored
+        }
+    }
+
+    private func parseTypedJSONLine(type: String, dictionary: [String: Any]) -> ParsedLine? {
+        if let threadId = extractThreadId(from: dictionary),
+           ["thread.started", "thread.updated", "thread.status.changed"].contains(type) {
+            return .threadId(threadId)
+        }
+
+        switch type {
+        case "item.delta", "item.completed":
+            if let item = dictionary["item"],
+               isAssistantMessagePayload(item),
+               let text = extractAssistantText(from: item) {
+                return .assistantText(text)
+            }
+            if isAssistantMessagePayload(dictionary),
+               let text = extractAssistantText(from: dictionary) {
+                return .assistantText(text)
+            }
+            return .ignored
+        case "thread.error", "turn.error", "item.error":
+            if let diagnostic = extractDiagnosticText(from: dictionary["item"] ?? dictionary) {
+                return .diagnostic(diagnostic)
+            }
+            return .diagnostic(type)
+        case "thread.started", "thread.updated", "thread.status.changed",
+             "turn.started", "turn.completed", "item.started":
+            return .ignored
+        default:
+            if let item = dictionary["item"],
+               isAssistantMessagePayload(item),
+               let text = extractAssistantText(from: item) {
+                return .assistantText(text)
+            }
+            if let diagnostic = extractDiagnosticText(from: dictionary) {
                 return .diagnostic(diagnostic)
             }
             return .ignored
@@ -451,6 +496,32 @@ final class CodexCLIRuntime: CodexRuntime {
         }
 
         return nil
+    }
+
+    private func isAssistantMessagePayload(_ value: Any) -> Bool {
+        guard let dictionary = value as? [String: Any] else {
+            return false
+        }
+
+        if let itemType = (dictionary["type"] as? String)?.lowercased() {
+            if itemType == "agent_message" || itemType == "assistant_message" {
+                return true
+            }
+            if itemType.contains("message") == false {
+                return false
+            }
+        }
+
+        if let role = (dictionary["role"] as? String)?.lowercased(),
+           role == "assistant" || role == "agent" {
+            return true
+        }
+
+        if let message = dictionary["message"] {
+            return isAssistantMessagePayload(message)
+        }
+
+        return dictionary["text"] != nil || dictionary["delta"] != nil || dictionary["content"] != nil
     }
 
     private func extractDiagnosticText(from value: Any) -> String? {
@@ -522,15 +593,8 @@ final class CodexCLIRuntime: CodexRuntime {
     }
 
     private func locateCodexBinary() throws -> URL {
-        if let resourcesURL = bundle.resourceURL {
-            let candidates = [
-                resourcesURL.appendingPathComponent("codex", isDirectory: false),
-                resourcesURL.appendingPathComponent("codex/codex", isDirectory: false),
-            ]
-
-            for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
-                return candidate
-            }
+        for candidate in codexBinaryCandidates() where fileManager.isExecutableFile(atPath: candidate.path) {
+            return candidate
         }
 
         throw CodexRuntimeError.binaryNotFound
@@ -607,18 +671,28 @@ final class CodexCLIRuntime: CodexRuntime {
     }
 
     private func locateCodexBinaryPath() -> String {
-        if let resourcesURL = bundle.resourceURL {
-            let candidates = [
-                resourcesURL.appendingPathComponent("codex", isDirectory: false),
-                resourcesURL.appendingPathComponent("codex/codex", isDirectory: false),
-            ]
-
-            for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
-                return candidate.path
-            }
+        for candidate in codexBinaryCandidates() where fileManager.isExecutableFile(atPath: candidate.path) {
+            return candidate.path
         }
 
         return "<missing bundled codex>"
+    }
+
+    private func codexBinaryCandidates() -> [URL] {
+        var candidates: [URL] = []
+        if let resourcesURL = bundle.resourceURL {
+            candidates.append(resourcesURL.appendingPathComponent("codex", isDirectory: false))
+            candidates.append(resourcesURL.appendingPathComponent("codex/codex", isDirectory: false))
+        }
+
+        let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        for entry in pathEntries {
+            candidates.append(URL(fileURLWithPath: entry, isDirectory: true).appendingPathComponent("codex"))
+        }
+        return candidates
     }
 
     private func appendRunnerLog(codexHome: String, line: String) throws {

@@ -5,14 +5,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
 DEFAULT_ROOT = Path.home() / ".agenthub" / "logs" / "browser-agent-runs"
+DEFAULT_APP = (
+    Path(__file__).resolve().parents[1]
+    / "DerivedData"
+    / "AgentHub"
+    / "Build"
+    / "Products"
+    / "Debug"
+    / "AgentHub.app"
+    / "Contents"
+    / "MacOS"
+    / "AgentHub"
+)
 
 
 @dataclass
@@ -115,6 +129,9 @@ class RunRecord:
 
     @property
     def scenario_key(self) -> str:
+        scenario_id = str(self.data.get("scenarioID") or "")
+        if scenario_id:
+            return scenario_id
         persisted = str(self.data.get("scenarioCategory") or "")
         if persisted:
             return persisted
@@ -285,6 +302,102 @@ def command_scenarios(args: argparse.Namespace) -> int:
     return 0
 
 
+def parse_created_at(value: str) -> datetime:
+    if not value:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def latest_record_for_scenario(root: Path, scenario_id: str, started_at: datetime) -> RunRecord | None:
+    started_floor = started_at.timestamp() - 1
+    matches = [
+        record
+        for record in load_records(root)
+        if str(record.data.get("scenarioID") or "") == scenario_id
+        and parse_created_at(record.created_at).timestamp() >= started_floor
+    ]
+    if not matches:
+        return None
+    matches.sort(key=lambda record: record.created_at, reverse=True)
+    return matches[0]
+
+
+def command_run(args: argparse.Namespace) -> int:
+    scenario_file = Path(args.file).expanduser()
+    root = Path(args.root).expanduser()
+    app = Path(args.app).expanduser()
+    scenarios = json.loads(scenario_file.read_text())
+    if not isinstance(scenarios, list):
+        print("Scenario file must be a JSON array.", file=sys.stderr)
+        return 2
+    if not app.exists():
+        print(f"App binary not found: {app}", file=sys.stderr)
+        return 2
+
+    requested_ids = None if args.selection == "all" else {value.strip() for value in args.selection.split(",") if value.strip()}
+    chosen: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            continue
+        scenario_id = str(scenario.get("id", ""))
+        if requested_ids is not None and scenario_id not in requested_ids:
+            continue
+        chosen.append(scenario)
+
+    if not chosen:
+        print("No scenarios selected.", file=sys.stderr)
+        return 2
+
+    results: list[dict[str, Any]] = []
+    overall_exit_code = 0
+    for scenario in chosen:
+        scenario_id = str(scenario.get("id", "unknown"))
+        started_at = datetime.now(timezone.utc)
+        command = [
+            str(app),
+            "--run-browser-scenario",
+            scenario_id,
+            "--scenario-file",
+            str(scenario_file),
+        ]
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=args.timeout,
+            check=False,
+        )
+        record = latest_record_for_scenario(root, scenario_id, started_at)
+        results.append(
+            {
+                "scenario_id": scenario_id,
+                "category": str(scenario.get("category", "other")),
+                "process_exit": completed.returncode,
+                "artifact_outcome": record.outcome if record else "-",
+                "stage": record.last_stage if record else "-",
+                "artifact": record.path.name if record else "-",
+            }
+        )
+        if completed.returncode != 0:
+            overall_exit_code = completed.returncode
+            if args.verbose:
+                sys.stderr.write(completed.stderr)
+
+    print("| Scenario | Category | Process | Artifact Outcome | Stage | Artifact |")
+    print("| --- | --- | ---: | --- | --- | --- |")
+    for result in results:
+        print(
+            f"| {result['scenario_id']} | {result['category']} | {result['process_exit']} | "
+            f"{result['artifact_outcome']} | {result['stage']} | {result['artifact']} |"
+        )
+
+    return 0 if overall_exit_code == 0 else overall_exit_code
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -312,6 +425,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="docs/browser-live-smoke-scenarios.json",
     )
     scenarios.set_defaults(func=command_scenarios)
+
+    run = subparsers.add_parser("run", help="Execute browser smoke scenarios from a manifest.")
+    run.add_argument("--root", default=str(DEFAULT_ROOT))
+    run.add_argument("--app", default=str(DEFAULT_APP))
+    run.add_argument(
+        "--file",
+        default="docs/browser-live-smoke-scenarios.json",
+    )
+    run.add_argument("--selection", default="all", help="Scenario id or comma-separated ids, or 'all'.")
+    run.add_argument("--timeout", type=int, default=180)
+    run.add_argument("--verbose", action="store_true")
+    run.set_defaults(func=command_run)
 
     return parser
 

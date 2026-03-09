@@ -21,6 +21,7 @@
   - persist browser-agent run artifacts with scenario category, inspection history, action trace, snapshots, and automatic final snapshot capture
 - Tightened `ChromiumBrowserController` approval behavior so semantic final-confirmation boundaries gate approval more precisely.
 - Added a live-smoke scenario manifest and artifact-report script for cross-site validation.
+- Added a manifest runner mode to `browser_smoke_report.py` so scenario manifests can be executed and summarized from one command.
 - Added tests for booking parameter parsing, generic intent parsing, browser command parsing, semantic retargeting, and transactional-boundary classification.
 
 ## Verification
@@ -43,6 +44,8 @@ Recommended commands:
 - `python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py summary`
 - `python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py matrix`
 - `python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py scenarios --file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json`
+- `python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py run --file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json --selection restaurant-opentable,hotel-booking`
+- `/private/tmp/agenthub-macos-mr-70/DerivedData/AgentHub/Build/Products/Debug/AgentHub.app/Contents/MacOS/AgentHub --run-browser-scenario <scenario-id|all> --scenario-file /private/tmp/agenthub-macos-mr-70/docs/browser-live-smoke-scenarios.json`
 
 ## Next Live Validation
 
@@ -53,3 +56,7 @@ If continuing from here, do live smoke runs in this order:
 3. Transaction boundary validation on a shopping or checkout-adjacent site.
 
 The code substrate is now much better suited for those tests than the earlier selector-driven loop.
+
+## Known Follow-Up
+
+- Headless scenario runs still persist usable artifacts before shutdown, but the process can exit non-zero because Chromium/CEF browser contexts are not yet fully draining during teardown. The smoke runner now surfaces artifact outcomes even in that case, but the runtime shutdown path still needs a dedicated fix.

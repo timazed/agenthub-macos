@@ -35,6 +35,7 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
     @Published private(set) var snapshots: [ChromiumSnapshotArtifact] = []
     @Published private(set) var flowStatus: ChromiumFlowStatus = .idle
     @Published private(set) var approvalStatus: ChromiumApprovalStatus = .idle
+    @Published private(set) var browserViewIdentity = UUID()
 
     @Published var addressBarText = "https://www.opentable.com"
     @Published var quickSearchText = "Sake House By Hikari Culver City"
@@ -43,15 +44,15 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
     @Published var selectorInputText = ""
     @Published private(set) var isEditingAddressBar = false
 
-    let browserView = AHChromiumBrowserView(frame: .zero)
+    private(set) var browserView: AHChromiumBrowserView
     private var lastSyncedBrowserURL = "about:blank"
     private var activeRestaurantRequest = ChromiumRestaurantSearchRequest.opentableDefault
     private var lastApprovalDecision: Bool?
 
     override init() {
+        browserView = AHChromiumBrowserView(frame: .zero)
         super.init()
         browserView.delegate = self
-        browserView.loadURLString(addressBarText)
         syncStateFromView()
     }
 
@@ -319,6 +320,20 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
             flowStatusSummary: flowStatusSummary(),
             approvalStatusSummary: approvalStatusSummary()
         )
+    }
+
+    func prepareForShutdown() {
+        browserView.prepareForShutdown()
+        syncStateFromView()
+    }
+
+    func resetBrowserView() {
+        browserView.delegate = nil
+        browserView = AHChromiumBrowserView(frame: .zero)
+        browserView.delegate = self
+        browserViewIdentity = UUID()
+        lastSyncedBrowserURL = "about:blank"
+        syncStateFromView()
     }
 
     func openURLForAgent(_ url: String) async throws -> ChromiumBrowserState {
