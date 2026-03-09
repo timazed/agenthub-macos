@@ -62,6 +62,7 @@ export SPARKLE_PUBLIC_ED_KEY="<paste-public-key-here>"
 Create a local updates directory:
 
 ```bash
+rm -rf /tmp/agenthub-builds/1.0 /tmp/agenthub-builds/1.1 /tmp/agenthub-updates/dev
 mkdir -p /tmp/agenthub-updates/dev
 ```
 
@@ -118,17 +119,44 @@ Package it for Sparkle:
 ditto -c -k --keepParent /tmp/agenthub-builds/1.1/AgentHub.app /tmp/agenthub-updates/dev/AgentHub-1.1.zip
 ```
 
+Verify the update candidate contains the Sparkle keys before generating the appcast:
+
+```bash
+plutil -p /tmp/agenthub-builds/1.1/AgentHub.app/Contents/Info.plist | rg 'SUFeedURL|SUPublicEDKey|CFBundleShortVersionString|CFBundleVersion'
+unzip -p /tmp/agenthub-updates/dev/AgentHub-1.1.zip AgentHub.app/Contents/Info.plist | plutil -p - | rg 'SUFeedURL|SUPublicEDKey|CFBundleShortVersionString|CFBundleVersion'
+```
+
 ## 6. Generate the Dev Appcast
+
+Delete any stale appcast first. Sparkle preserves existing feed items by version, so an old `1.1` entry can survive reruns and keep a bad URL:
+
+```bash
+rm -f /tmp/agenthub-updates/dev/appcast.xml
+```
 
 Generate `appcast.xml` for the updates folder:
 
 ```bash
 "$GENERATE_APPCAST_BIN" \
-  --download-url-prefix http://127.0.0.1:8000/dev \
-  --release-notes-url-prefix http://127.0.0.1:8000/dev \
+  --account ed25519 \
+  --download-url-prefix http://127.0.0.1:8000/dev/ \
+  --release-notes-url-prefix http://127.0.0.1:8000/dev/ \
   -o /tmp/agenthub-updates/dev/appcast.xml \
   /tmp/agenthub-updates/dev
 ```
+
+The trailing slash on `--download-url-prefix` matters. Without it, Foundation resolves the archive URL as `http://127.0.0.1:8000/AgentHub-1.1.zip` instead of `http://127.0.0.1:8000/dev/AgentHub-1.1.zip`.
+
+Verify the generated enclosure URL and signature:
+
+```bash
+sed -n '1,80p' /tmp/agenthub-updates/dev/appcast.xml
+```
+
+The enclosure must contain both:
+
+- `url="http://127.0.0.1:8000/dev/AgentHub-1.1.zip"`
+- `sparkle:edSignature="..."`
 
 At this point the folder should look like:
 
@@ -154,6 +182,15 @@ The feed URL now matches the app's Debug default:
 http://127.0.0.1:8000/dev/appcast.xml
 ```
 
+Verify the exact URLs Sparkle will request:
+
+```bash
+curl -I http://127.0.0.1:8000/dev/appcast.xml
+curl -I http://127.0.0.1:8000/dev/AgentHub-1.1.zip
+```
+
+Both should return `200`.
+
 ## 8. Trigger the Update in AgentHub
 
 Launch `/tmp/agenthub-builds/1.0/AgentHub.app`.
@@ -168,7 +205,8 @@ In the app:
 If Sparkle does not re-check because of caching, clear the last-check timestamp and retry:
 
 ```bash
-defaults delete au.com.roseadvisory.AgentHub SULastCheckTime
+defaults delete au.com.roseadvisory.AgentHub SULastCheckTime 2>/dev/null || true
+defaults delete au.com.roseadvisory.AgentHub SUSkippedVersion 2>/dev/null || true
 ```
 
 ## 9. Verify the App Update Worked
@@ -213,3 +251,20 @@ If you intentionally changed the bundled Codex binary between the two builds, th
 - This validates the client update loop, not notarization or production hosting.
 - It does not validate the future build server, webhook receiver, or automatic Codex-release detection.
 - The current repo still emits an existing deployment target warning (`26.2` vs supported `26.0.99`) during Xcode builds.
+
+## Troubleshooting
+
+- `Check for Updates...` is greyed out:
+  The built app is missing `SUFeedURL` or `SUPublicEDKey`. Verify the running app's Info.plist contains both keys.
+
+- The app fetches `/dev/appcast.xml` but the server returns `404`:
+  You started the server in `/tmp/agenthub-updates/dev`. Start it in `/tmp/agenthub-updates` instead.
+
+- The appcast points at `/AgentHub-1.1.zip` instead of `/dev/AgentHub-1.1.zip`:
+  Regenerate with `--download-url-prefix http://127.0.0.1:8000/dev/` and keep the trailing slash.
+
+- Regenerating the appcast keeps producing the old enclosure URL:
+  Delete `/tmp/agenthub-updates/dev/appcast.xml` first. Sparkle reuses existing feed items by version.
+
+- `Install Update` fails after the archive downloads:
+  Re-check the zip contents with `unzip -p .../AgentHub-1.1.zip AgentHub.app/Contents/Info.plist | plutil -p -` and make sure the archive has the same `SUPublicEDKey` as the installed app.
