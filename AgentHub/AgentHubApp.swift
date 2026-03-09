@@ -40,7 +40,10 @@ struct AgentHubApp: App {
     @StateObject private var bootstrap = AppBootstrap.shared
 
     var body: some Scene {
-        let _ = appDelegate.configureStatusMenu(openDashboard: openDashboard)
+        let _ = appDelegate.configureStatusMenu(
+            openDashboard: openDashboard,
+            openSettings: openSettings
+        )
 
         WindowGroup(id: AppSceneID.mainWindow) {
             Group {
@@ -62,7 +65,10 @@ struct AgentHubApp: App {
                     }
                 }
             }
-            .background(WindowChromeConfigurator())
+            .background(WindowChromeConfigurator(
+                windowIdentifier: AppWindowRegistry.mainWindowIdentifier,
+                style: .immersive
+            ))
             .toolbar {
                 ToolbarItem(placement: .automatic) {
                     Spacer()
@@ -77,19 +83,37 @@ struct AgentHubApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
         .defaultSize(width: 800, height: 800)
+
     }
 
     private func openDashboard() {
-        AppPresentationController.shared.dashboardWillOpen()
-        NSApp.activate(ignoringOtherApps: true)
+        AppPresentationController.shared.uiWindowWillOpen()
         if let window = AppWindowRegistry.existingMainWindow() {
-            if window.isMiniaturized {
-                window.deminiaturize(nil)
-            }
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
+            AppPresentationController.shared.presentWindow(window)
         } else {
             openWindow(id: AppSceneID.mainWindow)
+            AppPresentationController.shared.presentWindow(identifier: AppWindowRegistry.mainWindowIdentifier)
+        }
+    }
+
+    private func openSettings() {
+        AppPresentationController.shared.uiWindowWillOpen()
+        if let window = AppWindowRegistry.existingSettingsWindow() {
+            AppPresentationController.shared.presentWindow(window)
+        } else if let container = bootstrap.container {
+            SettingsWindowManager.shared.show(container: container)
+        } else if bootstrap.errorMessage == nil {
+            Task { @MainActor in
+                await bootstrap.loadIfNeeded()
+                if let container = bootstrap.container {
+                    SettingsWindowManager.shared.show(container: container)
+                }
+            }
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "Failed to Open Settings"
+            alert.informativeText = bootstrap.errorMessage ?? "Unknown error"
+            alert.runModal()
         }
     }
 }
@@ -124,9 +148,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func configureStatusMenu(openDashboard: @escaping @MainActor () -> Void) {
+    func configureStatusMenu(
+        openDashboard: @escaping @MainActor () -> Void,
+        openSettings: @escaping @MainActor () -> Void
+    ) {
         statusMenuController.installIfNeeded()
         statusMenuController.openDashboard = openDashboard
+        statusMenuController.openSettings = openSettings
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -137,6 +165,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 private final class StatusMenuController: NSObject {
     var openDashboard: (() -> Void)?
+    var openSettings: (() -> Void)?
 
     private var statusItem: NSStatusItem?
     private let menu = NSMenu()
@@ -169,6 +198,14 @@ private final class StatusMenuController: NSObject {
         dashboardItem.target = self
         menu.addItem(dashboardItem)
 
+        let settingsItem = NSMenuItem(
+            title: "Settings",
+            action: #selector(handleOpenSettings),
+            keyEquivalent: ""
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit", action: #selector(handleQuit), keyEquivalent: "")
@@ -181,6 +218,10 @@ private final class StatusMenuController: NSObject {
 
     @objc private func handleOpenDashboard() {
         openDashboard?()
+    }
+
+    @objc private func handleOpenSettings() {
+        openSettings?()
     }
 
     @objc private func handleQuit() {

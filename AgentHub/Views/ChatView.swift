@@ -22,13 +22,7 @@ struct ChatView: View {
             conversationSurface
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            LinearGradient(
-                colors: backgroundGradientColors,
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .background(.clear)
         .overlay(alignment: .top) {
             headerOverlay
         }
@@ -79,20 +73,25 @@ struct ChatView: View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, 20)
-                .background(
-                    Rectangle()
-                        .fill(.clear)
-                        .liquidGlass()
-                        .mask(
-                            LinearGradient(
-                                colors: [.black, .black.opacity(0.82), .clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                )
 
             Spacer(minLength: 0)
+        }
+        .background(alignment: .top) {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .frame(height: 112)
+                .mask(
+                    LinearGradient(
+                        colors: [
+                            .black.opacity(0.95),
+                            .black.opacity(0.55),
+                            .clear
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .allowsHitTesting(false)
         }
         .ignoresSafeArea(.container, edges: .top)
         .allowsHitTesting(true)
@@ -105,15 +104,7 @@ struct ChatView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 16)
         }
-        .background(
-            LinearGradient(
-                colors: [Color.clear, overlayShade.opacity(colorScheme == .dark ? 0.44 : 0.12)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: bottomOverlayHeight)
-            .frame(maxHeight: .infinity, alignment: .bottom)
-        )
+        .background(.clear)
     }
 
     private var header: some View {
@@ -145,7 +136,7 @@ struct ChatView: View {
                             .fill(.ultraThinMaterial)
                             .overlay(
                                 Capsule(style: .continuous)
-                                    .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08), lineWidth: 1)
+                                    .stroke(Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04), lineWidth: 1)
                             )
                     )
                 }
@@ -298,21 +289,6 @@ struct ChatView: View {
                 proxy.scrollTo(target, anchor: .bottom)
             }
         }
-    }
-
-    private var backgroundGradientColors: [Color] {
-        if colorScheme == .dark {
-            return [
-                .black,
-                Color(red: 0.04, green: 0.05, blue: 0.08),
-                .black
-            ]
-        }
-        return [
-            .white,
-            Color(red: 0.95, green: 0.97, blue: 1.0),
-            .white
-        ]
     }
 
     private var overlayShade: Color {

@@ -11,15 +11,33 @@ final class AppPresentationController {
         NSApp.setActivationPolicy(.accessory)
     }
 
-    func dashboardWillOpen() {
+    func uiWindowWillOpen() {
         NSApp.setActivationPolicy(.regular)
     }
 
-    func registerMainWindow(_ window: NSWindow) {
+    func presentWindow(_ window: NSWindow?) {
+        guard let window else { return }
+        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+    }
+
+    func presentWindow(identifier: NSUserInterfaceItemIdentifier) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.presentWindow(AppWindowRegistry.existingWindow(identifier: identifier))
+        }
+    }
+
+    func registerWindow(_ window: NSWindow, identifier: NSUserInterfaceItemIdentifier) {
         let windowID = ObjectIdentifier(window)
         if observerTokens[windowID] == nil {
             observerTokens[windowID] = makeObservers(for: window)
         }
+        AppWindowRegistry.registerWindow(window, identifier: identifier)
         updateActivationPolicy()
     }
 
@@ -45,7 +63,7 @@ final class AppPresentationController {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            AppWindowRegistry.unregisterMainWindow(window)
+            AppWindowRegistry.unregisterWindow(window)
             self?.observerTokens.removeValue(forKey: ObjectIdentifier(window))
             DispatchQueue.main.async {
                 self?.updateActivationPolicy()
@@ -57,7 +75,7 @@ final class AppPresentationController {
     }
 
     private func updateActivationPolicy() {
-        let shouldShowDock = AppWindowRegistry.existingMainWindow().map { window in
+        let shouldShowDock = AppWindowRegistry.existingTrackedWindow().map { window in
             window.isVisible && !window.isMiniaturized
         } ?? false
 
@@ -70,29 +88,73 @@ final class AppPresentationController {
 
 enum AppWindowRegistry {
     static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("main-window")
-    private static weak var mainWindow: NSWindow?
+    static let settingsWindowIdentifier = NSUserInterfaceItemIdentifier("settings-window")
 
-    static func registerMainWindow(_ window: NSWindow) {
-        window.identifier = mainWindowIdentifier
-        mainWindow = window
+    private static weak var mainWindow: NSWindow?
+    private static weak var settingsWindow: NSWindow?
+
+    static func registerWindow(_ window: NSWindow, identifier: NSUserInterfaceItemIdentifier) {
+        window.identifier = identifier
+        switch identifier {
+        case mainWindowIdentifier:
+            mainWindow = window
+        case settingsWindowIdentifier:
+            settingsWindow = window
+        default:
+            break
+        }
     }
 
-    static func unregisterMainWindow(_ window: NSWindow) {
-        guard mainWindow === window else { return }
-        mainWindow = nil
+    static func unregisterWindow(_ window: NSWindow) {
+        if mainWindow === window {
+            mainWindow = nil
+        }
+        if settingsWindow === window {
+            settingsWindow = nil
+        }
     }
 
     static func existingMainWindow() -> NSWindow? {
-        if let mainWindow, mainWindow.isVisible || mainWindow.isMiniaturized {
-            return mainWindow
-        }
+        existingWindow(identifier: mainWindowIdentifier)
+    }
 
-        mainWindow = nil
+    static func existingSettingsWindow() -> NSWindow? {
+        existingWindow(identifier: settingsWindowIdentifier)
+    }
+
+    static func existingTrackedWindow() -> NSWindow? {
+        existingMainWindow() ?? existingSettingsWindow()
+    }
+
+    static func existingWindow(identifier: NSUserInterfaceItemIdentifier) -> NSWindow? {
+        switch identifier {
+        case mainWindowIdentifier:
+            if let mainWindow, mainWindow.isVisible || mainWindow.isMiniaturized {
+                return mainWindow
+            }
+            mainWindow = nil
+        case settingsWindowIdentifier:
+            if let settingsWindow, settingsWindow.isVisible || settingsWindow.isMiniaturized {
+                return settingsWindow
+            }
+            settingsWindow = nil
+        default:
+            break
+        }
 
         let discoveredWindow = NSApp.windows.first {
-            $0.identifier == mainWindowIdentifier && ($0.isVisible || $0.isMiniaturized)
+            $0.identifier == identifier && ($0.isVisible || $0.isMiniaturized)
         }
-        mainWindow = discoveredWindow
+
+        switch identifier {
+        case mainWindowIdentifier:
+            mainWindow = discoveredWindow
+        case settingsWindowIdentifier:
+            settingsWindow = discoveredWindow
+        default:
+            break
+        }
+
         return discoveredWindow
     }
 }
@@ -121,6 +183,14 @@ struct WindowVisualEffectView: NSViewRepresentable {
 }
 
 struct WindowChromeConfigurator: NSViewRepresentable {
+    let windowIdentifier: NSUserInterfaceItemIdentifier
+    var style: Style = .immersive
+
+    enum Style {
+        case immersive
+        case settings
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
@@ -137,15 +207,27 @@ struct WindowChromeConfigurator: NSViewRepresentable {
 
     private func configureWindow(for view: NSView) {
         guard let window = view.window else { return }
-        AppWindowRegistry.registerMainWindow(window)
-        AppPresentationController.shared.registerMainWindow(window)
+        AppPresentationController.shared.registerWindow(window, identifier: windowIdentifier)
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.isOpaque = false
-        window.backgroundColor = .clear
         window.hasShadow = true
-        window.isMovableByWindowBackground = true
-        window.toolbarStyle = .unifiedCompact
-        window.styleMask.insert(.fullSizeContentView)
+
+        switch style {
+        case .immersive:
+            window.styleMask.insert(.fullSizeContentView)
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.isMovableByWindowBackground = true
+            window.toolbarStyle = .unifiedCompact
+        case .settings:
+            window.styleMask.insert(.fullSizeContentView)
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.isMovableByWindowBackground = true
+            window.toolbarStyle = .unified
+        }
     }
 }

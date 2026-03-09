@@ -291,7 +291,6 @@ private struct LoginGatePreviewHost: View {
 private struct TaskDrawerPreviewHost: View {
     @StateObject private var tasksViewModel = PreviewFactory.makeTasksViewModel()
     @StateObject private var activityViewModel = PreviewFactory.makeActivityViewModel()
-    @StateObject private var iMessageViewModel = PreviewFactory.makeIMessageViewModel()
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -299,7 +298,6 @@ private struct TaskDrawerPreviewHost: View {
             AssistantPanelView(
                 tasksViewModel: tasksViewModel,
                 activityViewModel: activityViewModel,
-                iMessageViewModel: iMessageViewModel,
                 onClose: {},
                 onAddTask: {},
                 onEditTask: { _ in }
