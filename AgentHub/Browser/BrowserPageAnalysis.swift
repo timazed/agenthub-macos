@@ -160,10 +160,11 @@ enum BrowserPageAnalyzer {
             || inspection.stepIndicators.contains { $0.label.localizedCaseInsensitiveContains("verify") }
         let slotSelection = inspection.semanticTargets.contains { $0.kind == "slot_option" }
             || inspection.bookingFunnel?.hasSlotSelection == true
-        let selectionStage = inspection.pageStage == "results"
+        let selectionStage = (inspection.pageStage == "results"
             || !inspection.resultLists.isEmpty
             || inspection.cards.count >= 2
-            || slotSelection
+            || slotSelection)
+            && !hasLateStageSignals
         let discoveryStage = inspection.hasSearchField
             || inspection.pageStage == "search"
             || inspection.primaryActions.contains { action in
@@ -191,18 +192,18 @@ enum BrowserPageAnalyzer {
             stage = "failure"
         } else if verificationLike {
             stage = "verification"
+        } else if !requirements.isEmpty && (finalBoundary != nil || reviewLike) {
+            stage = "details_form"
         } else if finalBoundary != nil && requirements.isEmpty {
-            if let legacyWorkflowHint, ["discovery", "selection"].contains(legacyWorkflowHint) {
-                stage = legacyWorkflowHint
-            } else {
-                stage = "final_submit"
-            }
-        } else if let legacyWorkflowHint, ["discovery", "selection", "details_form", "review"].contains(legacyWorkflowHint) {
-            stage = legacyWorkflowHint
+            stage = "final_submit"
         } else if finalBoundary != nil || reviewLike {
             stage = "review"
+        } else if let legacyWorkflowHint, ["details_form", "review"].contains(legacyWorkflowHint) {
+            stage = legacyWorkflowHint
         } else if hasDataEntryForm || requirements.contains(where: { $0.kind != "verification_code" }) {
             stage = "details_form"
+        } else if let legacyWorkflowHint, ["discovery", "selection"].contains(legacyWorkflowHint) {
+            stage = legacyWorkflowHint
         } else if selectionStage {
             stage = "selection"
         } else if discoveryStage {
@@ -436,10 +437,7 @@ enum BrowserPageAnalyzer {
             inspection.dialogs.map(\.label).joined(separator: "\n"),
             inspection.forms.map(\.label).joined(separator: "\n"),
             inspection.notices.map(\.label).joined(separator: "\n"),
-            inspection.stepIndicators.map(\.label).joined(separator: "\n"),
-            inspection.transactionalBoundaries.map(\.label).joined(separator: "\n"),
-            inspection.transactionalBoundaries.map(\.kind).joined(separator: "\n"),
-            inspection.primaryActions.map(\.label).joined(separator: "\n")
+            inspection.stepIndicators.map(\.label).joined(separator: "\n")
         ]
         let signals = rawSignals
             .map { $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -450,12 +448,15 @@ enum BrowserPageAnalyzer {
                     || signal.contains("booking confirmation")
                     || signal.contains("order confirmation")
                     || signal.contains("confirmation number")
-                    || signal.contains("reservation complete")
                     || signal.contains("booking confirmed")
                     || signal.contains("order placed")
                     || signal.contains("thank you")
             }
-            || inspection.notices.contains(where: { $0.kind == "success" })
+            || inspection.notices.contains(where: { notice in
+                notice.kind == "success"
+                    && !notice.label.lowercased().contains("complete reservation")
+                    && !notice.label.lowercased().contains("complete your reservation")
+            })
         let hasFailure = signals.contains { signal in
                 signal.contains("expired")
                     || signal.contains("timed out")

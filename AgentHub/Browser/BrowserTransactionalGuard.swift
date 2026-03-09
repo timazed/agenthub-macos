@@ -56,6 +56,9 @@ enum BrowserTransactionalGuard {
         boundary: ChromiumTransactionalBoundary
     ) -> Bool {
         guard let workflow = BrowserPageAnalyzer.workflow(for: inspection) else { return false }
+        if isEarlyBookingStage(inspection.bookingFunnel?.stage) {
+            return false
+        }
         if workflow.hasSuccessSignal || workflow.hasFailureSignal {
             return false
         }
@@ -78,6 +81,9 @@ enum BrowserTransactionalGuard {
         detail: String
     ) -> Bool {
         guard let workflow = BrowserPageAnalyzer.workflow(for: inspection) else { return true }
+        if isEarlyBookingStage(inspection.bookingFunnel?.stage) {
+            return false
+        }
         if workflow.hasSuccessSignal || workflow.hasFailureSignal {
             return false
         }
@@ -128,6 +134,17 @@ enum BrowserTransactionalGuard {
     nonisolated private static func isStrongerThanSlotSelectionLabel(_ label: String) -> Bool {
         let lowered = label.lowercased()
         return strongerLateStageKeywords.contains { lowered.contains($0) }
+    }
+
+    nonisolated private static func isEarlyBookingStage(_ stage: String?) -> Bool {
+        guard let stage else { return false }
+        return [
+            "search",
+            "results",
+            "venue_detail",
+            "booking_widget",
+            "slot_selection"
+        ].contains(stage.lowercased())
     }
 
     nonisolated private static let transactionalGoalKeywords = [

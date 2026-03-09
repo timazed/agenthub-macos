@@ -58,6 +58,7 @@ The flattened `semanticTargets` graph exists to support runtime-side target reso
 The new `bookingFunnel` model captures reusable late-stage signals such as selected date/time/party, booking-widget presence, slot selection, guest-details forms, review/payment forms, and whether the current page has truly progressed far enough to treat a `reserve/book` CTA as a confirmation boundary.
 The generic date-picker action now matches normalized targets such as `2026-03-09` against visible calendar labels and day cells, and result-card action ranking now prefers venue/detail navigation over map/help/share controls.
 Inspection also emits normalized field metadata such as `autocomplete`, `inputMode`, `fieldPurpose`, `isRequired`, `isSelected`, and `validationMessage`, which is what the generic requirement engine uses to infer missing profile data, verification codes, consents, payment fields, and validation errors.
+Review/details pages now suppress incidental result-list noise, down-rank auth-choice controls like `Use email instead`, and avoid giant select labels that previously swamped the semantic target list.
 
 ## Generic Requirements And Workflow
 
@@ -67,6 +68,7 @@ Inspection also emits normalized field metadata such as `autocomplete`, `inputMo
 - `workflow`: `discovery`, `selection`, `details_form`, `verification`, `review`, `final_submit`, `success`, `failure`, `dialog`, or `browse`
 
 This is the layer that lets the browser agent ask for exactly the missing data when it cannot proceed autonomously, instead of relying on OpenTable-specific fallbacks.
+It now also avoids false `success` classification on live review pages that still have required input blocked.
 
 ## Runtime Behavior
 
@@ -83,6 +85,7 @@ The generic loop in `ChatSessionService` now:
 - pauses on missing promptable requirements and asks the user only for the exact missing data
 - auto-fills known inline request data or saved persona contact data into semantic form fields before asking again
 - keeps follow-up messages attached to the active Chromium session first, so later replies like phone/email/address/OTP/`yes` continue the current page instead of restarting the goal
+- blocks final-submit and auth-toggle clicks while required inputs are still missing, so the loop clarifies instead of spinning on `Complete reservation` / `Use email instead`
 
 ## Profile And Follow-Up Data
 

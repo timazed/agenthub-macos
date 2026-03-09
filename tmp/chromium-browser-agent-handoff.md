@@ -25,7 +25,11 @@
 - Expanded `PersonaContactProfile` / `PersonaManager` so saved persona data can be loaded and updated generically for browser autofill.
 - Tightened `BrowserTransactionalGuard` to use generic workflow state instead of booking-only assumptions when deciding whether to auto-stop or require approval.
 - Tightened `BrowserPageAnalyzer` success/failure detection so repeated labels like `Complete reservation Complete reservation` do not accidentally become fake success signals.
+- Tightened review/details-page inspection so booking/details pages are not misclassified as `results`/`success` just because they contain incidental cards, country-code lists, or repeated submit labels.
+- Down-ranked auth/noise controls such as `Use email instead`, `Use phone instead`, `Sign in`, and skip-navigation links in both semantic extraction and semantic resolution.
+- Added a runtime execution guard in `ChatSessionService` so final-submit and auth-toggle clicks are rejected while required input is still missing; the loop now has to clarify or fill the missing requirement instead of spinning.
 - Added tests for generic missing-requirement inference, generic workflow-stage inference, inline profile-data parsing, address line 2 + consent parsing, and OTP autofill preparation.
+- Added regression tests for the live OpenTable review-page failure: required phone on `booking/details` now stages as blocked `details_form`, not `success`.
 
 ## Verification
 
@@ -77,6 +81,6 @@ It reached:
 ## Known Follow-Up
 
 - Profile/settings UI still needs to expose the saved contact fields now supported by `PersonaManager` if product wants zero-chat autofill for phone/email/address/name.
-- Refine venue-detail/page-stage inference. The current OpenTable detail-page artifact reaches the correct approval boundary, but `pageStage` / `bookingFunnel.stage` can still stay overly coarse on some detail pages.
+- Run live validation again against the OpenTable review/auth flow. The generic substrate bugs that caused `booking/details` to be misread as `results`/`success` and to loop on auth toggles are fixed in code, but this slice still needs fresh live confirmation.
 - Replace the current headless containment shutdown path with a fully graceful in-process Chromium/CEF drain. Chromium/CEF can still fatal after artifacts are written.
 - Continue periodic live smoke runs against the manifest to catch site drift and regressions in semantic extraction.

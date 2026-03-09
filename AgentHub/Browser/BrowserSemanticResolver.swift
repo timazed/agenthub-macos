@@ -270,6 +270,8 @@ enum BrowserSemanticResolver {
 
         if target.transactionalKind == "final_confirmation" { score += 20 }
         if target.transactionalKind == "booking_slot" { score += 30 }
+        if isAuthChoiceLabel(target.label) { score -= 160 }
+        if isSkipOrUtilityLabel(target.label) { score -= 180 }
         return score
     }
 
@@ -319,5 +321,30 @@ enum BrowserSemanticResolver {
             .lowercased()
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func isAuthChoiceLabel(_ value: String?) -> Bool {
+        let normalized = normalize(value)
+        return normalized.contains("use email instead")
+            || normalized.contains("continue with email")
+            || normalized.contains("continue with phone")
+            || normalized.contains("use phone instead")
+            || normalized.contains("sign in")
+            || normalized.contains("log in")
+            || normalized.contains("login")
+    }
+
+    nonisolated private static func isSkipOrUtilityLabel(_ value: String?) -> Bool {
+        let normalized = normalize(value)
+        return normalized.contains("skip to main content")
+            || normalized.contains("skip navigation")
+            || normalized.contains("skip to content")
+            || normalized.contains("map")
+            || normalized.contains("directions")
+            || normalized.contains("share")
+            || normalized.contains("save")
+            || normalized.contains("favorite")
+            || normalized.contains("favourite")
+            || normalized.contains("bookmark")
     }
 }

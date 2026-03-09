@@ -1374,14 +1374,54 @@ enum ChromiumBrowserScripts {
             }
             return parts.join(" > ");
         };
-        const labelFor = (element) => normalize([
-            element?.getAttribute?.("aria-label"),
-            element?.getAttribute?.("placeholder"),
-            element?.getAttribute?.("name"),
-            element?.id,
-            element?.innerText,
-            element?.textContent
-        ].filter(Boolean).join(" "));
+        const labelFor = (element) => {
+            if (!element) { return ""; }
+            const tagName = element.tagName?.toLowerCase?.() || "";
+            const selectedOptionLabel = element instanceof HTMLSelectElement
+                ? normalize(element.selectedOptions?.[0]?.textContent || element.value || "")
+                : "";
+            const explicitLabel = normalize([
+                element.getAttribute?.("aria-label"),
+                element.getAttribute?.("placeholder"),
+                element.getAttribute?.("name"),
+                element.id,
+                element.labels ? Array.from(element.labels).map((label) => label.textContent || "").join(" ") : "",
+                element.closest?.("label")?.textContent
+            ].filter(Boolean).join(" "));
+            if (explicitLabel) {
+                if (tagName === "select" && selectedOptionLabel && selectedOptionLabel.toLowerCase() !== explicitLabel.toLowerCase()) {
+                    return normalize([explicitLabel, selectedOptionLabel].join(" "));
+                }
+                return explicitLabel;
+            }
+            if (tagName === "select" && selectedOptionLabel) { return selectedOptionLabel; }
+            if (/input|textarea/.test(tagName)) {
+                return normalize([
+                    element.getAttribute?.("aria-label"),
+                    element.getAttribute?.("placeholder"),
+                    element.labels ? Array.from(element.labels).map((label) => label.textContent || "").join(" ") : "",
+                    element.closest?.("label")?.textContent
+                ].filter(Boolean).join(" "));
+            }
+            return normalize([
+                element.innerText,
+                element.textContent
+            ].filter(Boolean).join(" "));
+        };
+        const isAuthChoiceAction = (label) => /use email instead|continue with email|continue with phone|use phone instead|sign in|log in|login|verify account|verify your account/.test(normalizeLower(label));
+        const isSkipNavigationAction = (label) => /skip to main content|skip navigation|skip to content/.test(normalizeLower(label));
+        const isUtilityAction = (label) => /save|favorite|favourite|share|help|map|directions|bookmark/.test(normalizeLower(label));
+        const isFormLikeContainer = (element) => !!element?.closest?.('form, [role="dialog"], dialog, [aria-modal="true"], [data-testid*="form" i], [data-test*="form" i], [class*="form" i]');
+        const isResultLikeContainer = (element) => {
+            if (!element || isFormLikeContainer(element)) { return false; }
+            const directItems = Array.from(element.querySelectorAll(':scope > li, :scope > article, :scope > div, :scope > [role="listitem"], :scope > a[href]'))
+                .filter(isVisible);
+            if (directItems.length < 3) { return false; }
+            const formControlCount = element.querySelectorAll('input, select, textarea, [role="textbox"], [role="combobox"]').length;
+            const navigationCount = element.querySelectorAll('a[href], button, [role="button"], [role="link"]').length;
+            return navigationCount >= 2 && formControlCount <= 1;
+        };
+        const hasLargeSelectLabel = (label) => normalize(label).length > 120;
         const inferPurpose = (element, label) => {
             const descriptor = normalizeLower([
                 label,
@@ -1452,6 +1492,10 @@ enum ChromiumBrowserScripts {
             if (/search|find|continue|next|submit|apply/.test(descriptor)) { score += 45; }
             if (/reserve|book|checkout|confirm|purchase|pay/.test(descriptor)) { score += 80; }
             if (element?.closest?.('form, [role="dialog"], dialog')) { score += 15; }
+            if (isAuthChoiceAction(label)) { score -= 120; }
+            if (isSkipNavigationAction(label) || isUtilityAction(label)) { score -= 180; }
+            if ((element?.tagName?.toLowerCase?.() || "") === "select" && hasLargeSelectLabel(label)) { score -= 140; }
+            if ((element?.tagName?.toLowerCase?.() || "") === "a" && /skip|jump/.test(descriptor)) { score -= 160; }
             return score;
         };
         const groupLabelFor = (element) => {
@@ -1459,9 +1503,8 @@ enum ChromiumBrowserScripts {
             if (!container || container === element) { return ""; }
             return labelFor(container);
         };
-        const interactiveElements = Array.from(document.querySelectorAll('input, button, select, textarea, a[href], [role="button"], [role="link"], [role="combobox"]'))
+        const interactiveElements = Array.from(document.querySelectorAll('input, button, select, textarea, a[href], [role="button"], [role="link"], [role="combobox"], [role="textbox"]'))
             .filter(isVisible)
-            .slice(0, 24)
             .map((element, index) => {
                 const label = labelFor(element);
                 return {
@@ -1482,7 +1525,9 @@ enum ChromiumBrowserScripts {
                     priority: actionPriority(element, label)
                 };
             })
-            .sort((lhs, rhs) => rhs.priority - lhs.priority);
+            .filter((element) => element.label && element.priority > -140)
+            .sort((lhs, rhs) => rhs.priority - lhs.priority)
+            .slice(0, 32);
 
         const hasSearchField = interactiveElements.some((element) => /search|restaurant|location|cuisine|where/i.test(element.label));
 
@@ -1490,9 +1535,8 @@ enum ChromiumBrowserScripts {
             .filter(isVisible)
             .slice(0, 6)
             .map((form, formIndex) => {
-                const fields = Array.from(form.querySelectorAll('input, select, textarea, [role="combobox"]'))
+                const fields = Array.from(form.querySelectorAll('input, select, textarea, [role="combobox"], [role="textbox"]'))
                     .filter(isVisible)
-                    .slice(0, 8)
                     .map((field, fieldIndex) => ({
                         id: `form-${formIndex}-field-${fieldIndex}`,
                         label: labelFor(field),
@@ -1510,7 +1554,14 @@ enum ChromiumBrowserScripts {
                             || field.getAttribute("aria-selected") === "true"
                             || field.getAttribute("aria-checked") === "true",
                         validationMessage: validationMessageFor(field)
-                    }));
+                    }))
+                    .filter((field) => field.label || field.validationMessage || field.isRequired)
+                    .sort((lhs, rhs) => {
+                        const lhsScore = (lhs.isRequired ? 20 : 0) + (lhs.validationMessage ? 10 : 0);
+                        const rhsScore = (rhs.isRequired ? 20 : 0) + (rhs.validationMessage ? 10 : 0);
+                        return rhsScore - lhsScore;
+                    })
+                    .slice(0, 12);
                 const submit = Array.from(form.querySelectorAll('button, input[type="submit"], [role="button"]'))
                     .filter(isVisible)[0];
                 return {
@@ -1552,6 +1603,7 @@ enum ChromiumBrowserScripts {
 
         const resultLists = Array.from(document.querySelectorAll('ul, ol, [role="list"], section, div'))
             .filter(isVisible)
+            .filter(isResultLikeContainer)
             .map((container, index) => {
                 const items = Array.from(container.querySelectorAll(':scope > li, :scope > article, :scope > div, :scope > [role="listitem"], :scope > a[href]'))
                     .filter(isVisible)
@@ -1615,8 +1667,10 @@ enum ChromiumBrowserScripts {
 
         const cards = Array.from(document.querySelectorAll('article, li, [data-test], [data-testid], section'))
             .filter(isVisible)
+            .filter((element) => !isFormLikeContainer(element))
             .map((element, index) => {
                 const isStandaloneControl = element.matches?.('button, a[href], input, select, textarea, [role="button"], [role="link"], [role="combobox"]');
+                const formControlCount = element.querySelectorAll('input, select, textarea, [role="textbox"], [role="combobox"]').length;
                 const title = normalize(
                     element.querySelector('h1, h2, h3, h4, a[href], [role="heading"]')?.textContent
                     || element.getAttribute("aria-label")
@@ -1644,10 +1698,11 @@ enum ChromiumBrowserScripts {
                     selector: selectorFor(element),
                     actionSelector: action ? selectorFor(action) : null,
                     badges: badgeNodes,
-                    isStandaloneControl: !!isStandaloneControl
+                    isStandaloneControl: !!isStandaloneControl,
+                    formControlCount
                 };
             })
-            .filter((card) => card.title && !card.isStandaloneControl && (card.actionSelector || card.subtitle || card.badges.length > 0))
+            .filter((card) => card.title && !card.isStandaloneControl && card.formControlCount <= 1 && (card.actionSelector || card.subtitle || card.badges.length > 0))
             .slice(0, 8);
 
         const dialogs = Array.from(document.querySelectorAll('[role="dialog"], dialog, [aria-modal="true"]'))
@@ -1767,6 +1822,9 @@ enum ChromiumBrowserScripts {
                 if (/search|find|continue|next/.test(labelLower)) { priority += 30; }
                 if (/reserve|book|checkout|confirm|purchase/.test(labelLower)) { priority += 50; }
                 if (element.closest('[role="dialog"], dialog, form')) { priority += 15; }
+                if (isAuthChoiceAction(label)) { priority -= 120; }
+                if (isSkipNavigationAction(label) || isUtilityAction(label)) { priority -= 180; }
+                if (hasLargeSelectLabel(label)) { priority -= 140; }
                 return {
                     id: `action-${index}`,
                     label,
@@ -1775,7 +1833,7 @@ enum ChromiumBrowserScripts {
                     priority
                 };
             })
-            .filter((action) => action.label)
+            .filter((action) => action.label && action.priority > -120)
             .sort((lhs, rhs) => rhs.priority - lhs.priority)
             .slice(0, 10);
 
@@ -1854,10 +1912,19 @@ enum ChromiumBrowserScripts {
             .sort((lhs, rhs) => rhs.confidence - lhs.confidence)
             .slice(0, 8);
 
+        const reviewStructureSignal = forms.some((form) => {
+            const haystack = normalizeLower([
+                form.label,
+                form.submitLabel || "",
+                ...form.fields.map((field) => field.label)
+            ].join(" "));
+            return /review|details|phone|email|verification|occasion|special request|guest|contact|payment/.test(haystack);
+        }) || notices.some((notice) => /verification|required|invalid|phone|email|reservation|guest/.test(normalizeLower(notice.label)));
+
         const pageStage = (() => {
             const boundaryKinds = transactionalBoundaries.map((boundary) => boundary.kind);
             if (boundaryKinds.includes("final_confirmation") && !hasDenseResults) { return "final_confirmation"; }
-            if (boundaryKinds.includes("review_step") && !hasDenseResults) { return "review"; }
+            if ((boundaryKinds.includes("review_step") || reviewPageSignal.includes("booking/details") || reviewPageSignal.includes("complete your reservation") || reviewStructureSignal) && !hasDenseResults) { return "review"; }
             if (dialogs.length > 0 && primaryActions.some((action) => /continue|next|done|apply/i.test(action.label))) {
                 return "dialog";
             }

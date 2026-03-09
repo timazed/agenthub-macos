@@ -847,6 +847,17 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserInspectionScriptSuppressesReviewNoiseAndLargeSelectLabels() throws {
+        let script = ChromiumBrowserScripts.inspectPage
+
+        #expect(script.contains("selectedOptions?.[0]?.textContent"))
+        #expect(script.contains("isResultLikeContainer"))
+        #expect(script.contains("reviewStructureSignal"))
+        #expect(script.contains("hasLargeSelectLabel"))
+        #expect(script.contains("isAuthChoiceAction"))
+    }
+
+    @Test
     func sampleInspectionSupportsBookingFunnelState() throws {
         let inspection = sampleInspection(
             destinationSelector: "#destination",
@@ -1112,6 +1123,131 @@ struct AgentHubTests {
         #expect(workflow.stage == "final_submit")
         #expect(workflow.readyToContinue)
         #expect(workflow.finalBoundaryLabel == "Complete reservation")
+    }
+
+    @Test
+    func browserPageAnalyzerDoesNotTreatReviewPageWithRequiredPhoneAsSuccess() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "results",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [
+                ChromiumInteractiveElement(
+                    id: "interactive-phone-country",
+                    role: "select",
+                    label: "Choose Country Code United States +1",
+                    text: "",
+                    selector: "#phoneNumberCountryCode",
+                    value: "+1",
+                    href: nil,
+                    purpose: "phone_number",
+                    groupLabel: "Diner details",
+                    isRequired: true,
+                    isSelected: true,
+                    validationMessage: nil,
+                    priority: 10
+                )
+            ],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "contact-form",
+                    label: "Diner details",
+                    selector: "form.diner-details",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "input[name=\"phone\"]",
+                            controlType: "tel",
+                            value: nil,
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: "Phone number is required."
+                        )
+                    ]
+                )
+            ],
+            resultLists: [
+                ChromiumSemanticResultList(
+                    id: "list-0",
+                    label: "Country codes",
+                    selector: "#phoneNumberCountryCode",
+                    itemCount: 4,
+                    itemTitles: ["United States +1", "Canada +1"]
+                )
+            ],
+            cards: [
+                ChromiumSemanticCard(
+                    id: "card-0",
+                    title: "OpenTable - Complete your reservation",
+                    subtitle: "Reservation details",
+                    selector: "section.review",
+                    actionSelector: nil,
+                    badges: []
+                )
+            ],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-auth",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 20
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspection))
+
+        #expect(workflow.stage == "details_form")
+        #expect(workflow.hasSuccessSignal == false)
+        #expect(workflow.readyToContinue == false)
+        #expect(workflow.requirements.first?.kind == "phone_number")
     }
 
     @Test

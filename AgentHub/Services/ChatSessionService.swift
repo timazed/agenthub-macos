@@ -2495,6 +2495,7 @@ final class ChatSessionService {
         requireApproval: Bool = true
     ) async throws -> BrowserAgentExecutionResult {
         let resolution = BrowserSemanticResolver.resolve(command, inspection: inspection)
+        try validateWorkflowBlockedAction(command: command, resolution: resolution, inspection: inspection)
         switch command.action {
         case .inspectPage:
             let inspection = try await controller.inspectCurrentPageForAgent()
@@ -2883,6 +2884,37 @@ final class ChatSessionService {
         }
     }
 
+    private func validateWorkflowBlockedAction(
+        command: BrowserAgentCommand,
+        resolution: BrowserSemanticResolution,
+        inspection: ChromiumInspection?
+    ) throws {
+        guard let workflow = BrowserPageAnalyzer.workflow(for: inspection),
+              !workflow.requirements.isEmpty else {
+            return
+        }
+
+        let detail = (resolution.label ?? command.label ?? command.text ?? command.selector ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedDetail = detail.lowercased()
+        let missing = workflow.requirements.prefix(3).map(\.label).joined(separator: ", ")
+        let isNoiseAction = normalizedDetail.contains("use email instead")
+            || normalizedDetail.contains("use phone instead")
+            || normalizedDetail.contains("sign in")
+            || normalizedDetail.contains("log in")
+            || normalizedDetail.contains("login")
+            || normalizedDetail.contains("skip to main content")
+            || normalizedDetail.contains("dismiss")
+            || normalizedDetail.contains("close")
+        let isBlockedFinalAction = resolution.transactionalKind == "final_confirmation"
+            || (command.action == .submitForm && workflow.hasFinalConfirmationBoundary)
+
+        guard isNoiseAction || isBlockedFinalAction else { return }
+        throw ChromiumBrowserActionError(
+            message: "The page still requires input before this action can continue. Missing requirements: \(missing)."
+        )
+    }
+
     private func pendingApprovalCommand(from inspection: ChromiumInspection?) -> BrowserAgentCommand? {
         guard let inspection,
               let boundary = BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection) else {
@@ -2958,6 +2990,7 @@ final class ChatSessionService {
             || normalized.contains("no grouped control option matched")
             || normalized.contains("no visible date matched")
             || normalized.contains("does not match the goal focus")
+            || normalized.contains("still requires input before this action can continue")
             || normalized.contains("timed out waiting for selector")
             || normalized.contains("timed out waiting for dialog")
             || normalized.contains("timed out waiting for search results")
