@@ -33,6 +33,7 @@ enum BrowserTransactionalGuard {
                 $0.kind == "final_confirmation"
                     && !isPromotionalOrDiscoveryLabel($0.label)
                     && !isNonTransactionalSavedItemAction($0.label)
+                    && !isDiscoveryNavigationLabel($0.label)
                     && ($0.confidence >= 85 || isFinalConfirmationLabel($0.label))
             }
             .sorted { lhs, rhs in lhs.confidence > rhs.confidence }
@@ -57,6 +58,11 @@ enum BrowserTransactionalGuard {
     nonisolated private static func isNonTransactionalSavedItemAction(_ label: String) -> Bool {
         let lowered = label.lowercased()
         return savedItemKeywords.contains { lowered.contains($0) }
+    }
+
+    nonisolated private static func isDiscoveryNavigationLabel(_ label: String) -> Bool {
+        let lowered = label.lowercased()
+        return discoveryNavigationKeywords.contains { lowered.contains($0) }
     }
 
     nonisolated private static let transactionalGoalKeywords = [
@@ -104,5 +110,15 @@ enum BrowserTransactionalGuard {
         "saved items",
         "wishlist",
         "bookmark"
+    ]
+
+    nonisolated private static let discoveryNavigationKeywords = [
+        "view full list",
+        "view all",
+        "see all",
+        "show all",
+        "browse all",
+        "explore all",
+        "view more"
     ]
 }

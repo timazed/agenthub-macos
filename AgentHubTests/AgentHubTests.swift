@@ -319,6 +319,26 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserTransactionalGuardIgnoresDiscoveryListActions() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "View full list View full list View full list",
+                    selector: "a.view-full-list",
+                    confidence: 95
+                )
+            ]
+        )
+
+        #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection) == nil)
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "make a reservation on opentable", inspection: inspection) == false)
+    }
+
+    @Test
     func browserScenarioClassifierCategorizesTravelAndCheckoutGoals() throws {
         #expect(
             BrowserScenarioClassifier.category(
@@ -397,7 +417,17 @@ struct AgentHubTests {
 
         #expect(script.contains("isSavedItemAction"))
         #expect(script.contains("save restaurant to favorites"))
-        #expect(script.contains("!isPromotional && !isSavedItemAction"))
+        #expect(script.contains("!isPromotional"))
+        #expect(script.contains("!isSavedItemAction"))
+    }
+
+    @Test
+    func browserInspectionScriptIgnoresDiscoveryListActionsAsFinalConfirmation() throws {
+        let script = ChromiumBrowserScripts.inspectPage
+
+        #expect(script.contains("isDiscoveryNavigation"))
+        #expect(script.contains("view full list"))
+        #expect(script.contains("labelHasFinalKeyword || hasTransactionalContainer || hrefHasTransactionalKeyword"))
     }
 
     @Test

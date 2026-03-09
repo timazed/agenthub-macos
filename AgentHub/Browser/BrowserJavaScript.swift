@@ -1306,6 +1306,7 @@ enum ChromiumBrowserScripts {
             .filter(isVisible)
             .map((element, index) => {
                 const label = labelFor(element);
+                const labelLower = normalizeLower(label);
                 const descriptor = normalizeLower([
                     label,
                     labelFor(element.closest('form, [role="dialog"], dialog, section, article'))
@@ -1314,6 +1315,9 @@ enum ChromiumBrowserScripts {
                 const isLink = element.tagName.toLowerCase() === "a";
                 const isPromotional = /explore restaurants|exclusive tables|new cardmembers|dining credit|sapphire reserve|learn more|see details/.test(descriptor);
                 const isSavedItemAction = /save restaurant|save to favorites|save restaurant to favorites|favorite|favourite|favorites|favourites|saved items|wishlist|bookmark/.test(descriptor);
+                const isDiscoveryNavigation = /view full list|view all|see all|show all|browse all|explore all|view more/.test(labelLower);
+                const labelHasFinalKeyword = /reserve|book|confirm|complete|purchase|pay|place order/.test(labelLower);
+                const hrefHasTransactionalKeyword = /reserve|book|checkout|payment|confirm|purchase|order/.test(href);
                 const hasTransactionalContainer = !!element.closest('form, [role="dialog"], dialog, [data-testid*="checkout" i], [data-test*="checkout" i], [class*="checkout" i], [class*="payment" i], [class*="booking" i]');
                 let kind = "";
                 let confidence = 0;
@@ -1326,13 +1330,19 @@ enum ChromiumBrowserScripts {
                 } else if (/continue|next|review|checkout/.test(descriptor)) {
                     kind = "review_step";
                     confidence = 70;
-                } else if (!isPromotional && !isSavedItemAction && /reserve|book|confirm|complete|purchase|pay|place order/.test(descriptor)) {
+                } else if (
+                    !isPromotional
+                        && !isSavedItemAction
+                        && !isDiscoveryNavigation
+                        && /reserve|book|confirm|complete|purchase|pay|place order/.test(descriptor)
+                        && (labelHasFinalKeyword || hasTransactionalContainer || hrefHasTransactionalKeyword)
+                ) {
                     kind = "final_confirmation";
                     confidence = 70;
                     if (!isLink) { confidence += 15; }
                     if (hasTransactionalContainer) { confidence += 15; }
                     if (/confirm|purchase|pay|place order|complete booking/.test(descriptor)) { confidence += 10; }
-                    if (isLink && /reserve|book/.test(descriptor) && !hasTransactionalContainer && !/reserve|book|checkout|payment|confirm/.test(href)) {
+                    if (isLink && /reserve|book/.test(descriptor) && !hasTransactionalContainer && !hrefHasTransactionalKeyword) {
                         confidence -= 25;
                     }
                     if (label.length > 80) { confidence -= 20; }
