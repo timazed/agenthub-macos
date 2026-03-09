@@ -100,6 +100,7 @@ python3 /private/tmp/agenthub-macos-mr-70/scripts/browser_smoke_report.py compar
 
 The persisted artifact JSON now contains:
 
+- inferred scenario category (`restaurant`, `hotel`, `flight`, `checkout`, or `other`)
 - run outcome and final summary
 - recent browser history
 - full inspection history

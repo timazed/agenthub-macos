@@ -1056,6 +1056,7 @@ final class ChatSessionService {
             outcome: outcome,
             goalText: goalText,
             initialURL: initialURL,
+            scenarioCategory: BrowserScenarioClassifier.category(forGoalText: goalText, initialURL: initialURL),
             finalSummary: finalSummary,
             recentHistory: recentHistory,
             inspectionHistory: inspectionHistory,
@@ -1241,6 +1242,7 @@ private struct BrowserRunArtifactRecord: Codable {
     let outcome: String
     let goalText: String
     let initialURL: String?
+    let scenarioCategory: String
     let finalSummary: String
     let recentHistory: [String]
     let inspectionHistory: [ChromiumInspection]

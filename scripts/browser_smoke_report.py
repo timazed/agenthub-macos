@@ -115,6 +115,9 @@ class RunRecord:
 
     @property
     def scenario_key(self) -> str:
+        persisted = str(self.data.get("scenarioCategory") or "")
+        if persisted:
+            return persisted
         goal = self.goal_text.lower()
         url = self.initial_url.lower()
         if "opentable" in goal or "opentable" in url:

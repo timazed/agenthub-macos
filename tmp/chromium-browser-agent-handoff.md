@@ -18,7 +18,7 @@
   - resolve semantic targets before execution
   - retry recoverable stale actions against refreshed semantic targets
   - track richer browser progress snapshots
-  - persist browser-agent run artifacts with inspection history, action trace, snapshots, and automatic final snapshot capture
+  - persist browser-agent run artifacts with scenario category, inspection history, action trace, snapshots, and automatic final snapshot capture
 - Tightened `ChromiumBrowserController` approval behavior so semantic final-confirmation boundaries gate approval more precisely.
 - Added a live-smoke scenario manifest and artifact-report script for cross-site validation.
 - Added tests for booking parameter parsing, generic intent parsing, browser command parsing, semantic retargeting, and transactional-boundary classification.

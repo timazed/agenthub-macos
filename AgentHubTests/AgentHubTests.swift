@@ -265,6 +265,34 @@ struct AgentHubTests {
         #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection)?.selector == "#book-now")
         #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "book this flight", inspection: inspection))
     }
+
+    @Test
+    func browserScenarioClassifierCategorizesTravelAndCheckoutGoals() throws {
+        #expect(
+            BrowserScenarioClassifier.category(
+                forGoalText: "book this restaurant on opentable",
+                initialURL: "https://www.opentable.com"
+            ) == "restaurant"
+        )
+        #expect(
+            BrowserScenarioClassifier.category(
+                forGoalText: "find me a hotel in tokyo",
+                initialURL: "https://www.booking.com"
+            ) == "hotel"
+        )
+        #expect(
+            BrowserScenarioClassifier.category(
+                forGoalText: "search for flights to sydney",
+                initialURL: "https://www.google.com/travel/flights"
+            ) == "flight"
+        )
+        #expect(
+            BrowserScenarioClassifier.category(
+                forGoalText: "stop at the checkout place order step",
+                initialURL: "https://www.amazon.com"
+            ) == "checkout"
+        )
+    }
 }
 
 private func sampleInspection(
