@@ -294,11 +294,19 @@ private struct ChatBusyPreviewHost: View {
 
 private struct OnboardingStepPreviewHost: View {
     let state: PreviewFactory.OnboardingPreviewState
+    let width: CGFloat
+    let height: CGFloat
 
     @StateObject private var viewModel: AuthViewModel
 
-    init(state: PreviewFactory.OnboardingPreviewState) {
+    init(
+        state: PreviewFactory.OnboardingPreviewState,
+        width: CGFloat = 1120,
+        height: CGFloat = 760
+    ) {
         self.state = state
+        self.width = width
+        self.height = height
         _viewModel = StateObject(wrappedValue: PreviewFactory.makeAuthViewModel(state: state))
     }
 
@@ -312,7 +320,7 @@ private struct OnboardingStepPreviewHost: View {
             onSavePersonality: { _ in },
             onSaveAgentName: { _ in }
         )
-        .frame(width: 1120, height: 760)
+        .frame(width: width, height: height)
     }
 }
 
@@ -402,6 +410,22 @@ struct LoginGatePreview: PreviewProvider {
 
             OnboardingStepPreviewHost(state: .name)
                 .previewDisplayName("Onboarding Name Dark")
+                .preferredColorScheme(.dark)
+
+            OnboardingStepPreviewHost(state: .persona, width: 560, height: 760)
+                .previewDisplayName("Onboarding Persona Narrow Light")
+                .preferredColorScheme(.light)
+
+            OnboardingStepPreviewHost(state: .persona, width: 560, height: 760)
+                .previewDisplayName("Onboarding Persona Narrow Dark")
+                .preferredColorScheme(.dark)
+
+            OnboardingStepPreviewHost(state: .persona, width: 1120, height: 600)
+                .previewDisplayName("Onboarding Persona Short Light")
+                .preferredColorScheme(.light)
+
+            OnboardingStepPreviewHost(state: .persona, width: 1120, height: 600)
+                .previewDisplayName("Onboarding Persona Short Dark")
                 .preferredColorScheme(.dark)
 
             HomeHandoffPreviewHost()
