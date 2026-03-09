@@ -44,10 +44,12 @@ private final class HeadlessBrowserHost: NSObject, NSWindowDelegate {
     }
 
     func teardown(controller: ChromiumBrowserController) {
+        controller.prepareForShutdown()
         window.delegate = nil
         browserView?.removeFromSuperview()
         window.orderOut(nil)
         window.close()
+        AHChromiumShutdownRuntime()
         controller.resetBrowserView()
     }
 
