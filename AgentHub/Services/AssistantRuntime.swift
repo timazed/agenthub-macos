@@ -83,6 +83,7 @@ final class CodexCLIRuntime: AssistantRuntime {
 
     private let bundle: Bundle
     private let fileManager: FileManager
+    private let codexBinaryLocator: CodexBinaryLocator
     private let stateLock = NSLock()
     private var continuation: AsyncStream<AssistantEvent>.Continuation?
     private var currentProcess: Process?
@@ -93,6 +94,7 @@ final class CodexCLIRuntime: AssistantRuntime {
     ) {
         self.bundle = bundle
         self.fileManager = fileManager
+        self.codexBinaryLocator = CodexBinaryLocator(bundle: bundle, fileManager: fileManager)
     }
 
     func streamEvents() -> AsyncStream<AssistantEvent> {
@@ -600,18 +602,7 @@ final class CodexCLIRuntime: AssistantRuntime {
     }
 
     private func locateCodexBinary() throws -> URL {
-        if let resourcesURL = bundle.resourceURL {
-            let candidates = [
-                resourcesURL.appendingPathComponent("codex", isDirectory: false),
-                resourcesURL.appendingPathComponent("codex/codex", isDirectory: false),
-            ]
-
-            for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
-                return candidate
-            }
-        }
-
-        throw AssistantRuntimeError.binaryNotFound
+        try codexBinaryLocator.locateBinary()
     }
 
     private func clearCurrentProcess() {
@@ -685,18 +676,7 @@ final class CodexCLIRuntime: AssistantRuntime {
     }
 
     private func locateCodexBinaryPath() -> String {
-        if let resourcesURL = bundle.resourceURL {
-            let candidates = [
-                resourcesURL.appendingPathComponent("codex", isDirectory: false),
-                resourcesURL.appendingPathComponent("codex/codex", isDirectory: false),
-            ]
-
-            for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
-                return candidate.path
-            }
-        }
-
-        return "<missing bundled codex>"
+        codexBinaryLocator.locateBinaryPath()
     }
 
     private func appendRunnerLog(codexHome: String, line: String) throws {

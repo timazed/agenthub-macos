@@ -44,8 +44,8 @@ private final class LockedLines: @unchecked Sendable {
 final class CodexLoginCoordinator {
     private let statusRefresher: () throws -> AuthState
     private let paths: AppPaths
-    private let bundle: Bundle
     private let fileManager: FileManager
+    private let codexBinaryLocator: CodexBinaryLocator
 
     private let stateLock = NSLock()
     private var currentProcess: Process?
@@ -59,8 +59,8 @@ final class CodexLoginCoordinator {
     ) {
         self.statusRefresher = statusRefresher
         self.paths = paths
-        self.bundle = bundle
         self.fileManager = fileManager
+        self.codexBinaryLocator = CodexBinaryLocator(bundle: bundle, fileManager: fileManager)
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {
@@ -168,24 +168,7 @@ final class CodexLoginCoordinator {
     }
 
     private func locateCodexBinary() throws -> URL {
-        if let resourcesURL = bundle.resourceURL {
-            let candidates = [
-                resourcesURL.appendingPathComponent("codex", isDirectory: false),
-                resourcesURL.appendingPathComponent("codex/codex", isDirectory: false),
-            ]
-
-            for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
-                return candidate
-            }
-        }
-
-        let workspaceCandidate = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
-            .appendingPathComponent("AgentHub/Resources/codex/codex", isDirectory: false)
-        if fileManager.isExecutableFile(atPath: workspaceCandidate.path) {
-            return workspaceCandidate
-        }
-
-        throw AssistantRuntimeError.binaryNotFound
+        try codexBinaryLocator.locateBinary(allowWorkspaceFallback: true)
     }
 
     private static func stripANSI(from text: String) -> String {
