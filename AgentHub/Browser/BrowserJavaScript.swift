@@ -1313,6 +1313,7 @@ enum ChromiumBrowserScripts {
                 const href = normalizeLower(element.getAttribute("href") || "");
                 const isLink = element.tagName.toLowerCase() === "a";
                 const isPromotional = /explore restaurants|exclusive tables|new cardmembers|dining credit|sapphire reserve|learn more|see details/.test(descriptor);
+                const isSavedItemAction = /save restaurant|save to favorites|save restaurant to favorites|favorite|favourite|favorites|favourites|saved items|wishlist|bookmark/.test(descriptor);
                 const hasTransactionalContainer = !!element.closest('form, [role="dialog"], dialog, [data-testid*="checkout" i], [data-test*="checkout" i], [class*="checkout" i], [class*="payment" i], [class*="booking" i]');
                 let kind = "";
                 let confidence = 0;
@@ -1325,7 +1326,7 @@ enum ChromiumBrowserScripts {
                 } else if (/continue|next|review|checkout/.test(descriptor)) {
                     kind = "review_step";
                     confidence = 70;
-                } else if (!isPromotional && /reserve|book|confirm|complete|purchase|pay|place order/.test(descriptor)) {
+                } else if (!isPromotional && !isSavedItemAction && /reserve|book|confirm|complete|purchase|pay|place order/.test(descriptor)) {
                     kind = "final_confirmation";
                     confidence = 70;
                     if (!isLink) { confidence += 15; }

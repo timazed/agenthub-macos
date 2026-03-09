@@ -299,6 +299,26 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserTransactionalGuardIgnoresFavoriteSaveActions() throws {
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            pageStage: "final_confirmation",
+            boundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-0",
+                    kind: "final_confirmation",
+                    label: "Save restaurant to favorites",
+                    selector: "button[aria-label='Save restaurant to favorites']",
+                    confidence: 95
+                )
+            ]
+        )
+
+        #expect(BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection) == nil)
+        #expect(BrowserTransactionalGuard.shouldAutoStop(goalText: "make a reservation on opentable", inspection: inspection) == false)
+    }
+
+    @Test
     func browserScenarioClassifierCategorizesTravelAndCheckoutGoals() throws {
         #expect(
             BrowserScenarioClassifier.category(
@@ -369,6 +389,15 @@ struct AgentHubTests {
         #expect(script.contains("[role=\"textbox\"]"))
         #expect(script.contains("clickLikelySearchTrigger"))
         #expect(script.contains("editableSelector"))
+    }
+
+    @Test
+    func browserInspectionScriptIgnoresFavoriteSaveActionsAsFinalConfirmation() throws {
+        let script = ChromiumBrowserScripts.inspectPage
+
+        #expect(script.contains("isSavedItemAction"))
+        #expect(script.contains("save restaurant to favorites"))
+        #expect(script.contains("!isPromotional && !isSavedItemAction"))
     }
 
     @Test
