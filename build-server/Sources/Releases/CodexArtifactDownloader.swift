@@ -59,25 +59,22 @@ struct CodexArtifactDownloader {
         guard let x64Asset = release.assets.first(where: { $0.kind == .darwinX64 }) else {
             throw CodexArtifactDownloaderError.missingRequiredAsset(.darwinX64)
         }
-        guard let checksumAsset = release.assets.first(where: { $0.kind == .checksums }) else {
-            throw CodexArtifactDownloaderError.missingRequiredAsset(.checksums)
-        }
-
         let workingDirectory = workingDirectoryProvider()
         let downloadsDirectory = workingDirectory.appendingPathComponent("downloads", isDirectory: true)
         let extractsDirectory = workingDirectory.appendingPathComponent("extracts", isDirectory: true)
         try fileManager.createDirectory(at: downloadsDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: extractsDirectory, withIntermediateDirectories: true)
 
-        let checksumFileURL = downloadsDirectory.appendingPathComponent(checksumAsset.name)
-        let checksumData = try download(asset: checksumAsset)
-        try checksumData.write(to: checksumFileURL, options: [.atomic])
-        let checksumMap = try parseChecksums(from: checksumData)
+        let checksumInfo = try prepareChecksums(
+            for: release,
+            downloadsDirectory: downloadsDirectory,
+            requiredAssets: [arm64Asset, x64Asset]
+        )
 
         let arm64ArchiveURL = downloadsDirectory.appendingPathComponent(arm64Asset.name)
         let x64ArchiveURL = downloadsDirectory.appendingPathComponent(x64Asset.name)
-        try downloadVerified(asset: arm64Asset, to: arm64ArchiveURL, checksums: checksumMap)
-        try downloadVerified(asset: x64Asset, to: x64ArchiveURL, checksums: checksumMap)
+        try downloadVerified(asset: arm64Asset, to: arm64ArchiveURL, checksums: checksumInfo.map)
+        try downloadVerified(asset: x64Asset, to: x64ArchiveURL, checksums: checksumInfo.map)
 
         let arm64ExtractDirectory = extractsDirectory.appendingPathComponent("arm64", isDirectory: true)
         let x64ExtractDirectory = extractsDirectory.appendingPathComponent("x64", isDirectory: true)
@@ -92,7 +89,7 @@ struct CodexArtifactDownloader {
 
         return CodexExtractedArtifacts(
             workingDirectory: workingDirectory,
-            checksumFileURL: checksumFileURL,
+            checksumFileURL: checksumInfo.fileURL,
             arm64BinaryURL: arm64BinaryURL,
             x64BinaryURL: x64BinaryURL
         )
@@ -133,6 +130,74 @@ struct CodexArtifactDownloader {
         }
 
         return checksums
+    }
+
+    private func prepareChecksums(
+        for release: CodexArtifactDescriptor,
+        downloadsDirectory: URL,
+        requiredAssets: [CodexReleaseAssetDescriptor]
+    ) throws -> (fileURL: URL, map: [String: String]) {
+        if let checksumAsset = release.assets.first(where: { $0.kind == .checksums }) {
+            let checksumFileURL = downloadsDirectory.appendingPathComponent(checksumAsset.name)
+            let checksumData = try download(asset: checksumAsset)
+            try checksumData.write(to: checksumFileURL, options: [.atomic])
+            return (checksumFileURL, try parseChecksums(from: checksumData))
+        }
+
+        let checksumMap = try checksumMapFromAssetDigests(requiredAssets)
+        let checksumFileURL = downloadsDirectory.appendingPathComponent("generated-checksums.txt")
+        let checksumText = requiredAssets
+            .compactMap { asset in
+                checksumMap[asset.name].map { "\($0)  \(asset.name)" }
+            }
+            .joined(separator: "\n")
+            + "\n"
+        try Data(checksumText.utf8).write(to: checksumFileURL, options: [.atomic])
+        return (checksumFileURL, checksumMap)
+    }
+
+    private func checksumMapFromAssetDigests(
+        _ assets: [CodexReleaseAssetDescriptor]
+    ) throws -> [String: String] {
+        var checksumMap: [String: String] = [:]
+        for asset in assets {
+            guard let digest = normalizedDigest(from: asset.digest) else {
+                throw CodexArtifactDownloaderError.missingRequiredAsset(.checksums)
+            }
+            checksumMap[asset.name] = digest
+        }
+        return checksumMap
+    }
+
+    private func normalizedDigest(from rawDigest: String?) -> String? {
+        guard let rawDigest else {
+            return nil
+        }
+
+        let trimmed = rawDigest.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return nil
+        }
+
+        let digest: Substring
+        if let separatorIndex = trimmed.firstIndex(of: ":") {
+            let algorithm = trimmed[..<separatorIndex].lowercased()
+            guard algorithm == "sha256" else {
+                return nil
+            }
+            digest = trimmed[trimmed.index(after: separatorIndex)...]
+        } else {
+            digest = Substring(trimmed)
+        }
+
+        let normalized = String(digest).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let hexDigits = CharacterSet(charactersIn: "0123456789abcdef")
+        guard normalized.count == 64,
+              normalized.unicodeScalars.allSatisfy(hexDigits.contains) else {
+            return nil
+        }
+
+        return normalized
     }
 
     private func downloadVerified(

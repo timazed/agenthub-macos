@@ -39,12 +39,14 @@ struct CodexArtifactFetcherTests {
                         "published_at": "2026-03-08T11:00:00Z",
                         "assets": [
                           {
-                            "name": "codex-darwin-arm64.tar.gz",
-                            "browser_download_url": "https://example.com/codex-darwin-arm64.tar.gz"
+                            "name": "codex-aarch64-apple-darwin.tar.gz",
+                            "browser_download_url": "https://example.com/codex-aarch64-apple-darwin.tar.gz",
+                            "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
                           },
                           {
-                            "name": "checksums.txt",
-                            "browser_download_url": "https://example.com/checksums.txt"
+                            "name": "codex-x86_64-apple-darwin.tar.gz",
+                            "browser_download_url": "https://example.com/codex-x86_64-apple-darwin.tar.gz",
+                            "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
                           }
                         ]
                       }
@@ -60,7 +62,8 @@ struct CodexArtifactFetcherTests {
         #expect(release.releaseTag == "v2.0.1")
         #expect(release.assets.count == 2)
         #expect(release.assets.contains { $0.kind == .darwinArm64 })
-        #expect(release.assets.contains { $0.kind == .checksums })
+        #expect(release.assets.contains { $0.kind == .darwinX64 })
+        #expect(release.assets.allSatisfy { $0.digest?.hasPrefix("sha256:") == true })
     }
 
     @Test

@@ -73,9 +73,11 @@ struct GitHubRelease: Decodable, Equatable, Sendable {
 struct GitHubReleaseAsset: Decodable, Equatable, Sendable {
     var name: String
     var downloadURL: URL
+    var digest: String?
 
     enum CodingKeys: String, CodingKey {
         case name
         case downloadURL = "browser_download_url"
+        case digest
     }
 }

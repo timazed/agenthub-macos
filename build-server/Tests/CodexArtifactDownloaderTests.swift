@@ -50,17 +50,20 @@ struct CodexArtifactDownloaderTests {
                     CodexReleaseAssetDescriptor(
                         name: "codex-darwin-arm64.tar.gz",
                         downloadURL: URL(string: "https://example.com/codex-darwin-arm64.tar.gz")!,
-                        kind: .darwinArm64
+                        kind: .darwinArm64,
+                        digest: nil
                     ),
                     CodexReleaseAssetDescriptor(
                         name: "codex-darwin-x86_64.tar.gz",
                         downloadURL: URL(string: "https://example.com/codex-darwin-x86_64.tar.gz")!,
-                        kind: .darwinX64
+                        kind: .darwinX64,
+                        digest: nil
                     ),
                     CodexReleaseAssetDescriptor(
                         name: "checksums.txt",
                         downloadURL: URL(string: "https://example.com/checksums.txt")!,
-                        kind: .checksums
+                        kind: .checksums,
+                        digest: nil
                     ),
                 ]
             )
@@ -98,22 +101,78 @@ struct CodexArtifactDownloaderTests {
                         CodexReleaseAssetDescriptor(
                             name: "codex-darwin-arm64.tar.gz",
                             downloadURL: URL(string: "https://example.com/codex-darwin-arm64.tar.gz")!,
-                            kind: .darwinArm64
+                            kind: .darwinArm64,
+                            digest: nil
                         ),
                         CodexReleaseAssetDescriptor(
                             name: "codex-darwin-x86_64.tar.gz",
                             downloadURL: URL(string: "https://example.com/codex-darwin-x86_64.tar.gz")!,
-                            kind: .darwinX64
+                            kind: .darwinX64,
+                            digest: nil
                         ),
                         CodexReleaseAssetDescriptor(
                             name: "checksums.txt",
                             downloadURL: URL(string: "https://example.com/checksums.txt")!,
-                            kind: .checksums
+                            kind: .checksums,
+                            digest: nil
                         ),
                     ]
                 )
             )
         }
+    }
+
+    @Test
+    func preparesReleaseFromAssetDigestsWhenChecksumAssetIsMissing() throws {
+        let arm64Archive = Data("arm64-archive".utf8)
+        let x64Archive = Data("x64-archive".utf8)
+
+        let workingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodexArtifactDownloaderTests-\(UUID().uuidString)", isDirectory: true)
+        let downloader = CodexArtifactDownloader(
+            workingDirectoryProvider: { workingDirectory },
+            dataProvider: { request in
+                switch request.url?.lastPathComponent {
+                case "codex-aarch64-apple-darwin.tar.gz":
+                    return arm64Archive
+                case "codex-x86_64-apple-darwin.tar.gz":
+                    return x64Archive
+                default:
+                    throw DownloaderFixtureError.unexpectedURL
+                }
+            },
+            archiveExtractor: { _, destinationURL in
+                try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+                let binaryURL = destinationURL.appendingPathComponent("codex")
+                try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binaryURL, options: [.atomic])
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryURL.path)
+            }
+        )
+
+        let artifacts = try downloader.prepareRelease(
+            CodexArtifactDescriptor(
+                version: "1.2.3",
+                releaseTag: "v1.2.3",
+                assets: [
+                    CodexReleaseAssetDescriptor(
+                        name: "codex-aarch64-apple-darwin.tar.gz",
+                        downloadURL: URL(string: "https://example.com/codex-aarch64-apple-darwin.tar.gz")!,
+                        kind: .darwinArm64,
+                        digest: "sha256:\(sha256Hex(for: arm64Archive))"
+                    ),
+                    CodexReleaseAssetDescriptor(
+                        name: "codex-x86_64-apple-darwin.tar.gz",
+                        downloadURL: URL(string: "https://example.com/codex-x86_64-apple-darwin.tar.gz")!,
+                        kind: .darwinX64,
+                        digest: "sha256:\(sha256Hex(for: x64Archive))"
+                    ),
+                ]
+            )
+        )
+
+        #expect(artifacts.checksumFileURL.lastPathComponent == "generated-checksums.txt")
+        #expect(FileManager.default.isExecutableFile(atPath: artifacts.arm64BinaryURL.path))
+        #expect(FileManager.default.isExecutableFile(atPath: artifacts.x64BinaryURL.path))
     }
 }
 

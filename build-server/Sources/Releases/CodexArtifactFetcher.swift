@@ -11,6 +11,7 @@ struct CodexReleaseAssetDescriptor: Equatable, Sendable {
     var name: String
     var downloadURL: URL
     var kind: CodexReleaseAssetKind
+    var digest: String?
 }
 
 struct CodexArtifactDescriptor: Equatable, Sendable {
@@ -119,7 +120,8 @@ struct CodexArtifactFetcher {
             return CodexReleaseAssetDescriptor(
                 name: asset.name,
                 downloadURL: asset.downloadURL,
-                kind: assetKind(for: asset.name)
+                kind: assetKind(for: asset.name),
+                digest: asset.digest
             )
         }
     }
