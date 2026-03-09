@@ -13,7 +13,7 @@ struct LiquidGlassModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                if #available(iOS 26.0, *) {
+                if #available(macOS 26.0, iOS 26.0, *) {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .fill(.clear)
                         .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))

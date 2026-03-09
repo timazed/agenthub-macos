@@ -6,7 +6,6 @@ struct AppShellView: View {
     @StateObject private var chatViewModel: ChatViewModel
     @StateObject private var tasksViewModel: TasksViewModel
     @StateObject private var activityViewModel: ActivityLogViewModel
-    @StateObject private var iMessageViewModel: IMessageIntegrationViewModel
     @State private var didPerformInitialLoad = false
 
     init(container: AppContainer) {
@@ -26,12 +25,6 @@ struct AppShellView: View {
             appExecutableURL: container.appExecutableURL
         ))
         _activityViewModel = StateObject(wrappedValue: ActivityLogViewModel(store: container.activityLogStore))
-        _iMessageViewModel = StateObject(wrappedValue: IMessageIntegrationViewModel(
-            configStore: container.iMessageIntegrationConfigStore,
-            whitelistService: container.iMessageWhitelistService,
-            monitorService: container.iMessageMonitorService,
-            permissionService: IMessagePermissionService()
-        ))
     }
 
     var body: some View {
@@ -44,6 +37,7 @@ struct AppShellView: View {
                     isInputEnabled: true,
                     blockedMessage: nil
                 )
+                .background(.clear)
                 .frame(minWidth: 400)
             } else {
                 CodexLoginGateView(
@@ -65,11 +59,12 @@ struct AppShellView: View {
                 .frame(minWidth: 400)
             }
         }
+        .background(AdaptiveWindowBackground())
+        .liquidGlass()
         .inspector(isPresented: $appViewModel.isPanelPresented) {
             AssistantPanelView(
                 tasksViewModel: tasksViewModel,
                 activityViewModel: activityViewModel,
-                iMessageViewModel: iMessageViewModel,
                 onClose: { appViewModel.isPanelPresented = false },
                 onAddTask: { appViewModel.openEditor(for: nil) },
                 onEditTask: { task in appViewModel.openEditor(for: task) }
@@ -115,7 +110,7 @@ struct AppShellView: View {
     }
 
     private var combinedErrorMessage: String? {
-        chatViewModel.errorMessage ?? tasksViewModel.errorMessage ?? activityViewModel.errorMessage ?? iMessageViewModel.errorMessage
+        chatViewModel.errorMessage ?? tasksViewModel.errorMessage ?? activityViewModel.errorMessage
     }
 
     private func performInitialLoadIfNeeded() {
@@ -123,9 +118,7 @@ struct AppShellView: View {
         didPerformInitialLoad = true
         tasksViewModel.load()
         activityViewModel.load()
-        iMessageViewModel.load()
         chatViewModel.load()
-        tasksViewModel.reconcileSchedulesDeferred()
 
         chatViewModel.onTasksChanged = {
             tasksViewModel.load()
