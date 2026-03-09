@@ -65,10 +65,11 @@ struct CodexLoginGateView: View {
     }
 
     private var compactLayout: some View {
-        VStack(spacing: 22) {
-            narrativeRail(maxWidth: .infinity)
-            stepSurface(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 18) {
+            compactHeader
+            stepSurface(maxWidth: 760)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func layoutMode(for size: CGSize) -> LayoutMode {
@@ -137,6 +138,50 @@ struct CodexLoginGateView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: maxWidth, alignment: .leading)
+    }
+
+    private var compactHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("AgentHub")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .textCase(.uppercase)
+                .tracking(2.2)
+                .foregroundStyle(palette.subdued)
+
+            if let presentation = viewModel.onboardingPresentation {
+                HStack(alignment: .center, spacing: 12) {
+                    Text(presentation.eyebrow)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(palette.accent)
+
+                    progressDots(
+                        current: presentation.currentStepNumber,
+                        total: presentation.totalSteps
+                    )
+                }
+
+                Text(presentation.title)
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .foregroundStyle(palette.title)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(presentation.message)
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .foregroundStyle(palette.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(viewModel.statusTitle)
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .foregroundStyle(palette.title)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(viewModel.statusMessage)
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .foregroundStyle(palette.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: 760, alignment: .leading)
     }
 
     private func stepSurface(maxWidth: CGFloat) -> some View {
