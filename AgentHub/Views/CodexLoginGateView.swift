@@ -1,6 +1,11 @@
 import SwiftUI
 
 struct CodexLoginGateView: View {
+    private enum LayoutMode {
+        case wide
+        case collapsed
+    }
+
     @Environment(\.colorScheme) private var colorScheme
 
     @ObservedObject var viewModel: AuthViewModel
@@ -13,6 +18,9 @@ struct CodexLoginGateView: View {
 
     @State private var personalityDraft = ""
     @State private var agentNameDraft = ""
+    private let widePanelHeight: CGFloat = 540
+    private let wideLayoutWidthThreshold: CGFloat = 980
+    private let wideLayoutHeightThreshold: CGFloat = 700
 
     private var palette: OnboardingPalette {
         OnboardingPalette.resolve(for: colorScheme)
@@ -20,9 +28,21 @@ struct CodexLoginGateView: View {
 
     var body: some View {
         OnboardingShell {
-            ViewThatFits(in: .horizontal) {
-                wideLayout
-                compactLayout
+            GeometryReader { geometry in
+                let layoutMode = layoutMode(for: geometry.size)
+
+                ScrollView(.vertical, showsIndicators: false) {
+                    Group {
+                        switch layoutMode {
+                        case .wide:
+                            wideLayout
+                        case .collapsed:
+                            compactLayout
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(minHeight: geometry.size.height - 48, alignment: .top)
+                }
             }
         }
         .onAppear {
@@ -34,9 +54,13 @@ struct CodexLoginGateView: View {
     }
 
     private var wideLayout: some View {
-        HStack(alignment: .center, spacing: 26) {
+        HStack(alignment: .top, spacing: 26) {
             narrativeRail(maxWidth: 340)
+                .frame(width: 340)
+                .frame(height: widePanelHeight, alignment: .top)
             stepSurface(maxWidth: 720)
+                .frame(maxWidth: 720)
+                .frame(height: widePanelHeight, alignment: .top)
         }
     }
 
@@ -45,6 +69,13 @@ struct CodexLoginGateView: View {
             narrativeRail(maxWidth: .infinity)
             stepSurface(maxWidth: .infinity)
         }
+    }
+
+    private func layoutMode(for size: CGSize) -> LayoutMode {
+        if size.width >= wideLayoutWidthThreshold && size.height >= wideLayoutHeightThreshold {
+            return .wide
+        }
+        return .collapsed
     }
 
     private func narrativeRail(maxWidth: CGFloat) -> some View {
@@ -103,6 +134,7 @@ struct CodexLoginGateView: View {
                     )
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: maxWidth, alignment: .leading)
     }
@@ -192,18 +224,19 @@ struct CodexLoginGateView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
     private var personaStep: some View {
         OnboardingPanel {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Default assistant instructions")
                         .font(.system(size: 24, weight: .semibold, design: .rounded))
                         .foregroundStyle(palette.title)
 
-                    Text("These instructions become the baseline personality for the assistant you’ll enter the app with. Leave the default if you want a clean starting point.")
+                    Text("These instructions become the baseline personality for the assistant you’ll enter the app with.")
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(palette.body)
                         .fixedSize(horizontal: false, vertical: true)
@@ -213,12 +246,12 @@ struct CodexLoginGateView: View {
                     HStack(alignment: .top, spacing: 18) {
                         personaEditor
                         personaAside
-                            .frame(width: 220)
+                            .frame(width: 208)
                     }
 
                     VStack(alignment: .leading, spacing: 18) {
-                        personaAside
                         personaEditor
+                        compactPersonaSummary
                     }
                 }
 
@@ -233,6 +266,7 @@ struct CodexLoginGateView: View {
                     .tint(palette.accent)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -296,6 +330,7 @@ struct CodexLoginGateView: View {
                     .disabled(agentNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -309,7 +344,7 @@ struct CodexLoginGateView: View {
                 .font(.system(size: 15, weight: .medium, design: .rounded))
                 .scrollContentBackground(.hidden)
                 .foregroundStyle(palette.title)
-                .frame(minHeight: 220)
+                .frame(minHeight: 160, idealHeight: 176, maxHeight: 190)
                 .padding(16)
                 .background(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -332,6 +367,23 @@ struct CodexLoginGateView: View {
                 featureLine("The first assistant chat after setup.")
                 featureLine("Any default scheduled task instructions.")
                 featureLine("The identity that carries into the home flow.")
+            }
+        }
+    }
+
+    private var compactPersonaSummary: some View {
+        OnboardingSecondaryPanel {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Used for chat, scheduled work, and the assistant identity you enter home with.")
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .foregroundStyle(palette.body)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    summaryChip("Chat")
+                    summaryChip("Tasks")
+                    summaryChip("Home")
+                }
             }
         }
     }
@@ -462,6 +514,22 @@ struct CodexLoginGateView: View {
                 .foregroundStyle(palette.body)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private func summaryChip(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .foregroundStyle(palette.title)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(palette.accentSoft)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(palette.fieldStroke, lineWidth: 1)
+                    )
+            )
     }
 
     private func seedDraftsIfNeeded() {
