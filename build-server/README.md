@@ -13,15 +13,15 @@ This package is the first scaffold for the future Codex-triggered AgentHub relea
 ## Not Yet Implemented
 
 - Real HTTP server or webhook receiver
-- Codex artifact download and checksum verification
-- Replacing the bundled `AgentHub/Resources/codex/codex` binary
-- Xcode archive, signing, notarization, and upload
+- Signed/notarized release archive output
+- Full release upload/publication pipeline
 - Running Sparkle's `generate_appcast`
 
 ## v1 Assumptions
 
 - Release builds will resolve the latest stable Codex release automatically.
 - The checked-in `AgentHub/Resources/codex/codex` binary remains in the repo as a local development fallback until the pipeline is proven out.
+- The pipeline builds an unsigned AgentHub app bundle, injects the fetched universal Codex binary into `Contents/Resources/codex`, and leaves signing/notarization for the next step of the release flow.
 
 ## Required Environment
 

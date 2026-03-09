@@ -18,6 +18,17 @@ struct ReleaseServiceTests {
             x64BinaryURL: extractedArtifacts.x64BinaryURL,
             universalBinaryURL: URL(fileURLWithPath: "/tmp/codex-work/universal/codex")
         )
+        let buildResult = XcodeBuildResult(
+            appBundleURL: URL(fileURLWithPath: "/tmp/AgentHub.app", isDirectory: true),
+            derivedDataURL: URL(fileURLWithPath: "/tmp/DerivedData", isDirectory: true)
+        )
+        let bundleInjectionResult = CodexBundleInjectionResult(
+            appBundleURL: buildResult.appBundleURL,
+            injectedBinaryURL: buildResult.appBundleURL
+                .appendingPathComponent("Contents", isDirectory: true)
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("codex", isDirectory: false)
+        )
         let service = AgentHubReleaseService(
             artifactFetcher: CodexArtifactFetcher(
                 configurationProvider: {
@@ -59,6 +70,12 @@ struct ReleaseServiceTests {
             universalBinaryBuilder: CodexUniversalBinaryBuilder(
                 preparedArtifactsProvider: { _ in preparedArtifacts },
                 processRunner: { _, _ in }
+            ),
+            bundleInjector: CodexBundleInjector(
+                injectionProvider: { _, _ in bundleInjectionResult }
+            ),
+            xcodeArchiveService: XcodeArchiveService(
+                buildProvider: { _ in buildResult }
             )
         )
         let request = AgentHubReleaseRequest(
@@ -74,6 +91,7 @@ struct ReleaseServiceTests {
         #expect(plan.codexRelease.releaseTag == "v1.2.3")
         #expect(plan.codexRelease.assets.count == 1)
         #expect(plan.preparedArtifacts.universalBinaryURL == preparedArtifacts.universalBinaryURL)
+        #expect(plan.bundleInjectionResult.injectedBinaryURL == bundleInjectionResult.injectedBinaryURL)
         #expect(plan.targetAgentHubVersion == "1.0.1")
         #expect(plan.targetBuildNumber == 42)
         #expect(plan.sparklePublishPlan.appcastPath == "updates/dev/appcast.xml")
@@ -93,6 +111,17 @@ struct ReleaseServiceTests {
             arm64BinaryURL: extractedArtifacts.arm64BinaryURL,
             x64BinaryURL: extractedArtifacts.x64BinaryURL,
             universalBinaryURL: URL(fileURLWithPath: "/tmp/codex-work-2/universal/codex")
+        )
+        let buildResult = XcodeBuildResult(
+            appBundleURL: URL(fileURLWithPath: "/tmp/AgentHub-2.app", isDirectory: true),
+            derivedDataURL: URL(fileURLWithPath: "/tmp/DerivedData-2", isDirectory: true)
+        )
+        let bundleInjectionResult = CodexBundleInjectionResult(
+            appBundleURL: buildResult.appBundleURL,
+            injectedBinaryURL: buildResult.appBundleURL
+                .appendingPathComponent("Contents", isDirectory: true)
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("codex", isDirectory: false)
         )
         let controller = AgentHubReleaseController(
             worker: CodexReleaseWorker(
@@ -137,6 +166,12 @@ struct ReleaseServiceTests {
                     universalBinaryBuilder: CodexUniversalBinaryBuilder(
                         preparedArtifactsProvider: { _ in preparedArtifacts },
                         processRunner: { _, _ in }
+                    ),
+                    bundleInjector: CodexBundleInjector(
+                        injectionProvider: { _, _ in bundleInjectionResult }
+                    ),
+                    xcodeArchiveService: XcodeArchiveService(
+                        buildProvider: { _ in buildResult }
                     )
                 )
             )
@@ -157,6 +192,7 @@ struct ReleaseServiceTests {
         #expect(response.targetBuildNumber == 10)
         #expect(response.notes.isEmpty == false)
         #expect(preparedArtifacts.universalBinaryURL.path.contains("universal"))
+        #expect(bundleInjectionResult.injectedBinaryURL.path.contains("/Resources/codex"))
     }
 }
 
