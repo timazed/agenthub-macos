@@ -11,7 +11,7 @@ release_channel() {
 }
 
 release_derived_data() {
-  echo "${AGENTHUB_RELEASE_DERIVED_DATA:-$(repo_root)/.deriveddata/release-pipeline}"
+  echo "${AGENTHUB_RELEASE_DERIVED_DATA:-/tmp/agenthub-release-derived}"
 }
 
 release_build_dir() {
@@ -66,6 +66,14 @@ release_artifacts_dir() {
   echo "$(release_output_dir)/sparkle"
 }
 
+release_appcast_path() {
+  echo "$(release_artifacts_dir)/appcast.xml"
+}
+
+release_archive_name() {
+  echo "${AGENTHUB_RELEASE_ARCHIVE_NAME:-AgentHub-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value version 2>/dev/null || echo unknown)-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value build 2>/dev/null || echo unknown).zip}"
+}
+
 release_dry_run() {
   [[ "${AGENTHUB_RELEASE_DRY_RUN:-false}" == "true" ]]
 }
@@ -76,6 +84,10 @@ release_base_url() {
 
 release_feed_url() {
   echo "${AGENTHUB_RELEASE_FEED_URL:-$(release_base_url)/appcast.xml}"
+}
+
+release_appcast_source() {
+  echo "${AGENTHUB_RELEASE_APPCAST_SOURCE:-$(release_feed_url)}"
 }
 
 release_git_remote() {
