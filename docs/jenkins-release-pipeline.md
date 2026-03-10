@@ -1,14 +1,13 @@
 # Jenkins Release Pipeline
 
-This repository now includes a prod-only Sparkle release pipeline under `jenkins/` and `scripts/release/`.
+This repository now includes Sparkle release pipelines for both prod and beta under `jenkins/` and `scripts/release/`.
 
 ## Scope
 
-- `Release` channel only
+- `Release` and `Beta` channels
 - Shell-script based pipeline
 - Sparkle artifact packaging and appcast publish
 - Automatic version bump and git commit/push
-- No beta lane in this pass
 - No Slack, App Center, or other notification integrations in this pass
 
 ## Pipeline Entry Points
@@ -17,14 +16,18 @@ This repository now includes a prod-only Sparkle release pipeline under `jenkins
   - Prevents Jenkins from rebuilding its own release bump commit.
 - `jenkins/should-build.sh`
   - Skips work when there has not been fresh activity on the tracked branch within the configured lookback window.
+- `scripts/release/release.sh`
+  - Shared release entrypoint used by both channels.
 - `scripts/release/release-prod.sh`
-  - Main release entrypoint invoked by Jenkins.
+  - Wrapper that runs the shared entrypoint with `AGENTHUB_RELEASE_CHANNEL=release`.
+- `scripts/release/release-beta.sh`
+  - Wrapper that runs the shared entrypoint with `AGENTHUB_RELEASE_CHANNEL=beta`.
 
 ## Release Flow
 
-`release-prod.sh` runs the following steps in order:
+`release.sh` runs the following steps in order:
 
-1. Read the current `Release` version and build from `AgentHub.xcodeproj/project.pbxproj`.
+1. Read the current channel's version and build from `AgentHub.xcodeproj/project.pbxproj`.
 2. Check the current appcast to prevent publishing a duplicate version.
 3. Build the app with `xcodebuild`.
 4. Re-sign the exported `.app` with Developer ID.
@@ -40,12 +43,12 @@ These variables control the pipeline:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `AGENTHUB_RELEASE_CHANNEL` | Must remain `release` for this pipeline | `release` |
+| `AGENTHUB_RELEASE_CHANNEL` | Selects `release` or `beta` defaults | `release` |
 | `AGENTHUB_RELEASE_DRY_RUN` | Skip signing, notarization, version-collision enforcement, and git push, while still generating local Sparkle artifacts for validation | `false` |
 | `AGENTHUB_RELEASE_BUMP` | Version bump mode: `patch` or `build` | `patch` |
-| `AGENTHUB_RELEASE_BUILD_DIR` | Root output directory for release artifacts | `build/release` |
+| `AGENTHUB_RELEASE_BUILD_DIR` | Root output directory for release artifacts | `build/<channel>` |
 | `AGENTHUB_RELEASE_DERIVED_DATA` | Derived data path used by the release build | `/tmp/agenthub-release-derived` |
-| `AGENTHUB_RELEASE_BASE_URL` | Public base URL for hosted Sparkle artifacts | `https://updates.example.com/agenthub` |
+| `AGENTHUB_RELEASE_BASE_URL` | Public base URL for hosted Sparkle artifacts | `https://updates.example.com/agenthub` or `/agenthub/beta` based on channel |
 | `AGENTHUB_RELEASE_FEED_URL` | Feed URL embedded into the release build | `<base-url>/appcast.xml` |
 | `AGENTHUB_RELEASE_APPCAST_SOURCE` | Existing appcast location used for collision checks | `<feed-url>` |
 | `AGENTHUB_GIT_REMOTE` | Git remote used for the release bump push | `origin` |
@@ -75,6 +78,13 @@ These variables control Sparkle appcast signing:
 
 If no Sparkle private key is configured, `publish-sparkle.sh` only writes a placeholder unsigned `appcast.xml` during `AGENTHUB_RELEASE_DRY_RUN=true` local verification. Non-dry-run releases fail fast until a Sparkle signing key is configured.
 
+## Channel Defaults
+
+| Channel | Xcode configuration | Bundle id | App bundle | Default feed |
+|---------|---------------------|-----------|------------|--------------|
+| `release` | `Release` | `au.com.roseadvisory.AgentHub` | `AgentHub.app` | `https://updates.example.com/agenthub/appcast.xml` |
+| `beta` | `Beta` | `au.com.roseadvisory.AgentHub.beta` | `AgentHubBeta.app` | `https://updates.example.com/agenthub/beta/appcast.xml` |
+
 ## Local Verification
 
 Syntax checks:
@@ -89,7 +99,13 @@ Dry-run pipeline:
 AGENTHUB_RELEASE_DRY_RUN=true bash scripts/release/release-prod.sh
 ```
 
-This dry run still writes local artifacts under `build/release/publish/`. It does not attempt real signing, notarization, or git push.
+Beta dry run:
+
+```bash
+AGENTHUB_RELEASE_DRY_RUN=true bash scripts/release/release-beta.sh
+```
+
+This dry run still writes local artifacts under `build/<channel>/publish/`. It does not attempt real signing, notarization, or git push.
 
 Build only:
 

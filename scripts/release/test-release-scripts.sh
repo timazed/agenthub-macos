@@ -9,6 +9,10 @@ current_release_build() {
   bash "${SCRIPT_DIR}/read-version.sh" --value build
 }
 
+current_beta_release_metadata() {
+  AGENTHUB_RELEASE_CHANNEL=beta bash "${SCRIPT_DIR}/read-version.sh"
+}
+
 fail() {
   echo "FAIL: $1" >&2
   exit 1
@@ -180,12 +184,31 @@ EOF
   rm -rf "${tmp_dir}"
 }
 
+test_beta_channel_defaults() {
+  local metadata defaults
+  metadata="$(current_beta_release_metadata)"
+  assert_contains "${metadata}" "product_name=AgentHubBeta"
+  assert_contains "${metadata}" "bundle_id=au.com.roseadvisory.AgentHub.beta"
+
+  defaults="$(
+    AGENTHUB_RELEASE_CHANNEL=beta bash -lc '
+      source "$1"
+      printf "%s\n%s\n%s\n%s\n" "$(release_configuration)" "$(release_bundle_name)" "$(release_build_dir)" "$(release_base_url)"
+    ' bash "${SCRIPT_DIR}/env.sh"
+  )"
+  assert_contains "${defaults}" "Beta"
+  assert_contains "${defaults}" "AgentHubBeta.app"
+  assert_contains "${defaults}" "/build/beta"
+  assert_contains "${defaults}" "https://updates.example.com/agenthub/beta"
+}
+
 main() {
   cd "${REPO_ROOT}"
   test_publish_requires_sparkle_key_for_real_releases
   test_publish_dry_run_writes_placeholder_without_sparkle_key
   test_collision_check_uses_build_number
   test_sign_release_uses_explicit_order_without_deep_signing
+  test_beta_channel_defaults
   echo "All release script tests passed"
 }
 
