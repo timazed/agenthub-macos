@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "default_channel": "stable",
+  "default_arch": "arm64",
+  "dependencies": {
+    "codex": {
+      "install_mode": "resource_binary",
+      "resource_dir": "AgentHub/Resources/codex",
+      "resource_binary_name": "codex",
+      "channels": {
+        "stable": {
+          "version": "",
+          "artifacts": {
+            "arm64": {
+              "url": "",
+              "sha256": "",
+              "archive_type": "",
+              "binary_name": "codex"
+            }
+          }
+        }
+      }
+    },
+    "cef": {
+      "install_mode": "cef_release_bundle",
+      "staging_dir": "build/dependencies/cef",
+      "channels": {
+        "stable": {
+          "version": "",
+          "artifacts": {
+            "arm64": {
+              "url": "",
+              "sha256": "",
+              "archive_type": ""
+            }
+          }
+        }
+      }
+    }
+  }
+}
