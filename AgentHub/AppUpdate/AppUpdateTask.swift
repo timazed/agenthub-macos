@@ -1,6 +1,12 @@
 import Foundation
 import Sparkle
 
+@MainActor
+protocol AppUpdateChecking: AnyObject {
+    var canCheckForUpdates: Bool { get }
+    func checkForUpdatesInBackground()
+}
+
 enum AppUpdatePhase: String, Equatable {
     case idle
     case checking
@@ -44,7 +50,7 @@ final class AppUpdateTask {
         deferredInstallPollingTask?.cancel()
     }
 
-    func performStartupCheck(using updater: SPUUpdater) {
+    func performStartupCheck(using updater: AppUpdateChecking) {
         guard deferredInstall == nil else {
             logger.log("startup_check_skipped reason=deferred_install_pending")
             return
@@ -52,17 +58,6 @@ final class AppUpdateTask {
 
         phase = .checking
         logger.log("startup_check_requested")
-        updater.checkForUpdatesInBackground()
-    }
-
-    func performBackgroundCheck(using updater: SPUUpdater) {
-        guard deferredInstall == nil else {
-            logger.log("background_check_skipped reason=deferred_install_pending")
-            return
-        }
-
-        phase = .checking
-        logger.log("background_check_requested")
         updater.checkForUpdatesInBackground()
     }
 

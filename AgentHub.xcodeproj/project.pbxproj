@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		7A1B10012FCCD00100A0AA01 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 7A1B10002FCCD00100A0AA01 /* Sparkle */; };
 		22AF00012F70000100112233 /* IMsgCore in Frameworks */ = {isa = PBXBuildFile; productRef = 22AF00022F70000200112233 /* IMsgCore */; };
+		7A1B10012FCCD00100A0AA01 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 7A1B10002FCCD00100A0AA01 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -280,17 +280,6 @@
 			targetProxy = 220639662F58FDC9001A14A6 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		7A1B10022FCCD00100A0AA01 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.0.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCBuildConfiguration section */
 		2206396D2F58FDC9001A14A6 /* Debug */ = {
@@ -569,14 +558,6 @@
 		};
 /* End XCBuildConfiguration section */
 
-/* Begin XCSwiftPackageProductDependency section */
-		7A1B10002FCCD00100A0AA01 /* Sparkle */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 7A1B10022FCCD00100A0AA01 /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
-		};
-/* End XCSwiftPackageProductDependency section */
-
 /* Begin XCConfigurationList section */
 		220639492F58FDC7001A14A6 /* Build configuration list for PBXProject "AgentHub" */ = {
 			isa = XCConfigurationList;
@@ -625,6 +606,14 @@
 				kind = branch;
 			};
 		};
+		7A1B10022FCCD00100A0AA01 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -632,6 +621,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 22AF00032F70000300112233 /* XCRemoteSwiftPackageReference "imsg" */;
 			productName = IMsgCore;
+		};
+		7A1B10002FCCD00100A0AA01 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7A1B10022FCCD00100A0AA01 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

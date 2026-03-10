@@ -3,21 +3,30 @@ import Foundation
 import Sparkle
 
 @MainActor
+protocol AppUpdateObservation {
+    func invalidate()
+}
+
+@MainActor
+protocol AppUpdateControlling: AnyObject {
+    var updater: AppUpdateChecking { get }
+    func checkForUpdates()
+    func observeCanCheckForUpdates(_ handler: @escaping @MainActor (Bool) -> Void) -> any AppUpdateObservation
+}
+
+@MainActor
 final class AppUpdateManager: NSObject, ObservableObject {
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var isConfigured = false
     @Published private(set) var phase: AppUpdatePhase = .idle
 
-    private enum CheckSource {
-        case manual
-        case background
-    }
-
     private let bundle: Bundle
-    private var updaterController: SPUStandardUpdaterController?
-    private var observation: NSKeyValueObservation?
+    private let configurationValidator: (Bundle) -> Bool
+    private let controllerFactory: (SPUUpdaterDelegate) -> any AppUpdateControlling
+    private let startupCheckScheduler: (@escaping @MainActor () -> Void) -> Void
+    private var updaterController: (any AppUpdateControlling)?
+    private var observation: (any AppUpdateObservation)?
     private let appUpdateTask: AppUpdateTask
-    private let backgroundTask: AppUpdateBackgroundTask
     private var hasStarted = false
 
     init(
@@ -25,56 +34,54 @@ final class AppUpdateManager: NSObject, ObservableObject {
         paths: AppPaths,
         taskStore: TaskStore,
         activityLogStore: ActivityLogStore,
-        backgroundTask: AppUpdateBackgroundTask? = nil
+        appUpdateTask: AppUpdateTask? = nil,
+        configurationValidator: ((Bundle) -> Bool)? = nil,
+        controllerFactory: ((SPUUpdaterDelegate) -> any AppUpdateControlling)? = nil,
+        startupCheckScheduler: ((@escaping @MainActor () -> Void) -> Void)? = nil
     ) {
         self.bundle = bundle
-        self.appUpdateTask = AppUpdateTask(
+        self.configurationValidator = configurationValidator ?? { SparkleConfiguration(bundle: $0) != nil }
+        self.controllerFactory = controllerFactory ?? { SparkleAppUpdateController(updaterDelegate: $0) }
+        self.startupCheckScheduler = startupCheckScheduler ?? { action in
+            DispatchQueue.main.async {
+                Task { @MainActor in
+                    action()
+                }
+            }
+        }
+        self.appUpdateTask = appUpdateTask ?? AppUpdateTask(
             workloadMonitor: AppUpdateWorkloadMonitor(taskStore: taskStore),
             logger: AppUpdateLogger(paths: paths, activityLogStore: activityLogStore)
         )
-        self.backgroundTask = backgroundTask ?? AppUpdateBackgroundTask()
         super.init()
-        self.backgroundTask.handler = { [weak self] in
-            self?.checkForUpdates(source: .background)
-        }
     }
 
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
 
-        guard SparkleConfiguration(bundle: bundle) != nil else {
+        guard configurationValidator(bundle) else {
             canCheckForUpdates = false
             isConfigured = false
             return
         }
 
-        let controller = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: self,
-            userDriverDelegate: nil
-        )
+        let controller = controllerFactory(self)
         updaterController = controller
         isConfigured = true
         canCheckForUpdates = controller.updater.canCheckForUpdates
-        observation = controller.updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
-            guard let self else { return }
-            Task { @MainActor in
-                self.canCheckForUpdates = updater.canCheckForUpdates
-            }
+        observation = controller.observeCanCheckForUpdates { [weak self] canCheckForUpdates in
+            self?.canCheckForUpdates = canCheckForUpdates
         }
 
-        DispatchQueue.main.async { [weak self, weak controller] in
+        startupCheckScheduler { [weak self, weak controller] in
             guard let self, let controller else { return }
             self.appUpdateTask.performStartupCheck(using: controller.updater)
             self.phase = self.appUpdateTask.phase
         }
-
-        backgroundTask.start()
     }
 
     func stop() {
-        backgroundTask.stop()
         observation?.invalidate()
         observation = nil
         updaterController = nil
@@ -82,21 +89,10 @@ final class AppUpdateManager: NSObject, ObservableObject {
     }
 
     func checkForUpdates() {
-        checkForUpdates(source: .manual)
-    }
-
-    private func checkForUpdates(source: CheckSource) {
         guard let updaterController else { return }
-
-        switch source {
-        case .manual:
-            appUpdateTask.recordManualCheck()
-            phase = appUpdateTask.phase
-            updaterController.checkForUpdates(nil)
-        case .background:
-            appUpdateTask.performBackgroundCheck(using: updaterController.updater)
-            phase = appUpdateTask.phase
-        }
+        appUpdateTask.recordManualCheck()
+        phase = appUpdateTask.phase
+        updaterController.checkForUpdates()
     }
 }
 
@@ -195,5 +191,69 @@ private struct SparkleConfiguration {
 
         self.feedURL = feedURL
         self.publicKey = publicKey
+    }
+}
+
+@MainActor
+private final class SparkleAppUpdateObservation: AppUpdateObservation {
+    private var observation: NSKeyValueObservation?
+
+    init(observation: NSKeyValueObservation) {
+        self.observation = observation
+    }
+
+    func invalidate() {
+        observation?.invalidate()
+        observation = nil
+    }
+}
+
+@MainActor
+private final class SparkleUpdaterAdapter: AppUpdateChecking {
+    private let updater: SPUUpdater
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+    }
+
+    var canCheckForUpdates: Bool {
+        updater.canCheckForUpdates
+    }
+
+    func checkForUpdatesInBackground() {
+        updater.checkForUpdatesInBackground()
+    }
+}
+
+@MainActor
+private final class SparkleAppUpdateController: AppUpdateControlling {
+    private let controller: SPUStandardUpdaterController
+    private let updaterAdapter: SparkleUpdaterAdapter
+
+    init(updaterDelegate: SPUUpdaterDelegate) {
+        let controller = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: updaterDelegate,
+            userDriverDelegate: nil
+        )
+        self.controller = controller
+        self.updaterAdapter = SparkleUpdaterAdapter(updater: controller.updater)
+    }
+
+    var updater: AppUpdateChecking {
+        updaterAdapter
+    }
+
+    func checkForUpdates() {
+        controller.checkForUpdates(nil)
+    }
+
+    func observeCanCheckForUpdates(_ handler: @escaping @MainActor (Bool) -> Void) -> any AppUpdateObservation {
+        let observation = controller.updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { updater, _ in
+            Task { @MainActor in
+                handler(updater.canCheckForUpdates)
+            }
+        }
+        return SparkleAppUpdateObservation(observation: observation)
     }
 }
