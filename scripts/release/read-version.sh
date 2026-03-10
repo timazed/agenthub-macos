@@ -15,8 +15,8 @@ EOF
 }
 
 load_release_block() {
-  awk -v bundle_id="$(release_bundle_identifier)" '
-    /\/\* Release \*\/ = \{/ {
+  awk -v bundle_id="$(release_bundle_identifier)" -v config_name="$(release_configuration)" '
+    $0 ~ "/\\* " config_name " \\*/ = \\{" {
       in_block = 1
       block = $0 ORS
       next

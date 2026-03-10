@@ -7,7 +7,21 @@ repo_root() {
 }
 
 release_channel() {
-  echo "${AGENTHUB_RELEASE_CHANNEL:-release}"
+  local channel
+  channel="${AGENTHUB_RELEASE_CHANNEL:-release}"
+  case "${channel}" in
+    release|beta)
+      echo "${channel}"
+      ;;
+    *)
+      echo "Unsupported AGENTHUB_RELEASE_CHANNEL value: ${channel}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+is_beta_channel() {
+  [[ "$(release_channel)" == "beta" ]]
 }
 
 release_derived_data() {
@@ -15,7 +29,7 @@ release_derived_data() {
 }
 
 release_build_dir() {
-  echo "${AGENTHUB_RELEASE_BUILD_DIR:-$(repo_root)/build/release}"
+  echo "${AGENTHUB_RELEASE_BUILD_DIR:-$(repo_root)/build/$(release_channel)}"
 }
 
 release_output_dir() {
@@ -31,7 +45,16 @@ release_scheme() {
 }
 
 release_configuration() {
-  echo "${AGENTHUB_RELEASE_CONFIGURATION:-Release}"
+  if [[ -n "${AGENTHUB_RELEASE_CONFIGURATION:-}" ]]; then
+    echo "${AGENTHUB_RELEASE_CONFIGURATION}"
+    return
+  fi
+
+  if is_beta_channel; then
+    echo "Beta"
+  else
+    echo "Release"
+  fi
 }
 
 release_project() {
@@ -43,11 +66,29 @@ release_project_file() {
 }
 
 release_bundle_name() {
-  echo "${AGENTHUB_RELEASE_PRODUCT_NAME:-AgentHub.app}"
+  if [[ -n "${AGENTHUB_RELEASE_PRODUCT_NAME:-}" ]]; then
+    echo "${AGENTHUB_RELEASE_PRODUCT_NAME}"
+    return
+  fi
+
+  if is_beta_channel; then
+    echo "AgentHubBeta.app"
+  else
+    echo "AgentHub.app"
+  fi
 }
 
 release_bundle_identifier() {
-  echo "${AGENTHUB_RELEASE_PRODUCT_BUNDLE_IDENTIFIER:-au.com.roseadvisory.AgentHub}"
+  if [[ -n "${AGENTHUB_RELEASE_PRODUCT_BUNDLE_IDENTIFIER:-}" ]]; then
+    echo "${AGENTHUB_RELEASE_PRODUCT_BUNDLE_IDENTIFIER}"
+    return
+  fi
+
+  if is_beta_channel; then
+    echo "au.com.roseadvisory.AgentHub.beta"
+  else
+    echo "au.com.roseadvisory.AgentHub"
+  fi
 }
 
 release_archive_path() {
@@ -71,7 +112,13 @@ release_appcast_path() {
 }
 
 release_archive_name() {
-  echo "${AGENTHUB_RELEASE_ARCHIVE_NAME:-AgentHub-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value version 2>/dev/null || echo unknown)-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value build 2>/dev/null || echo unknown).zip}"
+  local archive_base
+  if [[ -n "${AGENTHUB_RELEASE_ARCHIVE_BASENAME:-}" ]]; then
+    archive_base="${AGENTHUB_RELEASE_ARCHIVE_BASENAME}"
+  else
+    archive_base="$(basename "$(release_bundle_name)" .app)"
+  fi
+  echo "${AGENTHUB_RELEASE_ARCHIVE_NAME:-${archive_base}-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value version 2>/dev/null || echo unknown)-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value build 2>/dev/null || echo unknown).zip}"
 }
 
 release_notarization_archive_path() {
@@ -83,7 +130,16 @@ release_dry_run() {
 }
 
 release_base_url() {
-  echo "${AGENTHUB_RELEASE_BASE_URL:-https://updates.example.com/agenthub}"
+  if [[ -n "${AGENTHUB_RELEASE_BASE_URL:-}" ]]; then
+    echo "${AGENTHUB_RELEASE_BASE_URL}"
+    return
+  fi
+
+  if is_beta_channel; then
+    echo "https://updates.example.com/agenthub/beta"
+  else
+    echo "https://updates.example.com/agenthub"
+  fi
 }
 
 release_feed_url() {
