@@ -3,6 +3,7 @@ import Foundation
 enum AuthManagerError: LocalizedError {
     case unauthenticated(String?)
     case statusCheckFailed(String)
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -10,6 +11,8 @@ enum AuthManagerError: LocalizedError {
             return reason ?? "Login is required"
         case let .statusCheckFailed(message):
             return message
+        case .cancelled:
+            return "Login cancelled"
         }
     }
 }
@@ -68,9 +71,13 @@ final class AuthManager {
     }
 
     func waitForLoginCompletion() async throws -> AuthState {
-        let state = try await providerClient.waitForLoginCompletion()
-        try store.save(state)
-        return state
+        do {
+            let state = try await providerClient.waitForLoginCompletion()
+            try store.save(state)
+            return state
+        } catch CodexLoginCoordinatorError.cancelled {
+            throw AuthManagerError.cancelled
+        }
     }
 
     func cancelLogin() {

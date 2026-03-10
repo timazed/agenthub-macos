@@ -29,7 +29,7 @@ struct AppShellView: View {
 
     var body: some View {
         Group {
-            if authViewModel.isAuthenticated {
+            if authViewModel.hasResolvedStartupCheck && authViewModel.isAuthenticated {
                 ChatView(
                     viewModel: chatViewModel,
                     isPanelPresented: appViewModel.isPanelPresented,
