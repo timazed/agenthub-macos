@@ -181,7 +181,7 @@ final class AppUpdatePolicyCoordinator {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
                 guard let self else { return }
-                if await self.processDeferredInstallIfIdle() {
+                if self.processDeferredInstallIfIdle() {
                     return
                 }
             }
