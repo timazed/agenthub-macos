@@ -52,14 +52,13 @@ EOF
 
 generate_appcast() {
   local tools_dir
-  tools_dir="$(sparkle_tools_dir)"
-
-  if [[ -z "${tools_dir}" ]]; then
-    echo "Unable to locate Sparkle tools directory" >&2
-    exit 1
-  fi
 
   if [[ -n "${AGENTHUB_SPARKLE_PRIVATE_KEY_FILE:-}" ]]; then
+    tools_dir="$(sparkle_tools_dir)"
+    if [[ -z "${tools_dir}" ]]; then
+      echo "Unable to locate Sparkle tools directory" >&2
+      exit 1
+    fi
     "${tools_dir}/generate_appcast" \
       --ed-key-file "${AGENTHUB_SPARKLE_PRIVATE_KEY_FILE}" \
       --download-url-prefix "$(release_base_url)/" \
@@ -69,6 +68,11 @@ generate_appcast() {
   fi
 
   if [[ -n "${AGENTHUB_SPARKLE_PRIVATE_KEY_SECRET:-}" ]]; then
+    tools_dir="$(sparkle_tools_dir)"
+    if [[ -z "${tools_dir}" ]]; then
+      echo "Unable to locate Sparkle tools directory" >&2
+      exit 1
+    fi
     local key_file
     key_file="$(mktemp)"
     trap 'rm -f "${key_file}"' EXIT
@@ -79,6 +83,12 @@ generate_appcast() {
       -o "$(release_appcast_path)" \
       "$(release_artifacts_dir)"
     return
+  fi
+
+  if ! release_dry_run; then
+    fail_release_step \
+      "publish-sparkle" \
+      "missing Sparkle signing key. Set AGENTHUB_SPARKLE_PRIVATE_KEY_FILE or AGENTHUB_SPARKLE_PRIVATE_KEY_SECRET for non-dry-run releases."
   fi
 
   write_placeholder_appcast

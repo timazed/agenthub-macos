@@ -102,6 +102,10 @@ signing_enabled() {
   [[ "${AGENTHUB_RELEASE_ENABLE_SIGNING:-false}" == "true" ]]
 }
 
+sparkle_private_key_configured() {
+  [[ -n "${AGENTHUB_SPARKLE_PRIVATE_KEY_FILE:-}" || -n "${AGENTHUB_SPARKLE_PRIVATE_KEY_SECRET:-}" ]]
+}
+
 release_signing_identity() {
   echo "${AGENTHUB_RELEASE_SIGNING_IDENTITY:-}"
 }
@@ -139,6 +143,10 @@ require_file() {
     echo "Missing required file: ${path}" >&2
     exit 1
   fi
+}
+
+codesign_bin() {
+  echo "${AGENTHUB_CODESIGN_BIN:-/usr/bin/codesign}"
 }
 
 prepare_release_directories() {

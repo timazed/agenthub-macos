@@ -32,12 +32,12 @@ main() {
     exit 0
   fi
 
-  if grep -q "<title>${AGENTHUB_RELEASE_CURRENT_VERSION}</title>" <<<"${appcast}"; then
-    echo "Version collision detected for ${AGENTHUB_RELEASE_CURRENT_VERSION}" >&2
+  if grep -q "sparkle:version=\"${AGENTHUB_RELEASE_CURRENT_BUILD}\"" <<<"${appcast}"; then
+    echo "Version collision detected for build ${AGENTHUB_RELEASE_CURRENT_BUILD} (${AGENTHUB_RELEASE_CURRENT_VERSION})" >&2
     exit 1
   fi
 
-  echo "No version collision detected for ${AGENTHUB_RELEASE_CURRENT_VERSION}"
+  echo "No version collision detected for build ${AGENTHUB_RELEASE_CURRENT_BUILD} (${AGENTHUB_RELEASE_CURRENT_VERSION})"
 }
 
 main "$@"

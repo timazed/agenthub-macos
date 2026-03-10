@@ -6,6 +6,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/release/env.sh
 source "${SCRIPT_DIR}/env.sh"
 
+codesign_path() {
+  local path="$1"
+  local identity="$2"
+
+  echo "Signing ${path}"
+  "$(codesign_bin)" --force --options runtime --timestamp --sign "${identity}" "${path}"
+}
+
+sign_if_present() {
+  local path="$1"
+  local identity="$2"
+  if [[ -e "${path}" ]]; then
+    codesign_path "${path}" "${identity}"
+  fi
+}
+
 main() {
   if release_dry_run; then
     echo "Dry run enabled; skipping release signing"
@@ -30,9 +46,18 @@ main() {
     fail_release_step "sign-release" "missing AGENTHUB_RELEASE_SIGNING_IDENTITY"
   fi
 
+  local sparkle_framework sparkle_current
+  sparkle_framework="${app_path}/Contents/Frameworks/Sparkle.framework"
+  sparkle_current="${sparkle_framework}/Versions/Current"
+
   echo "Re-signing ${app_path} with Developer ID identity: ${identity}"
-  /usr/bin/codesign --force --deep --options runtime --timestamp --sign "${identity}" "${app_path}"
-  /usr/bin/codesign --verify --deep --strict --verbose=2 "${app_path}"
+  sign_if_present "${sparkle_current}/XPCServices/Downloader.xpc" "${identity}"
+  sign_if_present "${sparkle_current}/XPCServices/Installer.xpc" "${identity}"
+  sign_if_present "${sparkle_current}/Updater.app" "${identity}"
+  sign_if_present "${sparkle_current}/Autoupdate" "${identity}"
+  sign_if_present "${sparkle_framework}" "${identity}"
+  codesign_path "${app_path}" "${identity}"
+  "$(codesign_bin)" --verify --deep --strict --verbose=2 "${app_path}"
 }
 
 main "$@"

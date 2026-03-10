@@ -41,7 +41,7 @@ These variables control the pipeline:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `AGENTHUB_RELEASE_CHANNEL` | Must remain `release` for this pipeline | `release` |
-| `AGENTHUB_RELEASE_DRY_RUN` | Skip signing, notarization, publish-side effects, and git push | `false` |
+| `AGENTHUB_RELEASE_DRY_RUN` | Skip signing, notarization, version-collision enforcement, and git push, while still generating local Sparkle artifacts for validation | `false` |
 | `AGENTHUB_RELEASE_BUMP` | Version bump mode: `patch` or `build` | `patch` |
 | `AGENTHUB_RELEASE_BUILD_DIR` | Root output directory for release artifacts | `build/release` |
 | `AGENTHUB_RELEASE_DERIVED_DATA` | Derived data path used by the release build | `/tmp/agenthub-release-derived` |
@@ -73,7 +73,7 @@ These variables control Sparkle appcast signing:
 | `AGENTHUB_SPARKLE_PRIVATE_KEY_FILE` | Path to the Sparkle private EdDSA key |
 | `AGENTHUB_SPARKLE_PRIVATE_KEY_SECRET` | Inline Sparkle private key contents written to a temp file at runtime |
 
-If no Sparkle private key is configured, `publish-sparkle.sh` writes a placeholder unsigned `appcast.xml`. That is useful for local verification, but it is not sufficient for a production release.
+If no Sparkle private key is configured, `publish-sparkle.sh` only writes a placeholder unsigned `appcast.xml` during `AGENTHUB_RELEASE_DRY_RUN=true` local verification. Non-dry-run releases fail fast until a Sparkle signing key is configured.
 
 ## Local Verification
 
@@ -88,6 +88,8 @@ Dry-run pipeline:
 ```bash
 AGENTHUB_RELEASE_DRY_RUN=true bash scripts/release/release-prod.sh
 ```
+
+This dry run still writes local artifacts under `build/release/publish/`. It does not attempt real signing, notarization, or git push.
 
 Build only:
 
