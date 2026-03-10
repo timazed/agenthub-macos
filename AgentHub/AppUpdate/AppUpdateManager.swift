@@ -3,30 +3,49 @@ import Foundation
 import Sparkle
 
 @MainActor
-final class AppUpdater: NSObject, ObservableObject {
+final class AppUpdateManager: NSObject, ObservableObject {
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var isConfigured = false
     @Published private(set) var phase: AppUpdatePhase = .idle
 
+    private enum CheckSource {
+        case manual
+        case background
+    }
+
+    private let bundle: Bundle
     private var updaterController: SPUStandardUpdaterController?
     private var observation: NSKeyValueObservation?
-    private let policyCoordinator: AppUpdatePolicyCoordinator
+    private let appUpdateTask: AppUpdateTask
+    private let backgroundTask: AppUpdateBackgroundTask
+    private var hasStarted = false
 
     init(
         bundle: Bundle,
         paths: AppPaths,
         taskStore: TaskStore,
-        activityLogStore: ActivityLogStore
+        activityLogStore: ActivityLogStore,
+        backgroundTask: AppUpdateBackgroundTask? = nil
     ) {
-        self.policyCoordinator = AppUpdatePolicyCoordinator(
+        self.bundle = bundle
+        self.appUpdateTask = AppUpdateTask(
             workloadMonitor: AppUpdateWorkloadMonitor(taskStore: taskStore),
             logger: AppUpdateLogger(paths: paths, activityLogStore: activityLogStore)
         )
+        self.backgroundTask = backgroundTask ?? AppUpdateBackgroundTask()
         super.init()
+        self.backgroundTask.handler = { [weak self] in
+            self?.checkForUpdates(source: .background)
+        }
+    }
+
+    func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
 
         guard SparkleConfiguration(bundle: bundle) != nil else {
-            self.canCheckForUpdates = false
-            self.isConfigured = false
+            canCheckForUpdates = false
+            isConfigured = false
             return
         }
 
@@ -47,54 +66,75 @@ final class AppUpdater: NSObject, ObservableObject {
 
         DispatchQueue.main.async { [weak self, weak controller] in
             guard let self, let controller else { return }
-            self.policyCoordinator.performStartupCheck(using: controller.updater)
-            self.phase = self.policyCoordinator.phase
+            self.appUpdateTask.performStartupCheck(using: controller.updater)
+            self.phase = self.appUpdateTask.phase
         }
+
+        backgroundTask.start()
+    }
+
+    func stop() {
+        backgroundTask.stop()
+        observation?.invalidate()
+        observation = nil
+        updaterController = nil
+        hasStarted = false
     }
 
     func checkForUpdates() {
+        checkForUpdates(source: .manual)
+    }
+
+    private func checkForUpdates(source: CheckSource) {
         guard let updaterController else { return }
-        policyCoordinator.recordManualCheck()
-        phase = policyCoordinator.phase
-        updaterController.checkForUpdates(nil)
+
+        switch source {
+        case .manual:
+            appUpdateTask.recordManualCheck()
+            phase = appUpdateTask.phase
+            updaterController.checkForUpdates(nil)
+        case .background:
+            appUpdateTask.performBackgroundCheck(using: updaterController.updater)
+            phase = appUpdateTask.phase
+        }
     }
 }
 
 @MainActor
-extension AppUpdater: SPUUpdaterDelegate {
+extension AppUpdateManager: SPUUpdaterDelegate {
     func updater(_ updater: SPUUpdater, willScheduleUpdateCheckAfterDelay delay: TimeInterval) {
-        policyCoordinator.recordScheduledCheck(delay: delay)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordScheduledCheck(delay: delay)
+        phase = appUpdateTask.phase
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        policyCoordinator.recordDidFindUpdate(item)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordDidFindUpdate(item)
+        phase = appUpdateTask.phase
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
-        policyCoordinator.recordDidNotFindUpdate(error: nil)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordDidNotFindUpdate(error: nil)
+        phase = appUpdateTask.phase
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
-        policyCoordinator.recordDidNotFindUpdate(error: error)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordDidNotFindUpdate(error: error)
+        phase = appUpdateTask.phase
     }
 
     func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
-        policyCoordinator.recordDidDownloadUpdate(item)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordDidDownloadUpdate(item)
+        phase = appUpdateTask.phase
     }
 
     func updater(_ updater: SPUUpdater, didExtractUpdate item: SUAppcastItem) {
-        policyCoordinator.recordDidExtractUpdate(item)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordDidExtractUpdate(item)
+        phase = appUpdateTask.phase
     }
 
     func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
-        policyCoordinator.recordWillInstallUpdate(item)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordWillInstallUpdate(item)
+        phase = appUpdateTask.phase
     }
 
     func updater(
@@ -102,8 +142,8 @@ extension AppUpdater: SPUUpdaterDelegate {
         shouldPostponeRelaunchForUpdate item: SUAppcastItem,
         untilInvokingBlock installHandler: @escaping () -> Void
     ) -> Bool {
-        let deferred = policyCoordinator.shouldDeferRelaunch(for: item, installHandler: installHandler)
-        phase = policyCoordinator.phase
+        let deferred = appUpdateTask.shouldDeferRelaunch(for: item, installHandler: installHandler)
+        phase = appUpdateTask.phase
         return deferred
     }
 
@@ -112,14 +152,14 @@ extension AppUpdater: SPUUpdaterDelegate {
         willInstallUpdateOnQuit item: SUAppcastItem,
         immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
     ) -> Bool {
-        let deferred = policyCoordinator.shouldDeferInstallOnQuit(for: item, installHandler: immediateInstallHandler)
-        phase = policyCoordinator.phase
+        let deferred = appUpdateTask.shouldDeferInstallOnQuit(for: item, installHandler: immediateInstallHandler)
+        phase = appUpdateTask.phase
         return deferred
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
-        policyCoordinator.recordDidAbort(error: error)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordDidAbort(error: error)
+        phase = appUpdateTask.phase
     }
 
     func updater(
@@ -127,8 +167,8 @@ extension AppUpdater: SPUUpdaterDelegate {
         didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
         error: Error?
     ) {
-        policyCoordinator.recordUpdateCycleFinished(updateCheck: updateCheck, error: error)
-        phase = policyCoordinator.phase
+        appUpdateTask.recordUpdateCycleFinished(updateCheck: updateCheck, error: error)
+        phase = appUpdateTask.phase
     }
 }
 

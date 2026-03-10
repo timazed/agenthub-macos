@@ -37,8 +37,8 @@ struct AgentHubApp: App {
         .windowToolbarStyle(.unified)
         .defaultSize(width: 800, height: 800)
         .commands {
-            if let appUpdater = bootstrap.appUpdater {
-                AgentHubCommands(appUpdater: appUpdater)
+            if let appUpdateManager = bootstrap.appUpdateManager {
+                AgentHubCommands(appUpdateManager: appUpdateManager)
             }
         }
     }
@@ -47,7 +47,7 @@ struct AgentHubApp: App {
 @MainActor
 private final class AppBootstrap: ObservableObject {
     @Published var container: AppContainer?
-    @Published var appUpdater: AppUpdater?
+    @Published var appUpdateManager: AppUpdateManager?
     @Published var errorMessage: String?
 
     private var didStart = false
@@ -71,12 +71,14 @@ private final class AppBootstrap: ObservableObject {
             }
 
             self.container = container
-            self.appUpdater = AppUpdater(
+            let appUpdateManager = AppUpdateManager(
                 bundle: .main,
                 paths: container.paths,
                 taskStore: container.taskStore,
                 activityLogStore: container.activityLogStore
             )
+            appUpdateManager.start()
+            self.appUpdateManager = appUpdateManager
             self.errorMessage = nil
             Self.log("bootstrap_success duration_ms=\(Self.durationMillis(since: startedAt))")
         } catch {
@@ -113,14 +115,14 @@ private final class AppBootstrap: ObservableObject {
 }
 
 private struct AgentHubCommands: Commands {
-    @ObservedObject var appUpdater: AppUpdater
+    @ObservedObject var appUpdateManager: AppUpdateManager
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") {
-                appUpdater.checkForUpdates()
+                appUpdateManager.checkForUpdates()
             }
-            .disabled(!appUpdater.canCheckForUpdates)
+            .disabled(!appUpdateManager.canCheckForUpdates)
         }
     }
 }

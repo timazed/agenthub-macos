@@ -4,13 +4,13 @@ import Testing
 @testable import AgentHub
 
 @MainActor
-struct AppUpdatePolicyCoordinatorTests {
+struct AppUpdateTaskTests {
     @Test
     func defersRelaunchWhenWorkIsRunning() {
         let monitor = StubWorkloadMonitor()
         monitor.state = AppUpdateWorkloadState(isBusy: true, reason: .runningTask)
         let logger = SpyAppUpdateLogger()
-        let coordinator = AppUpdatePolicyCoordinator(
+        let coordinator = AppUpdateTask(
             workloadMonitor: monitor,
             logger: logger,
             pollIntervalNanoseconds: nil
@@ -33,7 +33,7 @@ struct AppUpdatePolicyCoordinatorTests {
         let monitor = StubWorkloadMonitor()
         monitor.state = AppUpdateWorkloadState(isBusy: true, reason: .runningTask)
         let logger = SpyAppUpdateLogger()
-        let coordinator = AppUpdatePolicyCoordinator(
+        let coordinator = AppUpdateTask(
             workloadMonitor: monitor,
             logger: logger,
             pollIntervalNanoseconds: nil
@@ -60,7 +60,7 @@ struct AppUpdatePolicyCoordinatorTests {
         let monitor = StubWorkloadMonitor()
         monitor.error = StubError.lookupFailed
         let logger = SpyAppUpdateLogger()
-        let coordinator = AppUpdatePolicyCoordinator(
+        let coordinator = AppUpdateTask(
             workloadMonitor: monitor,
             logger: logger,
             pollIntervalNanoseconds: nil

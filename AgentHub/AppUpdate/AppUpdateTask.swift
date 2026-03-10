@@ -15,7 +15,7 @@ private enum DeferredInstallKind: String {
 }
 
 @MainActor
-final class AppUpdatePolicyCoordinator {
+final class AppUpdateTask {
     private struct DeferredInstall {
         var version: String
         var kind: DeferredInstallKind
@@ -52,6 +52,17 @@ final class AppUpdatePolicyCoordinator {
 
         phase = .checking
         logger.log("startup_check_requested")
+        updater.checkForUpdatesInBackground()
+    }
+
+    func performBackgroundCheck(using updater: SPUUpdater) {
+        guard deferredInstall == nil else {
+            logger.log("background_check_skipped reason=deferred_install_pending")
+            return
+        }
+
+        phase = .checking
+        logger.log("background_check_requested")
         updater.checkForUpdatesInBackground()
     }
 
