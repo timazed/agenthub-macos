@@ -22,13 +22,7 @@ struct ChatView: View {
             conversationSurface
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            LinearGradient(
-                colors: backgroundGradientColors,
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .background(.clear)
         .overlay(alignment: .top) {
             headerOverlay
         }
@@ -54,17 +48,19 @@ struct ChatView: View {
                         }
                     }
                 }
+                .background(.clear)
                 .padding(.horizontal, 32)
                 .padding(.top, topOverlayHeight)
                 .padding(.bottom, bottomOverlayHeight)
             }
+            .background(.clear)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentMargins(.top, 0, for: .scrollContent)
             .contentMargins(.bottom, 0, for: .scrollContent)
             .onChange(of: viewModel.messages.count) { _, _ in
                 scrollToBottom(proxy: proxy)
             }
-            .onChange(of: viewModel.isBusy) { _, _ in
+            .onChange(of: viewModel.isThinking) { _, _ in
                 scrollToBottom(proxy: proxy)
             }
             .onAppear {
@@ -77,20 +73,25 @@ struct ChatView: View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, 20)
-                .background(
-                    Rectangle()
-                        .fill(.clear)
-                        .liquidGlass()
-                        .mask(
-                            LinearGradient(
-                                colors: [.black, .black.opacity(0.82), .clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                )
 
             Spacer(minLength: 0)
+        }
+        .background(alignment: .top) {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .frame(height: 112)
+                .mask(
+                    LinearGradient(
+                        colors: [
+                            .black.opacity(0.95),
+                            .black.opacity(0.55),
+                            .clear
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .allowsHitTesting(false)
         }
         .ignoresSafeArea(.container, edges: .top)
         .allowsHitTesting(true)
@@ -103,15 +104,7 @@ struct ChatView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 16)
         }
-        .background(
-            LinearGradient(
-                colors: [Color.clear, overlayShade.opacity(colorScheme == .dark ? 0.44 : 0.12)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: bottomOverlayHeight)
-            .frame(maxHeight: .infinity, alignment: .bottom)
-        )
+        .background(.clear)
     }
 
     private var header: some View {
@@ -143,7 +136,7 @@ struct ChatView: View {
                             .fill(.ultraThinMaterial)
                             .overlay(
                                 Capsule(style: .continuous)
-                                    .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08), lineWidth: 1)
+                                    .stroke(Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04), lineWidth: 1)
                             )
                     )
                 }
@@ -172,7 +165,7 @@ struct ChatView: View {
                     BrainMenuButton(diameter: ComposerMetrics.controlHeight)
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.isBusy)
+                .disabled(viewModel.isThinking)
                 .popover(isPresented: $isModelMenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
                     ModelPickerPopover(
                         models: viewModel.supportedModels,
@@ -191,7 +184,7 @@ struct ChatView: View {
                     ReasoningMenuButton(diameter: ComposerMetrics.controlHeight)
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.isBusy)
+                .disabled(viewModel.isThinking)
                 .popover(isPresented: $isReasoningMenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
                     ReasoningPickerPopover(
                         activeReasoning: viewModel.activeReasoning,
@@ -224,7 +217,7 @@ struct ChatView: View {
 
                 HStack(spacing: 8) {
                     CircleIconButton(
-                        systemName: viewModel.isBusy ? "stop.fill" : "arrow.up",
+                        systemName: viewModel.isThinking ? "stop.fill" : "arrow.up",
                         diameter: ComposerMetrics.controlHeight
                     ) {
                         if viewModel.isBusy {
@@ -235,6 +228,7 @@ struct ChatView: View {
                     }
                     .disabled(
                         !isInputEnabled ||
+                        viewModel.isExternalRunActive ||
                         (!viewModel.isBusy && viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     )
                 }
@@ -261,7 +255,7 @@ struct ChatView: View {
             entries.append(.init(kind: .message(message)))
         }
 
-        if viewModel.isBusy {
+        if viewModel.isThinking {
             entries.append(.init(kind: .thinking))
         }
 
@@ -281,7 +275,7 @@ struct ChatView: View {
 
     private func scrollToBottom(proxy: ScrollViewProxy) {
         let target: ConversationScrollTarget?
-        if viewModel.isBusy {
+        if viewModel.isThinking {
             target = .thinking
         } else if let lastMessageID = viewModel.messages.last?.id {
             target = .message(lastMessageID)
@@ -295,21 +289,6 @@ struct ChatView: View {
                 proxy.scrollTo(target, anchor: .bottom)
             }
         }
-    }
-
-    private var backgroundGradientColors: [Color] {
-        if colorScheme == .dark {
-            return [
-                .black,
-                Color(red: 0.04, green: 0.05, blue: 0.08),
-                .black
-            ]
-        }
-        return [
-            .white,
-            Color(red: 0.95, green: 0.97, blue: 1.0),
-            .white
-        ]
     }
 
     private var overlayShade: Color {

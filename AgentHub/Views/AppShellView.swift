@@ -79,6 +79,8 @@ struct AppShellView: View {
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.86), value: authViewModel.hasCompletedOnboarding)
         }
+        .background(AdaptiveWindowBackground())
+        .liquidGlass()
         .inspector(isPresented: $appViewModel.isPanelPresented) {
             AssistantPanelView(
                 tasksViewModel: tasksViewModel,

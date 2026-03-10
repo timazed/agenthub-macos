@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		22AF00012F70000100112233 /* IMsgCore in Frameworks */ = {isa = PBXBuildFile; productRef = 22AF00022F70000200112233 /* IMsgCore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		2206395C2F58FDC9001A14A6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				22AF00012F70000100112233 /* IMsgCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = AgentHub;
 			packageProductDependencies = (
+				22AF00022F70000200112233 /* IMsgCore */,
 			);
 			productName = AgentHub;
 			productReference = 2206394E2F58FDC7001A14A6 /* AgentHub.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = 220639452F58FDC6001A14A6;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				22AF00032F70000300112233 /* XCRemoteSwiftPackageReference "imsg" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2206394F2F58FDC7001A14A6 /* Products */;
 			projectDirPath = "";
@@ -577,6 +586,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		22AF00032F70000300112233 /* XCRemoteSwiftPackageReference "imsg" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/steipete/imsg";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		22AF00022F70000200112233 /* IMsgCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 22AF00032F70000300112233 /* XCRemoteSwiftPackageReference "imsg" */;
+			productName = IMsgCore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 220639462F58FDC7001A14A6 /* Project object */;
 }

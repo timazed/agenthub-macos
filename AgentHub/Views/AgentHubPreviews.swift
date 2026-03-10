@@ -193,6 +193,45 @@ private enum PreviewFactory {
         return viewModel
     }
 
+    @MainActor
+    static func makeIMessageViewModel() -> IMessageIntegrationViewModel {
+        let paths = makePaths()
+        try? paths.prepare()
+
+        let configStore = IMessageIntegrationConfigStore(paths: paths)
+        let whitelistService = IMessageWhitelistService()
+        let activityStore = ActivityLogStore(paths: paths)
+        let personaManager = PersonaManager(paths: paths)
+        let router = IMessageCommandRouter(
+            configStore: configStore,
+            whitelistService: whitelistService,
+            mentionParser: IMessageMentionParser(personaManager: personaManager),
+            executionService: ExternalAgentExecutionService(
+                runtimeConfigStore: AppRuntimeConfigStore(paths: paths),
+                sessionStore: AssistantSessionStore(paths: paths),
+                paths: paths,
+                runtimeFactory: { PreviewCodexRuntime() }
+            ),
+            replyService: IMessageReplyService(),
+            activityLogStore: activityStore,
+            sessionStore: AssistantSessionStore(paths: paths),
+            personaManager: personaManager
+        )
+        let monitor = IMessageMonitorService(
+            configStore: configStore,
+            router: router,
+            activityLogStore: activityStore
+        )
+        let viewModel = IMessageIntegrationViewModel(
+            configStore: configStore,
+            whitelistService: whitelistService,
+            monitorService: monitor,
+            permissionService: IMessagePermissionService()
+        )
+        viewModel.load()
+        return viewModel
+    }
+
     static func sampleMessages() -> [Message] {
         let sessionID = UUID()
         return [

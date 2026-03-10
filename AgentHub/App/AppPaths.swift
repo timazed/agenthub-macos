@@ -44,6 +44,10 @@ struct AppPaths {
         stateDirectory.appendingPathComponent("onboarding-state.json")
     }
 
+    var iMessageIntegrationConfigURL: URL {
+        stateDirectory.appendingPathComponent("imessage-integration-config.json")
+    }
+
     var historyFileURL: URL {
         root.appendingPathComponent("history.jsonl")
     }
