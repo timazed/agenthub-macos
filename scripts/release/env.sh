@@ -74,6 +74,10 @@ release_archive_name() {
   echo "${AGENTHUB_RELEASE_ARCHIVE_NAME:-AgentHub-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value version 2>/dev/null || echo unknown)-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value build 2>/dev/null || echo unknown).zip}"
 }
 
+release_notarization_archive_path() {
+  echo "$(release_artifacts_dir)/AgentHub-notarization.zip"
+}
+
 release_dry_run() {
   [[ "${AGENTHUB_RELEASE_DRY_RUN:-false}" == "true" ]]
 }
@@ -98,10 +102,41 @@ signing_enabled() {
   [[ "${AGENTHUB_RELEASE_ENABLE_SIGNING:-false}" == "true" ]]
 }
 
+release_signing_identity() {
+  echo "${AGENTHUB_RELEASE_SIGNING_IDENTITY:-}"
+}
+
+release_notary_key_id() {
+  echo "${AGENTHUB_NOTARY_KEY_ID:-}"
+}
+
+release_notary_issuer_id() {
+  echo "${AGENTHUB_NOTARY_ISSUER_ID:-}"
+}
+
+release_notary_key_path() {
+  echo "${AGENTHUB_NOTARY_KEY_PATH:-}"
+}
+
+fail_release_step() {
+  local step="$1"
+  local reason="$2"
+  echo "${step}: ${reason}" >&2
+  exit 1
+}
+
 require_env() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
     echo "Missing required environment variable: ${name}" >&2
+    exit 1
+  fi
+}
+
+require_file() {
+  local path="$1"
+  if [[ ! -f "${path}" ]]; then
+    echo "Missing required file: ${path}" >&2
     exit 1
   fi
 }
