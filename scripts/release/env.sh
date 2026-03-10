@@ -112,17 +112,11 @@ release_appcast_path() {
 }
 
 release_archive_name() {
-  local archive_base
-  if [[ -n "${AGENTHUB_RELEASE_ARCHIVE_BASENAME:-}" ]]; then
-    archive_base="${AGENTHUB_RELEASE_ARCHIVE_BASENAME}"
-  else
-    archive_base="$(basename "$(release_bundle_name)" .app)"
-  fi
-  echo "${AGENTHUB_RELEASE_ARCHIVE_NAME:-${archive_base}-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value version 2>/dev/null || echo unknown)-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value build 2>/dev/null || echo unknown).zip}"
+  echo "${AGENTHUB_RELEASE_ARCHIVE_NAME:-$(release_bundle_basename)-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value version 2>/dev/null || echo unknown)-$("${BASH_SOURCE[0]%/*}/read-version.sh" --value build 2>/dev/null || echo unknown).zip}"
 }
 
 release_notarization_archive_path() {
-  echo "$(release_artifacts_dir)/AgentHub-notarization.zip"
+  echo "$(release_artifacts_dir)/$(release_bundle_basename)-notarization.zip"
 }
 
 release_dry_run() {
@@ -203,6 +197,14 @@ require_file() {
 
 codesign_bin() {
   echo "${AGENTHUB_CODESIGN_BIN:-/usr/bin/codesign}"
+}
+
+release_bundle_basename() {
+  if [[ -n "${AGENTHUB_RELEASE_ARCHIVE_BASENAME:-}" ]]; then
+    echo "${AGENTHUB_RELEASE_ARCHIVE_BASENAME}"
+  else
+    basename "$(release_bundle_name)" .app
+  fi
 }
 
 prepare_release_directories() {

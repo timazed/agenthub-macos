@@ -7,8 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/env.sh"
 
 archive_name() {
-  eval "$("${SCRIPT_DIR}/read-version.sh" --shell)"
-  echo "AgentHub-${AGENTHUB_RELEASE_CURRENT_VERSION}-${AGENTHUB_RELEASE_CURRENT_BUILD}.zip"
+  release_archive_name
 }
 
 archive_url() {

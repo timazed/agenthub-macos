@@ -37,7 +37,7 @@ main() {
   fi
 
   local message
-  message="Release bump to ${AGENTHUB_RELEASE_CURRENT_VERSION} (${AGENTHUB_RELEASE_CURRENT_BUILD})"
+  message="$(printf '%s' "$(release_channel)" | tr '[:lower:]' '[:upper:]') release bump to ${AGENTHUB_RELEASE_CURRENT_VERSION} (${AGENTHUB_RELEASE_CURRENT_BUILD})"
 
   git -c user.name="$(git_author_name)" -c user.email="$(git_author_email)" commit -m "${message}"
 
