@@ -21,7 +21,9 @@ main() {
   echo "Configuration: $(release_configuration)"
   echo "Dry run: ${AGENTHUB_RELEASE_DRY_RUN:-false}"
 
-  "${SCRIPT_DIR}/read-version.sh"
+  eval "$("${SCRIPT_DIR}/read-version.sh" --shell)"
+  echo "Current version: ${AGENTHUB_RELEASE_CURRENT_VERSION} (${AGENTHUB_RELEASE_CURRENT_BUILD})"
+
   "${SCRIPT_DIR}/check-version-collision.sh"
   "${SCRIPT_DIR}/build-release.sh"
   "${SCRIPT_DIR}/sign-release.sh"

@@ -38,8 +38,16 @@ release_project() {
   echo "${AGENTHUB_RELEASE_PROJECT:-AgentHub.xcodeproj}"
 }
 
+release_project_file() {
+  echo "$(repo_root)/$(release_project)/project.pbxproj"
+}
+
 release_bundle_name() {
   echo "${AGENTHUB_RELEASE_PRODUCT_NAME:-AgentHub.app}"
+}
+
+release_bundle_identifier() {
+  echo "${AGENTHUB_RELEASE_PRODUCT_BUNDLE_IDENTIFIER:-au.com.roseadvisory.AgentHub}"
 }
 
 release_archive_path() {
