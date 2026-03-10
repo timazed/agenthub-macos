@@ -71,7 +71,12 @@ private final class AppBootstrap: ObservableObject {
             }
 
             self.container = container
-            self.appUpdater = AppUpdater(bundle: .main)
+            self.appUpdater = AppUpdater(
+                bundle: .main,
+                paths: container.paths,
+                taskStore: container.taskStore,
+                activityLogStore: container.activityLogStore
+            )
             self.errorMessage = nil
             Self.log("bootstrap_success duration_ms=\(Self.durationMillis(since: startedAt))")
         } catch {
