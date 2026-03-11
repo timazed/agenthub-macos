@@ -8,10 +8,11 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 GITHUB_API_ROOT="${AGENTHUB_GITHUB_API_ROOT:-https://api.github.com}"
 CODEX_RELEASES_API="${GITHUB_API_ROOT}/repos/openai/codex/releases?per_page=20"
-CEF_INDEX_URL="${AGENTHUB_CEF_INDEX_URL:-https://cef-builds.spotifycdn.com/index.html#macosarm64}"
+CEF_INDEX_URL="${AGENTHUB_CEF_INDEX_URL:-https://cef-builds.spotifycdn.com/index.json}"
+CEF_DOWNLOAD_ROOT="${AGENTHUB_CEF_DOWNLOAD_ROOT:-https://cef-builds.spotifycdn.com/}"
 
 require_jq() {
-  require_command /opt/homebrew/bin/jq
+  require_command jq
 }
 
 manifest_update_field() {
@@ -20,7 +21,7 @@ manifest_update_field() {
   local temp_path
 
   temp_path="$(mktemp)"
-  /opt/homebrew/bin/jq "${jq_filter}" "${manifest_path}" >"${temp_path}"
+  "$(jq_bin)" "${jq_filter}" "${manifest_path}" >"${temp_path}"
   mv "${temp_path}" "${manifest_path}"
 }
 
@@ -31,13 +32,13 @@ update_codex_manifest() {
   releases_json="$(mktemp)"
   /usr/bin/curl -fsSL "${CODEX_RELEASES_API}" -o "${releases_json}"
   release_json="$(
-    /opt/homebrew/bin/jq -c '[.[] | select(.prerelease == false and .draft == false)][0]' "${releases_json}"
+    "$(jq_bin)" -c '[.[] | select(.prerelease == false and .draft == false)][0]' "${releases_json}"
   )"
 
-  version="$(printf '%s' "${release_json}" | /opt/homebrew/bin/jq -r '.tag_name | sub("^v"; "")')"
+  version="$(printf '%s' "${release_json}" | "$(jq_bin)" -r '.tag_name | sub("^rust-v"; "") | sub("^v"; "")')"
   url="$(
     printf '%s' "${release_json}" |
-      /opt/homebrew/bin/jq -r '.assets[] | select(.name | test("aarch64-apple-darwin") and test("\\.tar\\.gz$")) | .browser_download_url' |
+      "$(jq_bin)" -r '.assets[] | select(.name | test("aarch64-apple-darwin") and test("\\.tar\\.gz$")) | .browser_download_url' |
       head -n 1
   )"
 
@@ -63,26 +64,34 @@ update_codex_manifest() {
 
 update_cef_manifest() {
   local manifest_path="$1"
-  local index_html version url archive_type archive_path sha256
+  local index_json version filename url archive_type archive_path sha256
 
-  index_html="$(mktemp)"
-  /usr/bin/curl -fsSL "${CEF_INDEX_URL}" -o "${index_html}"
+  index_json="$(mktemp)"
+  /usr/bin/curl -fsSL "${CEF_INDEX_URL}" -o "${index_json}"
 
-  url="$(
-    grep -Eo 'https://cef-builds\.spotifycdn\.com/cef_binary_[^"]+_macosarm64(_minimal)?\.tar\.bz2' "${index_html}" |
-      head -n 1
+  version="$(
+    "$(jq_bin)" -r '
+      .macosarm64.versions
+      | map(select(.channel == "stable"))
+      | .[0].cef_version
+    ' "${index_json}"
+  )"
+  filename="$(
+    "$(jq_bin)" -r '
+      .macosarm64.versions
+      | map(select(.channel == "stable"))
+      | .[0].files
+      | map(select(.type == "minimal"))
+      | if length > 0 then .[0].name else empty end
+    ' "${index_json}"
   )"
 
-  if [[ -z "${url}" ]]; then
-    echo "Unable to locate a stable macOS arm64 CEF asset from ${CEF_INDEX_URL}" >&2
+  if [[ -z "${version}" || "${version}" == "null" || -z "${filename}" || "${filename}" == "null" ]]; then
+    echo "Unable to locate a stable macOS arm64 CEF artifact from ${CEF_INDEX_URL}" >&2
     exit 1
   fi
 
-  version="$(
-    printf '%s' "${url}" |
-      sed -E 's#^.*/cef_binary_([^_]+)_macosarm64(_minimal)?\.tar\.bz2$#\1#' |
-      sed 's/%2B/+/g'
-  )"
+  url="${CEF_DOWNLOAD_ROOT}${filename}"
   archive_type="tar.bz2"
   archive_path="$(mktemp)"
   download_file "${url}" "${archive_path}"
@@ -95,7 +104,7 @@ update_cef_manifest() {
      .dependencies.cef.channels.stable.artifacts.arm64.archive_type = \"${archive_type}\"" \
     "${manifest_path}"
 
-  rm -f "${archive_path}" "${index_html}"
+  rm -f "${archive_path}" "${index_json}"
 }
 
 main() {

@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/env.sh"
 
 resolve_packages() {
-  xcodebuild \
+  "$(xcodebuild_bin)" \
     -project "$(release_project)" \
     -scheme "$(release_scheme)" \
     -derivedDataPath "$(release_derived_data)" \
@@ -15,18 +15,21 @@ resolve_packages() {
 }
 
 build_app() {
-  xcodebuild \
+  "$(xcodebuild_bin)" \
     -project "$(release_project)" \
     -scheme "$(release_scheme)" \
     -configuration "$(release_configuration)" \
     -derivedDataPath "$(release_derived_data)" \
     -destination "platform=macOS" \
     AGENTHUB_SPARKLE_FEED_URL="$(release_feed_url)" \
+    AGENTHUB_DEPENDENCY_MANIFEST="$(dependency_manifest)" \
+    AGENTHUB_DEPENDENCY_CACHE_DIR="$(dependency_cache_dir)" \
     build
 }
 
 main() {
   prepare_release_directories
+  bootstrap_dependencies
 
   resolve_packages
   build_app

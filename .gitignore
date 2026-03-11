@@ -108,6 +108,7 @@ Pods/
 
 AgentHub/Resources/codex/codex
 AgentHub/Resources/claude/claude
+build/dependency-cache/
 .deriveddata/
 
 # End of https://www.gitignore.io/api/xcode,swift

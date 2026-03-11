@@ -10,7 +10,7 @@ manifest_read_required() {
   local manifest_path="${2:-$(dependency_manifest_path)}"
   local value
 
-  value="$(/opt/homebrew/bin/jq -r "${expression}" "${manifest_path}")"
+  value="$("$(jq_bin)" -r "${expression}" "${manifest_path}")"
   if [[ -z "${value}" || "${value}" == "null" ]]; then
     echo "Manifest value is missing for expression: ${expression}" >&2
     exit 1
@@ -22,7 +22,7 @@ manifest_read_required() {
 manifest_read_optional() {
   local expression="$1"
   local manifest_path="${2:-$(dependency_manifest_path)}"
-  /opt/homebrew/bin/jq -r "${expression} // empty" "${manifest_path}"
+  "$(jq_bin)" -r "${expression} // empty" "${manifest_path}"
 }
 
 manifest_dependency_version() {

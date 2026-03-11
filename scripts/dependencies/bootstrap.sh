@@ -92,7 +92,7 @@ main() {
     esac
   done
 
-  require_command /opt/homebrew/bin/jq
+  require_command jq
   channel="$(manifest_read_required '.default_channel' "${manifest_path}")"
 
   case "${dependency_name}" in

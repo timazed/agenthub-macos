@@ -8,24 +8,105 @@ source "${SCRIPT_DIR}/lib/common.sh"
 # shellcheck source=scripts/dependencies/lib/manifest.sh
 source "${SCRIPT_DIR}/lib/manifest.sh"
 
+codesign_bin() {
+  if [[ -n "${AGENTHUB_CODESIGN_BIN:-}" ]]; then
+    echo "${AGENTHUB_CODESIGN_BIN}"
+    return
+  fi
+
+  echo "/usr/bin/codesign"
+}
+
+sign_if_present() {
+  local path="$1"
+  local identity="$2"
+
+  if [[ ! -e "${path}" ]]; then
+    return
+  fi
+
+  "$(codesign_bin)" --force --sign "${identity}" --timestamp=none "${path}"
+}
+
+normalize_cef_framework_layout() {
+  local framework_path="$1"
+  local version_dir
+
+  if [[ -d "${framework_path}/Versions" ]]; then
+    return
+  fi
+
+  version_dir="${framework_path}/Versions/A"
+  mkdir -p "${version_dir}"
+
+  if [[ -e "${framework_path}/Chromium Embedded Framework" && ! -L "${framework_path}/Chromium Embedded Framework" ]]; then
+    mv "${framework_path}/Chromium Embedded Framework" "${version_dir}/Chromium Embedded Framework"
+  fi
+
+  if [[ -d "${framework_path}/Libraries" && ! -L "${framework_path}/Libraries" ]]; then
+    mv "${framework_path}/Libraries" "${version_dir}/Libraries"
+  fi
+
+  if [[ -d "${framework_path}/Resources" && ! -L "${framework_path}/Resources" ]]; then
+    mv "${framework_path}/Resources" "${version_dir}/Resources"
+  fi
+
+  ln -sfn A "${framework_path}/Versions/Current"
+  ln -sfn "Versions/Current/Chromium Embedded Framework" "${framework_path}/Chromium Embedded Framework"
+  ln -sfn "Versions/Current/Libraries" "${framework_path}/Libraries"
+  ln -sfn "Versions/Current/Resources" "${framework_path}/Resources"
+}
+
+sign_staged_dependencies() {
+  local frameworks_dir="$1"
+  local identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
+  local path
+
+  if [[ "${CODE_SIGNING_ALLOWED:-NO}" != "YES" || -z "${identity}" || "${identity}" == "-" ]]; then
+    return
+  fi
+
+  while IFS= read -r path; do
+    sign_if_present "${path}" "${identity}"
+  done < <(find "${frameworks_dir}" -maxdepth 1 -type d -name '*.xpc' -print | sort)
+
+  while IFS= read -r path; do
+    sign_if_present "${path}" "${identity}"
+  done < <(find "${frameworks_dir}" -maxdepth 1 -type d -name '*Helper*.app' -print | sort)
+
+  sign_if_present "${frameworks_dir}/Chromium Embedded Framework.framework" "${identity}"
+}
+
 main() {
-  local manifest_path arch repo_root channel version stage_root frameworks_dir
+  local manifest_path arch repo_root stage_root frameworks_dir codex_binary framework_source copied_framework
 
   manifest_path="$(dependency_manifest_path)"
   arch="$(dependency_default_arch)"
   repo_root="$(dependency_repo_root)"
-  channel="$(manifest_read_required '.default_channel' "${manifest_path}")"
-
-  bash "${SCRIPT_DIR}/bootstrap.sh" --dependency all --manifest "${manifest_path}" --arch "${arch}"
-
-  version="$(manifest_dependency_version cef "${channel}" "${manifest_path}")"
-  stage_root="${repo_root}/$(manifest_dependency_staging_dir cef "${manifest_path}")/${version}/${arch}/Release"
+  codex_binary="${repo_root}/$(manifest_dependency_resource_dir codex "${manifest_path}")/$(manifest_dependency_resource_binary_name codex "${manifest_path}")"
+  stage_root="${repo_root}/$(manifest_dependency_staging_dir cef "${manifest_path}")/current/${arch}/Release"
+  framework_source="${stage_root}/Chromium Embedded Framework.framework"
   frameworks_dir="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
 
-  if [[ -d "${stage_root}" ]]; then
-    mkdir -p "${frameworks_dir}"
-    find "${stage_root}" -mindepth 1 -maxdepth 1 -exec cp -R {} "${frameworks_dir}/" \;
+  if [[ ! -f "${codex_binary}" ]]; then
+    echo "Missing staged Codex binary at ${codex_binary}. Run scripts/dependencies/bootstrap.sh before building." >&2
+    exit 1
   fi
+
+  if [[ ! -d "${framework_source}" ]]; then
+    echo "Missing staged CEF framework at ${framework_source}. Run scripts/dependencies/bootstrap.sh before building." >&2
+    exit 1
+  fi
+
+  mkdir -p "${frameworks_dir}"
+  rm -rf \
+    "${frameworks_dir}/Chromium Embedded Framework.framework" \
+    "${frameworks_dir}"/*Helper*.app \
+    "${frameworks_dir}"/*.xpc
+  cp -R "${framework_source}" "${frameworks_dir}/"
+  copied_framework="${frameworks_dir}/Chromium Embedded Framework.framework"
+  normalize_cef_framework_layout "${copied_framework}"
+  sign_staged_dependencies "${frameworks_dir}"
 }
 
 main "$@"

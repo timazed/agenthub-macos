@@ -41,9 +41,13 @@ setup_release_fixture() {
   mkdir -p "${app_path}/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
   mkdir -p "${app_path}/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
   mkdir -p "${app_path}/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS"
+  mkdir -p "${app_path}/Contents/Frameworks/Chromium Embedded Framework.framework"
+  mkdir -p "${app_path}/Contents/Frameworks/AgentHub Helper.app/Contents/MacOS"
   touch "${app_path}/Contents/MacOS/AgentHub"
   touch "${app_path}/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
   touch "${app_path}/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater"
+  touch "${app_path}/Contents/Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework"
+  touch "${app_path}/Contents/Frameworks/AgentHub Helper.app/Contents/MacOS/AgentHub Helper"
   ln -sfn B "${app_path}/Contents/Frameworks/Sparkle.framework/Versions/Current"
 }
 
@@ -173,14 +177,73 @@ EOF
   [[ -f "${log_path}" ]] || fail "expected fake codesign log to be written"
 
   local sign_lines
-  sign_lines="$(head -n 5 "${log_path}")"
+  sign_lines="$(cat "${log_path}")"
   assert_contains "${sign_lines}" "Downloader.xpc"
   assert_contains "${sign_lines}" "Installer.xpc"
   assert_contains "${sign_lines}" "Updater.app"
   assert_contains "${sign_lines}" "Autoupdate"
   assert_contains "${sign_lines}" "Sparkle.framework"
-  assert_not_contains "$(head -n 6 "${log_path}")" "--deep --options runtime"
+  assert_contains "${sign_lines}" "AgentHub Helper.app"
+  assert_contains "${sign_lines}" "Chromium Embedded Framework.framework"
+  assert_not_contains "$(head -n 8 "${log_path}")" "--deep --options runtime"
   assert_contains "$(tail -n 1 "${log_path}")" "--verify --deep --strict --verbose=2"
+  rm -rf "${tmp_dir}"
+}
+
+test_build_release_runs_dependency_bootstrap() {
+  local tmp_dir bootstrap_log fake_bootstrap fake_xcodebuild output
+  tmp_dir="$(mktemp -d)"
+  bootstrap_log="${tmp_dir}/bootstrap.log"
+  fake_bootstrap="${tmp_dir}/fake-bootstrap.sh"
+  fake_xcodebuild="${tmp_dir}/fake-xcodebuild.sh"
+
+  cat >"${fake_bootstrap}" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf 'bootstrap %s\n' "${AGENTHUB_DEPENDENCY_MANIFEST}" >>"${AGENTHUB_BOOTSTRAP_LOG}"
+EOF
+  chmod +x "${fake_bootstrap}"
+
+  cat >"${fake_xcodebuild}" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf 'xcodebuild %s\n' "$*" >>"${AGENTHUB_BOOTSTRAP_LOG}"
+derived=""
+configuration="Release"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -derivedDataPath)
+      derived="$2"
+      shift 2
+      ;;
+    -configuration)
+      configuration="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+if [[ -n "${derived}" ]]; then
+  mkdir -p "${derived}/Build/Products/${configuration}/AgentHub.app"
+fi
+EOF
+  chmod +x "${fake_xcodebuild}"
+
+  output="$(
+    AGENTHUB_BOOTSTRAP_LOG="${bootstrap_log}" \
+    AGENTHUB_DEPENDENCY_BOOTSTRAP_BIN="${fake_bootstrap}" \
+    AGENTHUB_XCODEBUILD_BIN="${fake_xcodebuild}" \
+    AGENTHUB_RELEASE_BUILD_DIR="${tmp_dir}/build" \
+    AGENTHUB_RELEASE_OUTPUT_DIR="${tmp_dir}/build/output" \
+    AGENTHUB_RELEASE_DERIVED_DATA="${tmp_dir}/derived" \
+    bash "${SCRIPT_DIR}/build-release.sh" 2>&1
+  )"
+
+  assert_contains "${output}" "Built release app"
+  assert_contains "$(head -n 1 "${bootstrap_log}")" "bootstrap"
+  assert_contains "$(sed -n '2p' "${bootstrap_log}")" "-resolvePackageDependencies"
   rm -rf "${tmp_dir}"
 }
 
@@ -208,6 +271,7 @@ main() {
   test_publish_dry_run_writes_placeholder_without_sparkle_key
   test_collision_check_uses_build_number
   test_sign_release_uses_explicit_order_without_deep_signing
+  test_build_release_runs_dependency_bootstrap
   test_beta_channel_defaults
   echo "All release script tests passed"
 }

@@ -28,6 +28,22 @@ release_derived_data() {
   echo "${AGENTHUB_RELEASE_DERIVED_DATA:-/tmp/agenthub-release-derived}"
 }
 
+dependency_manifest() {
+  echo "${AGENTHUB_DEPENDENCY_MANIFEST:-$(repo_root)/scripts/dependencies/manifest.json}"
+}
+
+dependency_cache_dir() {
+  echo "${AGENTHUB_DEPENDENCY_CACHE_DIR:-$(repo_root)/build/dependency-cache}"
+}
+
+dependency_bootstrap_bin() {
+  echo "${AGENTHUB_DEPENDENCY_BOOTSTRAP_BIN:-$(repo_root)/scripts/dependencies/bootstrap.sh}"
+}
+
+xcodebuild_bin() {
+  echo "${AGENTHUB_XCODEBUILD_BIN:-xcodebuild}"
+}
+
 release_build_dir() {
   echo "${AGENTHUB_RELEASE_BUILD_DIR:-$(repo_root)/build/$(release_channel)}"
 }
@@ -197,6 +213,23 @@ require_file() {
 
 codesign_bin() {
   echo "${AGENTHUB_CODESIGN_BIN:-/usr/bin/codesign}"
+}
+
+bootstrap_dependencies() {
+  if [[ "${AGENTHUB_SKIP_DEPENDENCY_BOOTSTRAP:-false}" == "true" ]]; then
+    echo "Skipping dependency bootstrap"
+    return 0
+  fi
+
+  local bootstrap_bin
+  bootstrap_bin="$(dependency_bootstrap_bin)"
+  if [[ ! -f "${bootstrap_bin}" ]]; then
+    fail_release_step "dependency-bootstrap" "bootstrap script not found at ${bootstrap_bin}"
+  fi
+
+  AGENTHUB_DEPENDENCY_MANIFEST="$(dependency_manifest)" \
+    AGENTHUB_DEPENDENCY_CACHE_DIR="$(dependency_cache_dir)" \
+    bash "${bootstrap_bin}"
 }
 
 release_bundle_basename() {

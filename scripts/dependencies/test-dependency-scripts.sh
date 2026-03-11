@@ -31,10 +31,23 @@ make_cef_archive() {
   local root="$1"
   local fixture_dir="${root}/cef-source/cef_binary_fixture_macosarm64_minimal"
   mkdir -p "${fixture_dir}/Release/Chromium Embedded Framework.framework"
-  mkdir -p "${fixture_dir}/Release/AgentHub Helper.app/Contents/MacOS"
+  mkdir -p "${fixture_dir}/Release/Chromium Embedded Framework.framework/Resources"
   mkdir -p "${fixture_dir}/Resources"
   touch "${fixture_dir}/Release/Chromium Embedded Framework.framework/Chromium Embedded Framework"
-  touch "${fixture_dir}/Release/AgentHub Helper.app/Contents/MacOS/AgentHub Helper"
+  cat >"${fixture_dir}/Release/Chromium Embedded Framework.framework/Resources/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>Chromium Embedded Framework</string>
+  <key>CFBundleIdentifier</key>
+  <string>org.cef.framework.fixture</string>
+  <key>CFBundlePackageType</key>
+  <string>FMWK</string>
+</dict>
+</plist>
+EOF
   touch "${fixture_dir}/Resources/icudtl.dat"
   tar -cjf "${root}/cef.tar.bz2" -C "${root}/cef-source" cef_binary_fixture_macosarm64_minimal
 }
@@ -113,34 +126,55 @@ test_bootstrap_stages_codex_and_cef() {
   assert_exists "${target_root}/AgentHub/Resources/codex/codex"
   assert_exists "${target_root}/build/dependencies/cef/145.0.1+gfixture+chromium-145.0.7632.5/arm64/Release/Chromium Embedded Framework.framework"
   assert_exists "${target_root}/build/dependencies/cef/145.0.1+gfixture+chromium-145.0.7632.5/arm64/Resources/icudtl.dat"
+  assert_exists "${target_root}/build/dependencies/cef/current/arm64/Release/Chromium Embedded Framework.framework"
   popd >/dev/null
   rm -rf "${tmp_dir}"
 }
 
 test_prepare_xcode_inputs_copies_cef_release_payload() {
-  local tmp_dir target_root output_root
+  local tmp_dir target_root output_root fake_codesign log_path
   tmp_dir="$(mktemp -d)"
   target_root="${tmp_dir}/repo"
   output_root="${tmp_dir}/BuildProducts/AgentHub.app/Contents"
+  log_path="${tmp_dir}/codesign.log"
   mkdir -p "${target_root}"
   mkdir -p "${target_root}/AgentHub/Resources"
   mkdir -p "${target_root}/build"
   git -C "${target_root}" init >/dev/null 2>&1
+
+  fake_codesign="${tmp_dir}/fake-codesign.sh"
+  cat >"${fake_codesign}" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${AGENTHUB_CODESIGN_LOG}"
+EOF
+  chmod +x "${fake_codesign}"
 
   pushd "${target_root}" >/dev/null
   make_codex_archive "${tmp_dir}"
   make_cef_archive "${tmp_dir}"
   write_manifest "${tmp_dir}"
 
-  TARGET_BUILD_DIR="${tmp_dir}/BuildProducts" \
-  FRAMEWORKS_FOLDER_PATH="AgentHub.app/Contents/Frameworks" \
   AGENTHUB_DEPENDENCY_REPO_ROOT="${target_root}" \
   AGENTHUB_DEPENDENCY_MANIFEST="${tmp_dir}/manifest.json" \
   AGENTHUB_DEPENDENCY_CACHE_DIR="${tmp_dir}/cache" \
+  bash "${SCRIPT_DIR}/bootstrap.sh"
+
+  TARGET_BUILD_DIR="${tmp_dir}/BuildProducts" \
+  FRAMEWORKS_FOLDER_PATH="AgentHub.app/Contents/Frameworks" \
+  CODE_SIGNING_ALLOWED=YES \
+  EXPANDED_CODE_SIGN_IDENTITY="fixture-identity" \
+  AGENTHUB_DEPENDENCY_REPO_ROOT="${target_root}" \
+  AGENTHUB_DEPENDENCY_MANIFEST="${tmp_dir}/manifest.json" \
+  AGENTHUB_DEPENDENCY_CACHE_DIR="${tmp_dir}/cache" \
+  AGENTHUB_CODESIGN_BIN="${fake_codesign}" \
+  AGENTHUB_CODESIGN_LOG="${log_path}" \
   bash "${SCRIPT_DIR}/prepare-xcode-inputs.sh"
 
   assert_exists "${output_root}/Frameworks/Chromium Embedded Framework.framework"
-  assert_exists "${output_root}/Frameworks/AgentHub Helper.app"
+  assert_exists "${output_root}/Frameworks/Chromium Embedded Framework.framework/Versions/Current/Resources/Info.plist"
+  assert_exists "${log_path}"
+  grep -q "Chromium Embedded Framework.framework" "${log_path}" || fail "expected framework to be codesigned"
   popd >/dev/null
   rm -rf "${tmp_dir}"
 }

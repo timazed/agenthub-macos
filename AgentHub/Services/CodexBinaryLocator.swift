@@ -40,6 +40,13 @@ struct CodexBinaryLocator {
             resourcesURL.appendingPathComponent("codex/codex", isDirectory: false),
         ]
 
-        return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
+        return candidates.first { candidate in
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+                return false
+            }
+
+            return fileManager.isExecutableFile(atPath: candidate.path)
+        }
     }
 }

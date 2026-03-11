@@ -8,7 +8,9 @@ dependency_repo_root() {
     return
   fi
 
-  git rev-parse --show-toplevel
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  echo "$(cd "${script_dir}/../../.." && pwd)"
 }
 
 dependency_manifest_path() {
@@ -61,6 +63,11 @@ require_command() {
     echo "Missing required command: ${command_name}" >&2
     exit 1
   fi
+}
+
+jq_bin() {
+  require_command jq
+  command -v jq
 }
 
 sha256_file() {
