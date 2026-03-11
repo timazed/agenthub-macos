@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+CODEX_RESOURCE_DIR="AgentHub/Resources/codex"
+CODEX_BINARY_NAME="codex"
+CEF_STAGING_DIR="build/dependencies/cef"
+
 dependency_repo_root() {
   if [[ -n "${AGENTHUB_DEPENDENCY_REPO_ROOT:-}" ]]; then
     echo "${AGENTHUB_DEPENDENCY_REPO_ROOT}"
@@ -68,6 +72,52 @@ require_command() {
 jq_bin() {
   require_command jq
   command -v jq
+}
+
+manifest_read_required() {
+  local expression="$1"
+  local manifest_path="${2:-$(dependency_manifest_path)}"
+  local value
+
+  value="$("$(jq_bin)" -r "${expression}" "${manifest_path}")"
+  if [[ -z "${value}" || "${value}" == "null" ]]; then
+    echo "Manifest value is missing for expression: ${expression}" >&2
+    exit 1
+  fi
+
+  echo "${value}"
+}
+
+dependency_version() {
+  local dependency_name="$1"
+  local manifest_path="${2:-$(dependency_manifest_path)}"
+  manifest_read_required ".${dependency_name}.version" "${manifest_path}"
+}
+
+dependency_artifact_value() {
+  local dependency_name="$1"
+  local arch="$2"
+  local key="$3"
+  local manifest_path="${4:-$(dependency_manifest_path)}"
+  manifest_read_required ".${dependency_name}.artifacts.${arch}.${key}" "${manifest_path}"
+}
+
+codex_binary_path() {
+  local repo_root="${1:-$(dependency_repo_root)}"
+  echo "${repo_root}/${CODEX_RESOURCE_DIR}/${CODEX_BINARY_NAME}"
+}
+
+cef_stage_dir() {
+  local repo_root="${1:-$(dependency_repo_root)}"
+  local version="$2"
+  local arch="$3"
+  echo "${repo_root}/${CEF_STAGING_DIR}/${version}/${arch}"
+}
+
+cef_current_dir() {
+  local repo_root="${1:-$(dependency_repo_root)}"
+  local arch="$2"
+  echo "${repo_root}/${CEF_STAGING_DIR}/current/${arch}"
 }
 
 sha256_file() {

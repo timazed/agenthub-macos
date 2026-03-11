@@ -254,11 +254,9 @@
 			);
 			inputPaths = (
 				"$(SRCROOT)/scripts/dependencies/prepare-xcode-inputs.sh",
+				"$(SRCROOT)/scripts/dependencies/bootstrap.sh",
 				"$(SRCROOT)/scripts/dependencies/manifest.json",
 				"$(SRCROOT)/scripts/dependencies/lib/common.sh",
-				"$(SRCROOT)/scripts/dependencies/lib/manifest.sh",
-				"$(SRCROOT)/build/dependencies/cef/current/arm64/Release/Chromium Embedded Framework.framework",
-				"$(SRCROOT)/AgentHub/Resources/codex",
 			);
 			name = "Prepare bundled dependencies";
 			outputPaths = (

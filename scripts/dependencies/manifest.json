@@ -1,40 +1,23 @@
 {
   "schema_version": 1,
-  "default_channel": "stable",
   "default_arch": "arm64",
-  "dependencies": {
-    "codex": {
-      "install_mode": "resource_binary",
-      "resource_dir": "AgentHub/Resources/codex",
-      "resource_binary_name": "codex",
-      "channels": {
-        "stable": {
-          "version": "0.113.0",
-          "artifacts": {
-            "arm64": {
-              "url": "https://github.com/openai/codex/releases/download/rust-v0.113.0/codex-aarch64-apple-darwin.tar.gz",
-              "sha256": "9cffa8f8bb08e013ecc1e1b77f3a390a8830005704bd1a6f8e080253a8ec7460",
-              "archive_type": "tar.gz",
-              "binary_name": "codex"
-            }
-          }
-        }
+  "codex": {
+    "version": "0.113.0",
+    "artifacts": {
+      "arm64": {
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.113.0/codex-aarch64-apple-darwin.tar.gz",
+        "sha256": "9cffa8f8bb08e013ecc1e1b77f3a390a8830005704bd1a6f8e080253a8ec7460",
+        "archive_type": "tar.gz"
       }
-    },
-    "cef": {
-      "install_mode": "cef_release_bundle",
-      "staging_dir": "build/dependencies/cef",
-      "channels": {
-        "stable": {
-          "version": "145.0.28+g51162e8+chromium-145.0.7632.160",
-          "artifacts": {
-            "arm64": {
-              "url": "https://cef-builds.spotifycdn.com/cef_binary_145.0.28+g51162e8+chromium-145.0.7632.160_macosarm64_minimal.tar.bz2",
-              "sha256": "004c79437220489f363b615a28f05c607fc13b7feb5045bdc8c7073e180506ad",
-              "archive_type": "tar.bz2"
-            }
-          }
-        }
+    }
+  },
+  "cef": {
+    "version": "145.0.28+g51162e8+chromium-145.0.7632.160",
+    "artifacts": {
+      "arm64": {
+        "url": "https://cef-builds.spotifycdn.com/cef_binary_145.0.28+g51162e8+chromium-145.0.7632.160_macosarm64_minimal.tar.bz2",
+        "sha256": "004c79437220489f363b615a28f05c607fc13b7feb5045bdc8c7073e180506ad",
+        "archive_type": "tar.bz2"
       }
     }
   }

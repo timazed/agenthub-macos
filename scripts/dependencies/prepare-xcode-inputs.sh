@@ -5,8 +5,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/dependencies/lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
-# shellcheck source=scripts/dependencies/lib/manifest.sh
-source "${SCRIPT_DIR}/lib/manifest.sh"
 
 codesign_bin() {
   if [[ -n "${AGENTHUB_CODESIGN_BIN:-}" ]]; then
@@ -99,8 +97,8 @@ main() {
   arch="$(dependency_default_arch)"
   repo_root="$(dependency_repo_root)"
   bash "${SCRIPT_DIR}/bootstrap.sh" --dependency all --manifest "${manifest_path}" --arch "${arch}" >/dev/null
-  codex_binary="${repo_root}/$(manifest_dependency_resource_dir codex "${manifest_path}")/$(manifest_dependency_resource_binary_name codex "${manifest_path}")"
-  stage_root="${repo_root}/$(manifest_dependency_staging_dir cef "${manifest_path}")/current/${arch}/Release"
+  codex_binary="$(codex_binary_path "${repo_root}")"
+  stage_root="$(cef_current_dir "${repo_root}" "${arch}")/Release"
   frameworks_dir="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
 
   if [[ ! -f "${codex_binary}" ]]; then

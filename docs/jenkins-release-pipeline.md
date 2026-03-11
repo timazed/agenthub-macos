@@ -6,7 +6,7 @@ This repository now includes Sparkle release pipelines for both prod and beta un
 
 - `Release` and `Beta` channels
 - Shell-script based pipeline
-- Build-time bootstrap for pinned Codex CLI and CEF artifacts
+- Build-time bootstrap for pinned Codex CLI and CEF vendor artifacts
 - Sparkle artifact packaging and appcast publish
 - Automatic version bump and git commit/push
 - No Slack, App Center, or other notification integrations in this pass
@@ -53,7 +53,7 @@ These variables control the pipeline:
 | `AGENTHUB_RELEASE_BASE_URL` | Public base URL for hosted Sparkle artifacts | `https://updates.example.com/agenthub` or `/agenthub/beta` based on channel |
 | `AGENTHUB_RELEASE_FEED_URL` | Feed URL embedded into the release build | `<base-url>/appcast.xml` |
 | `AGENTHUB_RELEASE_APPCAST_SOURCE` | Existing appcast location used for collision checks | `<feed-url>` |
-| `AGENTHUB_DEPENDENCY_MANIFEST` | Override dependency manifest path | `scripts/dependencies/manifest.json` |
+| `AGENTHUB_DEPENDENCY_MANIFEST` | Override the pinned vendor manifest path | `scripts/dependencies/manifest.json` |
 | `AGENTHUB_DEPENDENCY_CACHE_DIR` | Cache directory for downloaded Codex/CEF artifacts | `build/dependency-cache` |
 | `AGENTHUB_SKIP_DEPENDENCY_BOOTSTRAP` | Skip dependency bootstrap step when artifacts are already staged | `false` |
 | `AGENTHUB_GIT_REMOTE` | Git remote used for the release bump push | `origin` |
@@ -83,7 +83,7 @@ These variables control Sparkle appcast signing:
 
 If no Sparkle private key is configured, `publish-sparkle.sh` only writes a placeholder unsigned `appcast.xml` during `AGENTHUB_RELEASE_DRY_RUN=true` local verification. Non-dry-run releases fail fast until a Sparkle signing key is configured.
 
-Dependency refresh is intentionally separate from release builds. Use `bash scripts/dependencies/update-stable.sh` to refresh the manifest to the latest stable Codex CLI and CEF pins, then commit the manifest change. Normal builds and release jobs consume the pinned manifest reproducibly.
+The manifest is intentionally just a pinned lockfile for vendored artifacts. Update the versions, URLs, and checksums in `scripts/dependencies/manifest.json` when you want to move to a new stable Codex CLI or CEF release. Normal builds and release jobs consume those pins reproducibly.
 
 ## Channel Defaults
 
@@ -124,12 +124,6 @@ Dependency bootstrap only:
 
 ```bash
 bash scripts/dependencies/bootstrap.sh
-```
-
-Refresh manifest to latest stable pins:
-
-```bash
-bash scripts/dependencies/update-stable.sh
 ```
 
 ## Jenkins Fast Follow

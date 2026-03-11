@@ -68,41 +68,24 @@ write_manifest() {
   cat >"${root}/manifest.json" <<EOF
 {
   "schema_version": 1,
-  "default_channel": "stable",
   "default_arch": "arm64",
-  "dependencies": {
-    "codex": {
-      "install_mode": "resource_binary",
-      "resource_dir": "AgentHub/Resources/codex",
-      "resource_binary_name": "codex",
-      "channels": {
-        "stable": {
-          "version": "1.2.3",
-          "artifacts": {
-            "arm64": {
-              "url": "file://${root}/codex.tar.gz",
-              "sha256": "${codex_sha}",
-              "archive_type": "tar.gz",
-              "binary_name": "codex"
-            }
-          }
-        }
+  "codex": {
+    "version": "1.2.3",
+    "artifacts": {
+      "arm64": {
+        "url": "file://${root}/codex.tar.gz",
+        "sha256": "${codex_sha}",
+        "archive_type": "tar.gz"
       }
-    },
-    "cef": {
-      "install_mode": "cef_release_bundle",
-      "staging_dir": "build/dependencies/cef",
-      "channels": {
-        "stable": {
-          "version": "145.0.1+gfixture+chromium-145.0.7632.5",
-          "artifacts": {
-            "arm64": {
-              "url": "file://${root}/cef.tar.bz2",
-              "sha256": "${cef_sha}",
-              "archive_type": "tar.bz2"
-            }
-          }
-        }
+    }
+  },
+  "cef": {
+    "version": "145.0.1+gfixture+chromium-145.0.7632.5",
+    "artifacts": {
+      "arm64": {
+        "url": "file://${root}/cef.tar.bz2",
+        "sha256": "${cef_sha}",
+        "archive_type": "tar.bz2"
       }
     }
   }
