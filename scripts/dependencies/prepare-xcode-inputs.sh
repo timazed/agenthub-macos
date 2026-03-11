@@ -28,6 +28,20 @@ sign_if_present() {
   "$(codesign_bin)" --force --sign "${identity}" --timestamp=none "${path}"
 }
 
+sign_cef_nested_binaries() {
+  local framework_path="$1"
+  local identity="$2"
+  local path
+
+  if [[ ! -d "${framework_path}" ]]; then
+    return
+  fi
+
+  while IFS= read -r path; do
+    sign_if_present "${path}" "${identity}"
+  done < <(find "${framework_path}/Versions" -type f \( -path '*/Libraries/*' -o -name 'Chromium Embedded Framework' \) | sort)
+}
+
 normalize_cef_framework_layout() {
   local framework_path="$1"
   local version_dir
@@ -74,18 +88,19 @@ sign_staged_dependencies() {
     sign_if_present "${path}" "${identity}"
   done < <(find "${frameworks_dir}" -maxdepth 1 -type d -name '*Helper*.app' -print | sort)
 
+  sign_cef_nested_binaries "${frameworks_dir}/Chromium Embedded Framework.framework" "${identity}"
   sign_if_present "${frameworks_dir}/Chromium Embedded Framework.framework" "${identity}"
 }
 
 main() {
-  local manifest_path arch repo_root stage_root frameworks_dir codex_binary framework_source copied_framework
+  local manifest_path arch repo_root stage_root frameworks_dir codex_binary path copied_framework
 
   manifest_path="$(dependency_manifest_path)"
   arch="$(dependency_default_arch)"
   repo_root="$(dependency_repo_root)"
+  bash "${SCRIPT_DIR}/bootstrap.sh" --dependency all --manifest "${manifest_path}" --arch "${arch}" >/dev/null
   codex_binary="${repo_root}/$(manifest_dependency_resource_dir codex "${manifest_path}")/$(manifest_dependency_resource_binary_name codex "${manifest_path}")"
   stage_root="${repo_root}/$(manifest_dependency_staging_dir cef "${manifest_path}")/current/${arch}/Release"
-  framework_source="${stage_root}/Chromium Embedded Framework.framework"
   frameworks_dir="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
 
   if [[ ! -f "${codex_binary}" ]]; then
@@ -93,8 +108,8 @@ main() {
     exit 1
   fi
 
-  if [[ ! -d "${framework_source}" ]]; then
-    echo "Missing staged CEF framework at ${framework_source}. Run scripts/dependencies/bootstrap.sh before building." >&2
+  if [[ ! -d "${stage_root}" ]]; then
+    echo "Missing staged CEF release payload at ${stage_root}. Run scripts/dependencies/bootstrap.sh before building." >&2
     exit 1
   fi
 
@@ -103,7 +118,9 @@ main() {
     "${frameworks_dir}/Chromium Embedded Framework.framework" \
     "${frameworks_dir}"/*Helper*.app \
     "${frameworks_dir}"/*.xpc
-  cp -R "${framework_source}" "${frameworks_dir}/"
+  while IFS= read -r path; do
+    cp -R "${path}" "${frameworks_dir}/"
+  done < <(find "${stage_root}" -mindepth 1 -maxdepth 1 -print | sort)
   copied_framework="${frameworks_dir}/Chromium Embedded Framework.framework"
   normalize_cef_framework_layout "${copied_framework}"
   sign_staged_dependencies "${frameworks_dir}"

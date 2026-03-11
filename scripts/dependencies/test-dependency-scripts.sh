@@ -32,8 +32,14 @@ make_cef_archive() {
   local fixture_dir="${root}/cef-source/cef_binary_fixture_macosarm64_minimal"
   mkdir -p "${fixture_dir}/Release/Chromium Embedded Framework.framework"
   mkdir -p "${fixture_dir}/Release/Chromium Embedded Framework.framework/Resources"
+  mkdir -p "${fixture_dir}/Release/Chromium Embedded Framework.framework/Libraries"
+  mkdir -p "${fixture_dir}/Release/AgentHub Helper.app/Contents/MacOS"
+  mkdir -p "${fixture_dir}/Release/AgentHub Helper (Alerts).xpc/Contents/MacOS"
   mkdir -p "${fixture_dir}/Resources"
   touch "${fixture_dir}/Release/Chromium Embedded Framework.framework/Chromium Embedded Framework"
+  touch "${fixture_dir}/Release/Chromium Embedded Framework.framework/Libraries/libEGL.dylib"
+  touch "${fixture_dir}/Release/AgentHub Helper.app/Contents/MacOS/AgentHub Helper"
+  touch "${fixture_dir}/Release/AgentHub Helper (Alerts).xpc/Contents/MacOS/AgentHub Helper (Alerts)"
   cat >"${fixture_dir}/Release/Chromium Embedded Framework.framework/Resources/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -155,11 +161,6 @@ EOF
   make_cef_archive "${tmp_dir}"
   write_manifest "${tmp_dir}"
 
-  AGENTHUB_DEPENDENCY_REPO_ROOT="${target_root}" \
-  AGENTHUB_DEPENDENCY_MANIFEST="${tmp_dir}/manifest.json" \
-  AGENTHUB_DEPENDENCY_CACHE_DIR="${tmp_dir}/cache" \
-  bash "${SCRIPT_DIR}/bootstrap.sh"
-
   TARGET_BUILD_DIR="${tmp_dir}/BuildProducts" \
   FRAMEWORKS_FOLDER_PATH="AgentHub.app/Contents/Frameworks" \
   CODE_SIGNING_ALLOWED=YES \
@@ -173,7 +174,13 @@ EOF
 
   assert_exists "${output_root}/Frameworks/Chromium Embedded Framework.framework"
   assert_exists "${output_root}/Frameworks/Chromium Embedded Framework.framework/Versions/Current/Resources/Info.plist"
+  assert_exists "${output_root}/Frameworks/Chromium Embedded Framework.framework/Versions/Current/Libraries/libEGL.dylib"
+  assert_exists "${output_root}/Frameworks/AgentHub Helper.app"
+  assert_exists "${output_root}/Frameworks/AgentHub Helper (Alerts).xpc"
   assert_exists "${log_path}"
+  grep -q "libEGL.dylib" "${log_path}" || fail "expected nested CEF dylib to be codesigned"
+  grep -q "AgentHub Helper.app" "${log_path}" || fail "expected helper app to be copied and codesigned"
+  grep -q "AgentHub Helper (Alerts).xpc" "${log_path}" || fail "expected helper xpc to be copied and codesigned"
   grep -q "Chromium Embedded Framework.framework" "${log_path}" || fail "expected framework to be codesigned"
   popd >/dev/null
   rm -rf "${tmp_dir}"

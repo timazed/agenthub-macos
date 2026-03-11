@@ -22,10 +22,24 @@ sign_if_present() {
   fi
 }
 
+sign_cef_framework_contents_if_present() {
+  local framework_path="$1"
+  local identity="$2"
+  local path
+
+  if [[ ! -d "${framework_path}" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r path; do
+    sign_if_present "${path}" "${identity}"
+  done < <(find "${framework_path}/Versions" -type f \( -path '*/Libraries/*' -o -name 'Chromium Embedded Framework' \) | sort)
+}
+
 sign_cef_if_present() {
   local app_path="$1"
   local identity="$2"
-  local frameworks_dir helper
+  local frameworks_dir helper framework_path
 
   frameworks_dir="${app_path}/Contents/Frameworks"
   if [[ ! -d "${frameworks_dir}" ]]; then
@@ -40,7 +54,9 @@ sign_cef_if_present() {
     sign_if_present "${helper}" "${identity}"
   done < <(find "${frameworks_dir}" -maxdepth 1 -type d -name '*.xpc' | sort)
 
-  sign_if_present "${frameworks_dir}/Chromium Embedded Framework.framework" "${identity}"
+  framework_path="${frameworks_dir}/Chromium Embedded Framework.framework"
+  sign_cef_framework_contents_if_present "${framework_path}" "${identity}"
+  sign_if_present "${framework_path}" "${identity}"
 }
 
 main() {
