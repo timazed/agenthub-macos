@@ -27,9 +27,9 @@ struct CodexLoginCoordinatorTests {
         let coordinator = CodexLoginCoordinator(
             statusRefresher: { authState.snapshot() },
             paths: AppPaths(root: root),
+            codexBinaryLocator: CodexBinaryLocator(binaryURLProvider: { scriptURL }),
             pollIntervalNanoseconds: 50_000_000,
-            timeoutNanoseconds: 2_000_000_000,
-            codexBinaryLocator: { scriptURL }
+            timeoutNanoseconds: 2_000_000_000
         )
 
         _ = try await coordinator.startLogin()
@@ -67,9 +67,9 @@ struct CodexLoginCoordinatorTests {
                 AuthState(status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
             },
             paths: AppPaths(root: root),
+            codexBinaryLocator: CodexBinaryLocator(binaryURLProvider: { scriptURL }),
             pollIntervalNanoseconds: 50_000_000,
-            timeoutNanoseconds: 2_000_000_000,
-            codexBinaryLocator: { scriptURL }
+            timeoutNanoseconds: 2_000_000_000
         )
 
         _ = try await coordinator.startLogin()
@@ -106,9 +106,9 @@ struct CodexLoginCoordinatorTests {
         let coordinator = CodexLoginCoordinator(
             statusRefresher: { try statusProbe.next() },
             paths: AppPaths(root: root),
+            codexBinaryLocator: CodexBinaryLocator(binaryURLProvider: { scriptURL }),
             pollIntervalNanoseconds: 50_000_000,
             timeoutNanoseconds: 10_000_000_000,
-            codexBinaryLocator: { scriptURL },
             sleeper: { _ in }
         )
 
@@ -117,6 +117,35 @@ struct CodexLoginCoordinatorTests {
         coordinator.cancel()
 
         #expect(state.status == .authenticated)
+    }
+
+    @Test
+    func startLoginRethrowsInjectedLocatorFailures() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let locatorError = AssistantRuntimeError.launchFailed("injected locator failure")
+        let coordinator = CodexLoginCoordinator(
+            statusRefresher: {
+                AuthState(status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
+            },
+            paths: AppPaths(root: root),
+            fileManager: NonExecutableWorkspaceFileManager(),
+            codexBinaryLocator: CodexBinaryLocator(binaryURLProvider: { throw locatorError }),
+            pollIntervalNanoseconds: 50_000_000,
+            timeoutNanoseconds: 2_000_000_000
+        )
+
+        do {
+            _ = try await coordinator.startLogin()
+            Issue.record("Expected injected locator failure")
+        } catch let error as AssistantRuntimeError {
+            switch error {
+            case let .launchFailed(message):
+                #expect(message == "injected locator failure")
+            default:
+                Issue.record("Expected injected launchFailed error, got \(error.localizedDescription)")
+            }
+        }
     }
 }
 
@@ -174,4 +203,14 @@ private func makeExecutableScript(in directory: URL, name: String, contents: Str
     try contents.write(to: url, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
     return url
+}
+
+private final class NonExecutableWorkspaceFileManager: FileManager {
+    override var currentDirectoryPath: String {
+        "/tmp/non-existent-agenthub-workspace"
+    }
+
+    override func isExecutableFile(atPath path: String) -> Bool {
+        false
+    }
 }

@@ -83,6 +83,9 @@ struct AgentHubApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
         .defaultSize(width: 800, height: 800)
+        .commands {
+            AgentHubCommands(bootstrap: bootstrap)
+        }
 
     }
 
@@ -234,6 +237,7 @@ private final class AppBootstrap: ObservableObject {
     static let shared = AppBootstrap()
 
     @Published var container: AppContainer?
+    @Published var appUpdateManager: AppUpdateManager?
     @Published var errorMessage: String?
 
     private var didStart = false
@@ -267,6 +271,14 @@ private final class AppBootstrap: ObservableObject {
             }
 
             self.container = container
+            let appUpdateManager = AppUpdateManager(
+                bundle: .main,
+                paths: container.paths,
+                taskStore: container.taskStore,
+                activityLogStore: container.activityLogStore
+            )
+            appUpdateManager.start()
+            self.appUpdateManager = appUpdateManager
             self.errorMessage = nil
             startBackgroundServices(using: container)
             Self.log("bootstrap_success duration_ms=\(Self.durationMillis(since: startedAt))")
@@ -315,6 +327,19 @@ private final class AppBootstrap: ObservableObject {
         _ = try? handle.seekToEnd()
         try? handle.write(contentsOf: data)
         try? handle.close()
+    }
+}
+
+private struct AgentHubCommands: Commands {
+    @ObservedObject var bootstrap: AppBootstrap
+
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                bootstrap.appUpdateManager?.checkForUpdates()
+            }
+            .disabled(bootstrap.appUpdateManager?.canCheckForUpdates != true)
+        }
     }
 }
 

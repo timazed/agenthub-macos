@@ -53,39 +53,54 @@ final class CodexLoginCoordinator {
 
     private let statusRefresher: () throws -> AuthState
     private let paths: AppPaths
-    private let bundle: Bundle
     private let fileManager: FileManager
+    private let codexBinaryLocator: CodexBinaryLocator
     private let pollIntervalNanoseconds: UInt64
     private let timeoutNanoseconds: UInt64
-    private let codexBinaryLocator: (() throws -> URL)?
     private let sleeper: @Sendable (UInt64) async throws -> Void
 
     private let stateLock = NSLock()
     private var currentProcess: Process?
     private var completionTask: Task<AuthState, Error>?
 
-    init(
+    convenience init(
         statusRefresher: @escaping () throws -> AuthState,
         paths: AppPaths,
         bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) {
+        self.init(
+            statusRefresher: statusRefresher,
+            paths: paths,
+            fileManager: fileManager,
+            codexBinaryLocator: CodexBinaryLocator(bundle: bundle, fileManager: fileManager),
+            pollIntervalNanoseconds: CodexLoginCoordinator.defaultPollIntervalNanoseconds,
+            timeoutNanoseconds: CodexLoginCoordinator.defaultTimeoutNanoseconds,
+            sleeper: { try await Task.sleep(nanoseconds: $0) }
+        )
+    }
+
+    // Test-only initializer for injecting a fake binary path and faster polling.
+    init(
+        statusRefresher: @escaping () throws -> AuthState,
+        paths: AppPaths,
         fileManager: FileManager = .default,
+        codexBinaryLocator: CodexBinaryLocator,
         pollIntervalNanoseconds: UInt64 = CodexLoginCoordinator.defaultPollIntervalNanoseconds,
         timeoutNanoseconds: UInt64 = CodexLoginCoordinator.defaultTimeoutNanoseconds,
-        codexBinaryLocator: (() throws -> URL)? = nil,
         sleeper: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
     ) {
         self.statusRefresher = statusRefresher
         self.paths = paths
-        self.bundle = bundle
         self.fileManager = fileManager
+        self.codexBinaryLocator = codexBinaryLocator
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
         self.timeoutNanoseconds = timeoutNanoseconds
-        self.codexBinaryLocator = codexBinaryLocator
         self.sleeper = sleeper
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {
-        let codexURL = try (codexBinaryLocator?() ?? locateCodexBinary())
+        let codexURL = try locateCodexBinary()
         try paths.prepare(fileManager: fileManager)
         let process = Process()
         process.executableURL = codexURL
@@ -239,15 +254,12 @@ final class CodexLoginCoordinator {
     }
 
     private func locateCodexBinary() throws -> URL {
-        if let resourcesURL = bundle.resourceURL {
-            let candidates = [
-                resourcesURL.appendingPathComponent("codex", isDirectory: false),
-                resourcesURL.appendingPathComponent("codex/codex", isDirectory: false),
-            ]
-
-            for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
-                return candidate
-            }
+        do {
+            return try codexBinaryLocator.locateBinary()
+        } catch AssistantRuntimeError.binaryNotFound {
+            // Fall back to the workspace binary for local development when the bundled binary is absent.
+        } catch {
+            throw error
         }
 
         let workspaceCandidate = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
