@@ -4,7 +4,16 @@ import Foundation
 
 @MainActor
 final class AuthViewModel: ObservableObject {
+    struct OnboardingPresentation: Equatable {
+        let eyebrow: String
+        let title: String
+        let message: String
+        let currentStepNumber: Int
+        let totalSteps: Int
+    }
+
     @Published private(set) var authState: AuthState
+    @Published private(set) var onboardingState: OnboardingState
     @Published private(set) var currentChallenge: AuthLoginChallenge?
     @Published private(set) var isCheckingStatus = false
     @Published private(set) var isStartingLogin = false
@@ -13,21 +22,34 @@ final class AuthViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let authManager: AuthManager
+    private let onboardingManager: OnboardingManager
     private let openURL: (URL) -> Bool
     private var hasPerformedStartupCheck = false
 
     init(
         authManager: AuthManager,
         initialState: AuthState,
+        onboardingManager: OnboardingManager,
+        initialOnboardingState: OnboardingState,
         openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
         self.authManager = authManager
         self.authState = initialState
+        self.onboardingManager = onboardingManager
+        self.onboardingState = initialOnboardingState
         self.openURL = openURL
     }
 
     var isAuthenticated: Bool {
         authState.isAuthenticated
+    }
+
+    var currentStep: OnboardingStep? {
+        onboardingManager.currentStep(authState: authState, onboardingState: onboardingState)
+    }
+
+    var hasCompletedOnboarding: Bool {
+        currentStep == nil
     }
 
     var isBusy: Bool {
@@ -37,6 +59,12 @@ final class AuthViewModel: ObservableObject {
     var statusTitle: String {
         if isCheckingStatus {
             return "Checking Codex login"
+        }
+        if isStartingLogin || isAwaitingBrowserCompletion || currentChallenge != nil {
+            return "Get started with Codex"
+        }
+        if currentStep == .persona || currentStep == .name {
+            return "Set up your assistant"
         }
         switch authState.status {
         case .authenticated:
@@ -57,6 +85,12 @@ final class AuthViewModel: ObservableObject {
         }
         if isCheckingStatus {
             return "Validating whether the bundled Codex CLI can run commands with your account."
+        }
+        if currentStep == .persona {
+            return "One more step: confirm the default assistant personality before entering AgentHub."
+        }
+        if currentStep == .name {
+            return "Last step: choose what AgentHub should call your default assistant."
         }
         switch authState.status {
         case .authenticated:
@@ -85,6 +119,47 @@ final class AuthViewModel: ObservableObject {
         isAwaitingBrowserCompletion && currentChallenge == nil
     }
 
+    var defaultPersonalityText: String {
+        onboardingManager.defaultPersonalityText()
+    }
+
+    var defaultAgentName: String {
+        onboardingState.defaultAgentName ?? onboardingManager.defaultAgentName()
+    }
+
+    var onboardingPresentation: OnboardingPresentation? {
+        guard let step = currentStep, let progress = onboardingManager.progress(for: step) else {
+            return nil
+        }
+
+        switch step {
+        case .codexAuth:
+            return OnboardingPresentation(
+                eyebrow: "Step \(progress.current) of \(progress.total)",
+                title: "Connect Codex to unlock AgentHub",
+                message: "Sign in once and AgentHub can move from setup into your assistant home with chat and background work ready.",
+                currentStepNumber: progress.current,
+                totalSteps: progress.total
+            )
+        case .persona:
+            return OnboardingPresentation(
+                eyebrow: "Step \(progress.current) of \(progress.total)",
+                title: "Shape the assistant you want to work with",
+                message: "Set the default instructions for the assistant that will power chat and scheduled work from the moment you enter the app.",
+                currentStepNumber: progress.current,
+                totalSteps: progress.total
+            )
+        case .name:
+            return OnboardingPresentation(
+                eyebrow: "Step \(progress.current) of \(progress.total)",
+                title: "Name the assistant before you enter home",
+                message: "Choose the display name that carries into the main coordinator flow so the handoff feels intentional instead of generic.",
+                currentStepNumber: progress.current,
+                totalSteps: progress.total
+            )
+        }
+    }
+
     func performStartupCheckIfNeeded() async {
         guard !hasPerformedStartupCheck else { return }
         hasPerformedStartupCheck = true
@@ -97,10 +172,12 @@ final class AuthViewModel: ObservableObject {
 
         do {
             authState = try authManager.refreshStatus()
+            onboardingState = try onboardingManager.loadState()
             hasResolvedStartupCheck = true
         } catch {
             errorMessage = presentableErrorMessage(from: error.localizedDescription)
             authState = (try? authManager.loadCachedState()) ?? .default()
+            onboardingState = (try? onboardingManager.loadState()) ?? .default()
             hasResolvedStartupCheck = true
         }
 
@@ -129,6 +206,7 @@ final class AuthViewModel: ObservableObject {
 
             let state = try await authManager.waitForLoginCompletion()
             authState = state
+            onboardingState = try onboardingManager.loadState()
             currentChallenge = nil
             isAwaitingBrowserCompletion = false
             hasResolvedStartupCheck = true
@@ -142,6 +220,7 @@ final class AuthViewModel: ObservableObject {
             isStartingLogin = false
             errorMessage = presentableErrorMessage(from: error.localizedDescription)
             authState = (try? authManager.loadCachedState()) ?? .default()
+            onboardingState = (try? onboardingManager.loadState()) ?? .default()
         }
     }
 
@@ -152,7 +231,37 @@ final class AuthViewModel: ObservableObject {
         isAwaitingBrowserCompletion = false
     }
 
+    func useDefaultPersonality() {
+        savePersonality(defaultPersonalityText, source: .default)
+    }
+
+    func savePersonality(_ personality: String) {
+        savePersonality(personality, source: .custom)
+    }
+
+    func saveAgentName(_ name: String) {
+        guard currentStep == .name else { return }
+
+        do {
+            onboardingState = try onboardingManager.completeNameStep(name: name)
+            errorMessage = nil
+        } catch {
+            errorMessage = presentableErrorMessage(from: error.localizedDescription)
+        }
+    }
+
     private func presentableErrorMessage(from message: String) -> String {
         return message
+    }
+
+    private func savePersonality(_ personality: String, source: PersonalitySource) {
+        guard currentStep == .persona else { return }
+
+        do {
+            onboardingState = try onboardingManager.completePersonaStep(personality: personality, source: source)
+            errorMessage = nil
+        } catch {
+            errorMessage = presentableErrorMessage(from: error.localizedDescription)
+        }
     }
 }

@@ -11,7 +11,9 @@ struct AppShellView: View {
     init(container: AppContainer) {
         _authViewModel = StateObject(wrappedValue: AuthViewModel(
             authManager: container.authManager,
-            initialState: (try? container.authManager.loadCachedState()) ?? .default()
+            initialState: (try? container.authManager.loadCachedState()) ?? .default(),
+            onboardingManager: container.onboardingManager,
+            initialOnboardingState: (try? container.onboardingManager.loadState()) ?? .default()
         ))
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(
             chatSessionService: container.chatSessionService,
@@ -28,36 +30,54 @@ struct AppShellView: View {
     }
 
     var body: some View {
-        Group {
-            if authViewModel.hasResolvedStartupCheck && authViewModel.isAuthenticated {
-                ChatView(
-                    viewModel: chatViewModel,
-                    isPanelPresented: appViewModel.isPanelPresented,
-                    onTogglePanel: { appViewModel.togglePanel() },
-                    isInputEnabled: true,
-                    blockedMessage: nil
-                )
-                .background(.clear)
-                .frame(minWidth: 400)
-            } else {
-                CodexLoginGateView(
-                    viewModel: authViewModel,
-                    onStartLogin: {
-                        Task {
-                            await authViewModel.beginLogin()
+        ZStack {
+            OnboardingExperienceBackground()
+
+            Group {
+                if authViewModel.hasResolvedStartupCheck && authViewModel.hasCompletedOnboarding {
+                    ChatView(
+                        viewModel: chatViewModel,
+                        isPanelPresented: appViewModel.isPanelPresented,
+                        onTogglePanel: { appViewModel.togglePanel() },
+                        isInputEnabled: true,
+                        blockedMessage: nil
+                    )
+                    .frame(minWidth: 400)
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                } else {
+                    CodexLoginGateView(
+                        viewModel: authViewModel,
+                        onStartLogin: {
+                            Task {
+                                await authViewModel.beginLogin()
+                                performInitialLoadIfNeeded()
+                            }
+                        },
+                        onRetryStatus: {
+                            Task {
+                                await authViewModel.refreshStatus()
+                                performInitialLoadIfNeeded()
+                            }
+                        },
+                        onCancelLogin: { authViewModel.cancelLogin() },
+                        onUseDefaultPersonality: {
+                            authViewModel.useDefaultPersonality()
+                            performInitialLoadIfNeeded()
+                        },
+                        onSavePersonality: { personality in
+                            authViewModel.savePersonality(personality)
+                            performInitialLoadIfNeeded()
+                        },
+                        onSaveAgentName: { name in
+                            authViewModel.saveAgentName(name)
                             performInitialLoadIfNeeded()
                         }
-                    },
-                    onRetryStatus: {
-                        Task {
-                            await authViewModel.refreshStatus()
-                            performInitialLoadIfNeeded()
-                        }
-                    },
-                    onCancelLogin: { authViewModel.cancelLogin() }
-                )
-                .frame(minWidth: 400)
+                    )
+                    .frame(minWidth: 400)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
             }
+            .animation(.spring(response: 0.5, dampingFraction: 0.86), value: authViewModel.hasCompletedOnboarding)
         }
         .background(AdaptiveWindowBackground())
         .liquidGlass()
@@ -114,11 +134,12 @@ struct AppShellView: View {
     }
 
     private func performInitialLoadIfNeeded() {
-        guard authViewModel.isAuthenticated, !didPerformInitialLoad else { return }
+        guard authViewModel.hasCompletedOnboarding, !didPerformInitialLoad else { return }
         didPerformInitialLoad = true
         tasksViewModel.load()
         activityViewModel.load()
         chatViewModel.load()
+        tasksViewModel.reconcileSchedulesDeferred()
 
         chatViewModel.onTasksChanged = {
             tasksViewModel.load()
