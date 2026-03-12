@@ -84,9 +84,7 @@ struct AgentHubApp: App {
         .restorationBehavior(.disabled)
         .defaultSize(width: 800, height: 800)
         .commands {
-            if let appUpdateManager = bootstrap.appUpdateManager {
-                AgentHubCommands(appUpdateManager: appUpdateManager)
-            }
+            AgentHubCommands(bootstrap: bootstrap)
         }
 
     }
@@ -333,14 +331,14 @@ private final class AppBootstrap: ObservableObject {
 }
 
 private struct AgentHubCommands: Commands {
-    @ObservedObject var appUpdateManager: AppUpdateManager
+    @ObservedObject var bootstrap: AppBootstrap
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") {
-                appUpdateManager.checkForUpdates()
+                bootstrap.appUpdateManager?.checkForUpdates()
             }
-            .disabled(!appUpdateManager.canCheckForUpdates)
+            .disabled(bootstrap.appUpdateManager?.canCheckForUpdates != true)
         }
     }
 }
