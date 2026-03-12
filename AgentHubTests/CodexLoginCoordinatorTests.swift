@@ -27,9 +27,9 @@ struct CodexLoginCoordinatorTests {
         let coordinator = CodexLoginCoordinator(
             statusRefresher: { authState.snapshot() },
             paths: AppPaths(root: root),
+            testBinaryURLProvider: { scriptURL },
             pollIntervalNanoseconds: 50_000_000,
-            timeoutNanoseconds: 2_000_000_000,
-            codexBinaryLocator: { scriptURL }
+            timeoutNanoseconds: 2_000_000_000
         )
 
         _ = try await coordinator.startLogin()
@@ -67,9 +67,9 @@ struct CodexLoginCoordinatorTests {
                 AuthState(status: .unauthenticated, accountLabel: nil, lastValidatedAt: nil, failureReason: "Not logged in", updatedAt: Date())
             },
             paths: AppPaths(root: root),
+            testBinaryURLProvider: { scriptURL },
             pollIntervalNanoseconds: 50_000_000,
-            timeoutNanoseconds: 2_000_000_000,
-            codexBinaryLocator: { scriptURL }
+            timeoutNanoseconds: 2_000_000_000
         )
 
         _ = try await coordinator.startLogin()
@@ -106,9 +106,9 @@ struct CodexLoginCoordinatorTests {
         let coordinator = CodexLoginCoordinator(
             statusRefresher: { try statusProbe.next() },
             paths: AppPaths(root: root),
+            testBinaryURLProvider: { scriptURL },
             pollIntervalNanoseconds: 50_000_000,
             timeoutNanoseconds: 10_000_000_000,
-            codexBinaryLocator: { scriptURL },
             sleeper: { _ in }
         )
 

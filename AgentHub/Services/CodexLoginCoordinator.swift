@@ -57,21 +57,40 @@ final class CodexLoginCoordinator {
     private let codexBinaryLocator: CodexBinaryLocator
     private let pollIntervalNanoseconds: UInt64
     private let timeoutNanoseconds: UInt64
-    private let overrideCodexBinaryLocator: (() throws -> URL)?
+    private let testBinaryURLProvider: (() throws -> URL)?
     private let sleeper: @Sendable (UInt64) async throws -> Void
 
     private let stateLock = NSLock()
     private var currentProcess: Process?
     private var completionTask: Task<AuthState, Error>?
 
+    convenience init(
+        statusRefresher: @escaping () throws -> AuthState,
+        paths: AppPaths,
+        bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) {
+        self.init(
+            statusRefresher: statusRefresher,
+            paths: paths,
+            bundle: bundle,
+            fileManager: fileManager,
+            testBinaryURLProvider: nil,
+            pollIntervalNanoseconds: CodexLoginCoordinator.defaultPollIntervalNanoseconds,
+            timeoutNanoseconds: CodexLoginCoordinator.defaultTimeoutNanoseconds,
+            sleeper: { try await Task.sleep(nanoseconds: $0) }
+        )
+    }
+
+    // Test-only initializer for injecting a fake binary path and faster polling.
     init(
         statusRefresher: @escaping () throws -> AuthState,
         paths: AppPaths,
         bundle: Bundle = .main,
         fileManager: FileManager = .default,
+        testBinaryURLProvider: (() throws -> URL)? = nil,
         pollIntervalNanoseconds: UInt64 = CodexLoginCoordinator.defaultPollIntervalNanoseconds,
         timeoutNanoseconds: UInt64 = CodexLoginCoordinator.defaultTimeoutNanoseconds,
-        codexBinaryLocator: (() throws -> URL)? = nil,
         sleeper: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
     ) {
         self.statusRefresher = statusRefresher
@@ -80,12 +99,12 @@ final class CodexLoginCoordinator {
         self.codexBinaryLocator = CodexBinaryLocator(bundle: bundle, fileManager: fileManager)
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
         self.timeoutNanoseconds = timeoutNanoseconds
-        self.overrideCodexBinaryLocator = codexBinaryLocator
+        self.testBinaryURLProvider = testBinaryURLProvider
         self.sleeper = sleeper
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {
-        let codexURL = try (overrideCodexBinaryLocator?() ?? locateCodexBinary())
+        let codexURL = try (testBinaryURLProvider?() ?? locateCodexBinary())
         try paths.prepare(fileManager: fileManager)
         let process = Process()
         process.executableURL = codexURL
