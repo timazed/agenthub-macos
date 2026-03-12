@@ -4,6 +4,16 @@ import Testing
 
 struct CodexBinaryLocatorTests {
     @Test
+    func prefersInjectedBinaryURLProvider() throws {
+        let binaryURL = FileManager.default.temporaryDirectory.appendingPathComponent("CodexBinaryLocatorTests-\(UUID().uuidString)/codex", isDirectory: false)
+        try makeExecutable(at: binaryURL)
+
+        let locator = CodexBinaryLocator(binaryURLProvider: { binaryURL })
+
+        #expect(try locator.locateBinary().path == binaryURL.path)
+    }
+
+    @Test
     func prefersBundledBinaryAtTopLevel() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("CodexBinaryLocatorTests-\(UUID().uuidString)", isDirectory: true)
         let resourcesURL = root.appendingPathComponent("Resources", isDirectory: true)

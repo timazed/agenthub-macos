@@ -57,7 +57,6 @@ final class CodexLoginCoordinator {
     private let codexBinaryLocator: CodexBinaryLocator
     private let pollIntervalNanoseconds: UInt64
     private let timeoutNanoseconds: UInt64
-    private let testBinaryURLProvider: (() throws -> URL)?
     private let sleeper: @Sendable (UInt64) async throws -> Void
 
     private let stateLock = NSLock()
@@ -75,7 +74,6 @@ final class CodexLoginCoordinator {
             paths: paths,
             fileManager: fileManager,
             codexBinaryLocator: CodexBinaryLocator(bundle: bundle, fileManager: fileManager),
-            testBinaryURLProvider: nil,
             pollIntervalNanoseconds: CodexLoginCoordinator.defaultPollIntervalNanoseconds,
             timeoutNanoseconds: CodexLoginCoordinator.defaultTimeoutNanoseconds,
             sleeper: { try await Task.sleep(nanoseconds: $0) }
@@ -88,7 +86,6 @@ final class CodexLoginCoordinator {
         paths: AppPaths,
         fileManager: FileManager = .default,
         codexBinaryLocator: CodexBinaryLocator,
-        testBinaryURLProvider: (() throws -> URL)? = nil,
         pollIntervalNanoseconds: UInt64 = CodexLoginCoordinator.defaultPollIntervalNanoseconds,
         timeoutNanoseconds: UInt64 = CodexLoginCoordinator.defaultTimeoutNanoseconds,
         sleeper: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
@@ -99,12 +96,11 @@ final class CodexLoginCoordinator {
         self.codexBinaryLocator = codexBinaryLocator
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
         self.timeoutNanoseconds = timeoutNanoseconds
-        self.testBinaryURLProvider = testBinaryURLProvider
         self.sleeper = sleeper
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {
-        let codexURL = try (testBinaryURLProvider?() ?? locateCodexBinary())
+        let codexURL = try locateCodexBinary()
         try paths.prepare(fileManager: fileManager)
         let process = Process()
         process.executableURL = codexURL
