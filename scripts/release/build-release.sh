@@ -39,7 +39,7 @@ main() {
   rm -rf "${target_app}"
   cp -R "${built_app}" "${target_app}"
 
-  echo "Built release app at ${target_app}"
+  echo "Built app at ${target_app}"
 }
 
 main "$@"

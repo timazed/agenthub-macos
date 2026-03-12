@@ -85,7 +85,7 @@ If no Sparkle private key is configured, `publish-sparkle.sh` only writes a plac
 |-------------|---------------------|-----------|------------|--------------|-------|
 | `dev` | `Debug` | `au.com.roseadvisory.AgentHub.dev` | `AgentHubDev.app` | `http://127.0.0.1:8000/dev/appcast.xml` | Local-only build used from Xcode via the `AgentHub-Dev` scheme |
 | `beta` | `Beta` | `au.com.roseadvisory.AgentHub.beta` | `AgentHubBeta.app` | `https://updates.example.com/agenthub/beta/appcast.xml` | Release-candidate build used by the beta release pipeline |
-| `release` | `Release` | `au.com.roseadvisory.AgentHub` | `AgentHub.app` | `https://updates.example.com/agenthub/appcast.xml` | Production build used by the release pipeline |
+| `prod` | `Release` | `au.com.roseadvisory.AgentHub` | `AgentHub.app` | `https://updates.example.com/agenthub/appcast.xml` | Production build used by the release pipeline |
 
 ## Shared Xcode Schemes
 
@@ -94,7 +94,7 @@ If no Sparkle private key is configured, `publish-sparkle.sh` only writes a plac
 - `AgentHub-Beta`
   - Builds, runs, profiles, analyzes, and archives using `Beta`
   - Runs unit tests using `Debug` so the existing `@testable import AgentHub` suite keeps executing against the debug app module
-- `AgentHub-Release`
+- `AgentHub-Prod`
   - Builds, runs, profiles, analyzes, and archives using `Release`
   - Runs unit tests using `Debug` for the same reason as `AgentHub-Beta`
 
@@ -123,7 +123,8 @@ This dry run still writes local artifacts under `build/<channel>/publish/`. It d
 Build only:
 
 ```bash
-bash scripts/release/build-release.sh
+bash scripts/release/build-beta.sh
+bash scripts/release/build-prod.sh
 ```
 
 List shared Xcode schemes:
