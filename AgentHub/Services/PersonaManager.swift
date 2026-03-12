@@ -23,6 +23,58 @@ final class PersonaManager {
         try validatePersona(personaId: "default")
     }
 
+    func defaultPersonalityText() -> String {
+        defaultInstructions
+    }
+
+    func defaultAgentName() -> String {
+        persistedDefaultAgentName() ?? "Default"
+    }
+
+    func persistDefaultAgentName(_ name: String) throws {
+        let normalizedName = normalizeName(name, fallback: defaultAgentName())
+        let directory = personaDirectory(personaId: "default")
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let existingProfile = loadProfile(for: "default")
+        try writeProfile(
+            PersonaProfile(
+                name: normalizedName,
+                profilePictureURL: existingProfile?.profilePictureURL
+            ),
+            to: directory
+        )
+    }
+
+    private func persistedDefaultAgentName() -> String? {
+        guard let name = loadProfile(for: "default")?.name else {
+            return nil
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    func upsertDefaultPersona(name: String, instructions: String) throws -> Persona {
+        let trimmedName = normalizeName(name, fallback: defaultAgentName())
+
+        if (try? validatePersona(personaId: "default")) != nil {
+            try updatePersona(personaId: "default", name: trimmedName, instructions: instructions)
+            return try validatePersona(personaId: "default")
+        }
+
+        try updatePersona(personaId: "default", name: trimmedName, instructions: instructions)
+        return try validatePersona(personaId: "default")
+    }
+
+    func updateDefaultPersonaName(_ name: String) throws {
+        let instructions = try loadInstructions(personaId: "default")
+        try updatePersona(
+            personaId: "default",
+            name: normalizeName(name, fallback: defaultAgentName()),
+            instructions: instructions
+        )
+    }
+
     func list() throws -> [Persona] {
         try paths.prepare(fileManager: fileManager)
 
@@ -151,6 +203,11 @@ final class PersonaManager {
     private func normalizeInstructions(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? defaultInstructions : trimmed + "\n"
+    }
+
+    private func normalizeName(_ value: String, fallback: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     private func slugify(_ text: String) -> String {

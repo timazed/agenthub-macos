@@ -4,6 +4,8 @@ enum CodexLoginCoordinatorError: LocalizedError {
     case loginInProgress
     case loginNotStarted
     case loginFailed(String)
+    case cancelled
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +15,10 @@ enum CodexLoginCoordinatorError: LocalizedError {
             return "Codex login has not been started"
         case let .loginFailed(message):
             return message
+        case .cancelled:
+            return "Login cancelled"
+        case .timedOut:
+            return "Timed out waiting for Codex login to complete"
         }
     }
 }
@@ -42,10 +48,17 @@ private final class LockedLines: @unchecked Sendable {
 }
 
 final class CodexLoginCoordinator {
+    private static let defaultPollIntervalNanoseconds: UInt64 = 1_000_000_000
+    private static let defaultTimeoutNanoseconds: UInt64 = 300_000_000_000
+
     private let statusRefresher: () throws -> AuthState
     private let paths: AppPaths
     private let fileManager: FileManager
     private let codexBinaryLocator: CodexBinaryLocator
+    private let pollIntervalNanoseconds: UInt64
+    private let timeoutNanoseconds: UInt64
+    private let overrideCodexBinaryLocator: (() throws -> URL)?
+    private let sleeper: @Sendable (UInt64) async throws -> Void
 
     private let stateLock = NSLock()
     private var currentProcess: Process?
@@ -55,16 +68,24 @@ final class CodexLoginCoordinator {
         statusRefresher: @escaping () throws -> AuthState,
         paths: AppPaths,
         bundle: Bundle = .main,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        pollIntervalNanoseconds: UInt64 = CodexLoginCoordinator.defaultPollIntervalNanoseconds,
+        timeoutNanoseconds: UInt64 = CodexLoginCoordinator.defaultTimeoutNanoseconds,
+        codexBinaryLocator: (() throws -> URL)? = nil,
+        sleeper: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
     ) {
         self.statusRefresher = statusRefresher
         self.paths = paths
         self.fileManager = fileManager
         self.codexBinaryLocator = CodexBinaryLocator(bundle: bundle, fileManager: fileManager)
+        self.pollIntervalNanoseconds = pollIntervalNanoseconds
+        self.timeoutNanoseconds = timeoutNanoseconds
+        self.overrideCodexBinaryLocator = codexBinaryLocator
+        self.sleeper = sleeper
     }
 
     func startLogin() async throws -> AuthLoginChallenge? {
-        let codexURL = try locateCodexBinary()
+        let codexURL = try (overrideCodexBinaryLocator?() ?? locateCodexBinary())
         try paths.prepare(fileManager: fileManager)
         let process = Process()
         process.executableURL = codexURL
@@ -85,28 +106,72 @@ final class CodexLoginCoordinator {
         let diagnostics = LockedLines()
         let completionTask = Task<AuthState, Error> {
             defer { self.clearCurrentProcess() }
+            let startedAt = Date()
+            var lastStatusError: String?
 
             do {
                 try process.run()
             } catch {
+                if Task.isCancelled {
+                    throw CodexLoginCoordinatorError.cancelled
+                }
                 throw AssistantRuntimeError.launchFailed(String(describing: error))
             }
 
-            process.waitUntilExit()
+            while true {
+                if Task.isCancelled {
+                    throw CodexLoginCoordinatorError.cancelled
+                }
 
-            let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            diagnostics.append(contentsOf: Self.stripANSI(from: stdout))
-            diagnostics.append(contentsOf: Self.stripANSI(from: stderr))
+                do {
+                    let state = try self.statusRefresher()
+                    if state.isAuthenticated {
+                        self.terminateIfRunning(process)
+                        return state
+                    }
+                    lastStatusError = nil
+                } catch {
+                    lastStatusError = error.localizedDescription
+                }
 
-            guard process.terminationStatus == 0 else {
-                let message = diagnostics.snapshot()
-                throw CodexLoginCoordinatorError.loginFailed(
-                    message.isEmpty ? "Codex login failed" : message
-                )
+                if !process.isRunning {
+                    let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                    let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                    diagnostics.append(contentsOf: Self.stripANSI(from: stdout))
+                    diagnostics.append(contentsOf: Self.stripANSI(from: stderr))
+
+                    do {
+                        let finalState = try self.statusRefresher()
+                        if finalState.isAuthenticated {
+                            return finalState
+                        }
+                    } catch {
+                        lastStatusError = error.localizedDescription
+                    }
+
+                    let message = diagnostics.snapshot()
+                    let fallback = process.terminationStatus == 0 ? "Codex login did not complete" : "Codex login failed"
+                    let resolvedMessage = if !message.isEmpty {
+                        message
+                    } else if let lastStatusError {
+                        lastStatusError
+                    } else {
+                        fallback
+                    }
+                    throw CodexLoginCoordinatorError.loginFailed(resolvedMessage)
+                }
+
+                if Date().timeIntervalSince(startedAt) >= TimeInterval(self.timeoutNanoseconds) / 1_000_000_000 {
+                    process.terminate()
+                    throw CodexLoginCoordinatorError.timedOut
+                }
+
+                do {
+                    try await self.sleeper(self.pollIntervalNanoseconds)
+                } catch is CancellationError {
+                    throw CodexLoginCoordinatorError.cancelled
+                }
             }
-
-            return try self.statusRefresher()
         }
 
         storeCompletionTask(completionTask)
@@ -125,9 +190,9 @@ final class CodexLoginCoordinator {
     func cancel() {
         stateLock.lock()
         let process = currentProcess
-        currentProcess = nil
-        completionTask = nil
+        let task = completionTask
         stateLock.unlock()
+        task?.cancel()
         process?.terminate()
     }
 
@@ -167,8 +232,24 @@ final class CodexLoginCoordinator {
         stateLock.unlock()
     }
 
+    private func terminateIfRunning(_ process: Process) {
+        if process.isRunning {
+            process.terminate()
+        }
+    }
+
     private func locateCodexBinary() throws -> URL {
-        try codexBinaryLocator.locateBinary()
+        if let binaryURL = try? codexBinaryLocator.locateBinary() {
+            return binaryURL
+        }
+
+        let workspaceCandidate = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+            .appendingPathComponent("AgentHub/Resources/codex/codex", isDirectory: false)
+        if fileManager.isExecutableFile(atPath: workspaceCandidate.path) {
+            return workspaceCandidate
+        }
+
+        throw AssistantRuntimeError.binaryNotFound
     }
 
     private static func stripANSI(from text: String) -> String {
