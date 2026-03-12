@@ -62,6 +62,7 @@ final class AppContainer {
     let paths: AppPaths
     let appExecutableURL: URL
     let personaManager: PersonaManager
+    let userProfileManager: UserProfileManager
     let workspaceManager: WorkspaceManager
     let assistantSessionStore: AssistantSessionStore
     let runtimeConfigStore: AppRuntimeConfigStore
@@ -79,6 +80,7 @@ final class AppContainer {
         paths: AppPaths,
         appExecutableURL: URL,
         personaManager: PersonaManager,
+        userProfileManager: UserProfileManager,
         workspaceManager: WorkspaceManager,
         assistantSessionStore: AssistantSessionStore,
         runtimeConfigStore: AppRuntimeConfigStore,
@@ -94,6 +96,7 @@ final class AppContainer {
         self.paths = paths
         self.appExecutableURL = appExecutableURL
         self.personaManager = personaManager
+        self.userProfileManager = userProfileManager
         self.workspaceManager = workspaceManager
         self.assistantSessionStore = assistantSessionStore
         self.runtimeConfigStore = runtimeConfigStore
@@ -130,6 +133,7 @@ final class AppContainer {
 
         let appExecutableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
         let personaManager = PersonaManager(paths: paths)
+        let userProfileManager = UserProfileManager(paths: paths)
         let workspaceManager = WorkspaceManager()
         let assistantSessionStore = AssistantSessionStore(paths: paths)
         let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
@@ -142,6 +146,7 @@ final class AppContainer {
         let chatSessionService = ChatSessionService(
             sessionStore: assistantSessionStore,
             personaManager: personaManager,
+            userProfileManager: userProfileManager,
             runtime: chatRuntime,
             paths: paths,
             runtimeConfigStore: runtimeConfigStore,
@@ -167,6 +172,7 @@ final class AppContainer {
             paths: paths,
             appExecutableURL: appExecutableURL,
             personaManager: personaManager,
+            userProfileManager: userProfileManager,
             workspaceManager: workspaceManager,
             assistantSessionStore: assistantSessionStore,
             runtimeConfigStore: runtimeConfigStore,

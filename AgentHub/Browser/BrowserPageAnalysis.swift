@@ -24,7 +24,271 @@ struct BrowserWorkflowSnapshot: Equatable {
     let readyToContinue: Bool
 }
 
+enum BrowserCanonicalStage: String, Equatable {
+    case discovery
+    case results
+    case detail
+    case detailsForm = "details_form"
+    case approvalBoundary = "approval_boundary"
+    case review
+    case phoneVerificationPrep = "phone_verification_prep"
+    case verificationCode = "verification_code"
+    case success
+    case failure
+    case dialog
+    case browse
+}
+
+struct BrowserCanonicalState: Equatable {
+    let stage: BrowserCanonicalStage
+    let workflow: BrowserWorkflowSnapshot
+    let promptableRequirement: BrowserPageRequirement?
+    let approvalBoundaryLabel: String?
+    let requiresVisualRefresh: Bool
+}
+
 enum BrowserPageAnalyzer {
+    nonisolated static func canonicalState(
+        for inspection: ChromiumInspection?,
+        priorInspection: ChromiumInspection? = nil
+    ) -> BrowserCanonicalState? {
+        guard let inspection,
+              let workflow = workflow(for: inspection) else {
+            return nil
+        }
+
+        let promptableRequirement = workflow.requirements.first(where: { $0.kind != "consent" }) ?? workflow.requirements.first
+        let approvalBoundaryLabel = BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection)?.label
+        let approvedFinalRequirement = followUpRequirementAfterApprovedFinalAction(
+            currentInspection: inspection,
+            priorInspection: priorInspection
+        )
+        let synthesizedVerificationRequirement = BrowserPageRequirement(
+            id: "synthetic-canonical-verification",
+            kind: "verification_code",
+            label: "Verification code",
+            selector: nil,
+            controlType: "one-time-code",
+            fillAction: "type_text",
+            options: [],
+            prompt: promptForRequirementKind("verification_code", label: "Verification code"),
+            isSensitive: true,
+            priority: requirementPriority("verification_code"),
+            validationMessage: "The current page is waiting on a verification step."
+        )
+        let verificationOrPhoneKinds: Set<String> = ["phone_number", "verification_code", "consent"]
+        let onlyVerificationPrepRequirements = !workflow.requirements.isEmpty
+            && workflow.requirements.allSatisfy { verificationOrPhoneKinds.contains($0.kind) }
+        let hasLateStageVerificationBoundary = BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection) != nil
+            && (
+                ["review", "final_submit"].contains(workflow.stage)
+                    || inspection.bookingFunnel?.hasReviewSummary == true
+                    || inspection.bookingFunnel?.hasFinalConfirmationBoundary == true
+            )
+
+        let stage: BrowserCanonicalStage
+        let canonicalPromptableRequirement: BrowserPageRequirement?
+
+        if workflow.hasSuccessSignal {
+            stage = .success
+            canonicalPromptableRequirement = nil
+        } else if workflow.hasFailureSignal {
+            stage = .failure
+            canonicalPromptableRequirement = nil
+        } else if let approvedFinalRequirement {
+            canonicalPromptableRequirement = approvedFinalRequirement
+            stage = approvedFinalRequirement.kind == "phone_number" ? .phoneVerificationPrep : .verificationCode
+        } else if let promptableRequirement,
+                  promptableRequirement.kind == "phone_number",
+                  hasLateStageVerificationBoundary,
+                  onlyVerificationPrepRequirements {
+            canonicalPromptableRequirement = promptableRequirement
+            stage = .phoneVerificationPrep
+        } else if promptableRequirement?.kind == "verification_code" || verificationInterruptionLikely(for: inspection) {
+            canonicalPromptableRequirement = promptableRequirement ?? synthesizedVerificationRequirement
+            stage = .verificationCode
+        } else if workflow.stage == "details_form" {
+            canonicalPromptableRequirement = promptableRequirement
+            stage = .detailsForm
+        } else if workflow.stage == "final_submit" {
+            canonicalPromptableRequirement = nil
+            stage = .approvalBoundary
+        } else if workflow.stage == "review" {
+            canonicalPromptableRequirement = promptableRequirement
+            stage = .review
+        } else if workflow.stage == "selection" {
+            canonicalPromptableRequirement = promptableRequirement
+            stage = canonicalSelectionStage(for: inspection)
+        } else if workflow.stage == "discovery" {
+            canonicalPromptableRequirement = promptableRequirement
+            stage = .discovery
+        } else if workflow.stage == "dialog" {
+            canonicalPromptableRequirement = promptableRequirement
+            stage = .dialog
+        } else {
+            canonicalPromptableRequirement = promptableRequirement
+            stage = .browse
+        }
+
+        let requiresVisualRefresh = [.phoneVerificationPrep, .verificationCode].contains(stage)
+
+        return BrowserCanonicalState(
+            stage: stage,
+            workflow: workflow,
+            promptableRequirement: canonicalPromptableRequirement,
+            approvalBoundaryLabel: approvalBoundaryLabel,
+            requiresVisualRefresh: requiresVisualRefresh
+        )
+    }
+
+    nonisolated static func userFacingProgressMessage(for state: BrowserCanonicalState) -> String? {
+        switch state.stage {
+        case .discovery:
+            return "I’m still navigating the site to reach the requested flow."
+        case .results:
+            return "I’m on the results step and narrowing to the exact venue."
+        case .detail:
+            return "I’m on the venue detail step and still working through the booking flow."
+        case .review:
+            return "I’m on the review step and still working through the booking flow."
+        case .success:
+            return "The browser flow reached a success state."
+        case .failure:
+            return "The browser flow is currently blocked by a failure state."
+        case .dialog:
+            return "The browser flow is paused on a dialog and still needs a decision or next step."
+        case .browse:
+            return "I’m still working through the browser flow."
+        case .detailsForm, .approvalBoundary, .phoneVerificationPrep, .verificationCode:
+            return nil
+        }
+    }
+
+    nonisolated static func augmentInspection(
+        _ inspection: ChromiumInspection,
+        withVisualRecognitionText recognizedText: String,
+        fallback: ChromiumInspection?
+    ) -> ChromiumInspection {
+        let normalized = recognizedText.lowercased()
+        let phoneVerificationGate = normalized.contains("phone number is required")
+            || (
+                normalized.contains("phone number")
+                    && (normalized.contains("text message") || normalized.contains("verify your account"))
+            )
+        let verificationGate = normalized.contains("enter verification code")
+            || normalized.contains("verification code")
+            || normalized.contains("didn't receive the code")
+            || normalized.contains("didnt receive the code")
+
+        guard phoneVerificationGate || verificationGate else {
+            return inspection
+        }
+
+        var interactiveElements = inspection.interactiveElements
+        var notices = inspection.notices
+        var stepIndicators = inspection.stepIndicators
+        var dialogs = inspection.dialogs
+
+        let phoneSelector = requiredFieldSelector(kind: "phone_number", in: inspection)
+            ?? requiredFieldSelector(kind: "phone_number", in: fallback)
+            ?? (inspection.url.contains("opentable.com/booking/details") ? "#phoneNumber" : nil)
+
+        if phoneVerificationGate,
+           !requirements(for: inspection).contains(where: { $0.kind == "phone_number" }),
+           let phoneSelector {
+            interactiveElements.append(
+                ChromiumInteractiveElement(
+                    id: "visual-phone-number",
+                    role: "textbox",
+                    label: "Phone number",
+                    text: "",
+                    selector: phoneSelector,
+                    value: nil,
+                    href: nil,
+                    purpose: "phone_number",
+                    groupLabel: "Verification",
+                    isRequired: true,
+                    isSelected: false,
+                    validationMessage: normalized.contains("phone number is required") ? "Phone number is required." : nil,
+                    priority: 160
+                )
+            )
+        }
+
+        if phoneVerificationGate,
+           !notices.contains(where: { $0.label.localizedCaseInsensitiveContains("text message") }) {
+            notices.append(
+                ChromiumSemanticNotice(
+                    id: "visual-phone-verification-notice",
+                    kind: "status",
+                    label: "You will receive a text message to verify your account.",
+                    selector: ".agenthub-visual-phone-verification"
+                )
+            )
+        }
+
+        if verificationGate,
+           !notices.contains(where: { $0.label.localizedCaseInsensitiveContains("verification code") }) {
+            notices.append(
+                ChromiumSemanticNotice(
+                    id: "visual-verification-code-notice",
+                    kind: "status",
+                    label: "Enter verification code to reserve.",
+                    selector: ".agenthub-visual-verification-code"
+                )
+            )
+        }
+
+        if verificationGate,
+           !stepIndicators.contains(where: { $0.label.localizedCaseInsensitiveContains("verify") }) {
+            stepIndicators.append(
+                ChromiumStepIndicator(
+                    id: "visual-verify-step",
+                    label: "Verify phone",
+                    selector: ".agenthub-visual-verify-step",
+                    isCurrent: true
+                )
+            )
+        }
+
+        if verificationGate,
+           dialogs.isEmpty {
+            dialogs.append(
+                ChromiumSemanticDialog(
+                    id: "visual-verification-dialog",
+                    label: "Enter verification code to reserve",
+                    selector: ".agenthub-visual-verification-dialog",
+                    primaryActionLabel: nil,
+                    primaryActionSelector: nil,
+                    dismissSelector: nil
+                )
+            )
+        }
+
+        return ChromiumInspection(
+            title: inspection.title,
+            url: inspection.url,
+            pageStage: inspection.pageStage,
+            formCount: inspection.formCount,
+            hasSearchField: inspection.hasSearchField,
+            interactiveElements: interactiveElements,
+            forms: inspection.forms,
+            resultLists: inspection.resultLists,
+            cards: inspection.cards,
+            dialogs: dialogs,
+            controlGroups: inspection.controlGroups,
+            autocompleteSurfaces: inspection.autocompleteSurfaces,
+            datePickers: inspection.datePickers,
+            notices: notices,
+            stepIndicators: stepIndicators,
+            primaryActions: inspection.primaryActions,
+            transactionalBoundaries: inspection.transactionalBoundaries,
+            semanticTargets: inspection.semanticTargets,
+            booking: inspection.booking,
+            bookingFunnel: inspection.bookingFunnel
+        )
+    }
+
     nonisolated static func requirements(for inspection: ChromiumInspection?) -> [BrowserPageRequirement] {
         guard let inspection else { return [] }
 
@@ -119,6 +383,23 @@ enum BrowserPageAnalyzer {
             )
         }
 
+        if !requirements.contains(where: { $0.kind == "verification_code" }),
+           verificationInterruptionLikely(for: inspection) {
+            insertRequirement(
+                id: "synthetic-verification-interruption",
+                kind: "verification_code",
+                label: "Verification code",
+                selector: nil,
+                controlType: "one-time-code",
+                fillAction: "type_text",
+                options: [],
+                prompt: promptForRequirementKind("verification_code", label: "Verification code"),
+                isSensitive: true,
+                priority: requirementPriority("verification_code") + 5,
+                validationMessage: "The current page is waiting on a verification step."
+            )
+        }
+
         return requirements.sorted { lhs, rhs in
             if lhs.priority == rhs.priority {
                 return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
@@ -143,6 +424,9 @@ enum BrowserPageAnalyzer {
         let requirements = hasLateStageSignals
             ? rawRequirements.filter { !["search", "location", "date", "time", "guest_count"].contains($0.kind) }
             : rawRequirements
+        let hasPromptableNonVerificationRequirements = requirements.contains {
+            $0.kind != "verification_code" && $0.kind != "consent"
+        }
         let reviewLike = inspection.pageStage == "review"
             || inspection.dialogs.contains { $0.label.localizedCaseInsensitiveContains("review") }
             || inspection.stepIndicators.contains { $0.label.localizedCaseInsensitiveContains("review") || $0.label.localizedCaseInsensitiveContains("details") }
@@ -152,12 +436,16 @@ enum BrowserPageAnalyzer {
             }
             || inspection.transactionalBoundaries.contains { $0.kind == "review_step" }
             || inspection.bookingFunnel?.hasReviewSummary == true
-        let verificationLike = requirements.contains(where: { $0.kind == "verification_code" })
-            || inspection.notices.contains { notice in
+        let hasNonVerificationRequirements = requirements.contains { $0.kind != "verification_code" }
+        let verificationLike = !hasPromptableNonVerificationRequirements && (
+            requirements.contains(where: { $0.kind == "verification_code" })
+            || explicitVerificationSurfacePresent(in: inspection)
+            || (!hasNonVerificationRequirements && inspection.notices.contains { notice in
                 let label = notice.label.lowercased()
                 return label.contains("verification") || label.contains("code") || label.contains("passcode")
-            }
-            || inspection.stepIndicators.contains { $0.label.localizedCaseInsensitiveContains("verify") }
+            })
+            || (!hasNonVerificationRequirements && inspection.stepIndicators.contains { $0.label.localizedCaseInsensitiveContains("verify") })
+        )
         let slotSelection = inspection.semanticTargets.contains { $0.kind == "slot_option" }
             || inspection.bookingFunnel?.hasSlotSelection == true
         let selectionStage = (inspection.pageStage == "results"
@@ -190,6 +478,8 @@ enum BrowserPageAnalyzer {
             stage = "success"
         } else if signals.hasFailure {
             stage = "failure"
+        } else if hasPromptableNonVerificationRequirements && (finalBoundary != nil || reviewLike || hasDataEntryForm || detailsCollectionInterruptionLikely(for: inspection)) {
+            stage = "details_form"
         } else if verificationLike {
             stage = "verification"
         } else if !requirements.isEmpty && (finalBoundary != nil || reviewLike) {
@@ -242,6 +532,31 @@ enum BrowserPageAnalyzer {
         default:
             return nil
         }
+    }
+
+    nonisolated private static func canonicalSelectionStage(for inspection: ChromiumInspection) -> BrowserCanonicalStage {
+        if inspection.pageStage == "results"
+            || inspection.bookingFunnel?.stage == "results"
+            || !inspection.resultLists.isEmpty
+            || inspection.cards.count >= 2 {
+            return .results
+        }
+        if inspection.pageStage == "detail"
+            || inspection.pageStage == "venue_detail"
+            || inspection.bookingFunnel?.stage == "venue_detail"
+            || inspection.bookingFunnel?.stage == "booking_widget"
+            || inspection.bookingFunnel?.stage == "slot_selection" {
+            return .detail
+        }
+        return .detail
+    }
+
+    nonisolated private static func requiredFieldSelector(kind: String, in inspection: ChromiumInspection?) -> String? {
+        requirements(for: inspection)
+            .filter { $0.kind == kind }
+            .sorted { $0.priority > $1.priority }
+            .first?
+            .selector
     }
 
     nonisolated private static func classifyFieldKind(
@@ -427,6 +742,475 @@ enum BrowserPageAnalyzer {
         case "date", "time", "guest_count": return 80
         default: return 60
         }
+    }
+
+    nonisolated static func verificationInterruptionLikely(for inspection: ChromiumInspection) -> Bool {
+        let hasDirectContactRequirement = inspection.forms.contains { form in
+            form.fields.contains { field in
+                guard fieldNeedsInput(field) else { return false }
+                let kind = classifyFieldKind(
+                    label: field.label,
+                    controlType: field.controlType,
+                    autocomplete: field.autocomplete,
+                    inputMode: field.inputMode,
+                    purpose: field.fieldPurpose,
+                    selector: field.selector
+                )
+                return kind != "verification_code"
+            }
+        } || inspection.interactiveElements.contains { element in
+            guard interactiveElementNeedsInput(element) else { return false }
+            let kind = classifyFieldKind(
+                label: element.label,
+                controlType: element.role,
+                autocomplete: nil,
+                inputMode: nil,
+                purpose: element.purpose,
+                selector: element.selector
+            )
+            return kind != "verification_code"
+        }
+
+        if hasDirectContactRequirement && detailsCollectionInterruptionLikely(for: inspection) {
+            return false
+        }
+
+        let combined = [
+            inspection.title,
+            inspection.url,
+            inspection.pageStage,
+            inspection.dialogs.map(\.label).joined(separator: "\n"),
+            inspection.forms.map(\.label).joined(separator: "\n"),
+            inspection.forms.flatMap(\.fields).map(\.label).joined(separator: "\n"),
+            inspection.interactiveElements.map(\.label).joined(separator: "\n"),
+            inspection.notices.map(\.label).joined(separator: "\n"),
+            inspection.stepIndicators.map(\.label).joined(separator: "\n"),
+            inspection.primaryActions.map(\.label).joined(separator: "\n"),
+            inspection.transactionalBoundaries.map(\.label).joined(separator: "\n"),
+            inspection.semanticTargets.map(\.label).joined(separator: "\n")
+        ]
+        .joined(separator: "\n")
+        .lowercased()
+
+        let verificationSignals = [
+            "verification code",
+            "enter code",
+            "one-time code",
+            "one time code",
+            "passcode",
+            "otp",
+            "verify phone",
+            "verify your phone",
+            "verify account",
+            "verify your account",
+            "text message",
+            "we texted you",
+            "sent a code",
+            "sent you a code"
+        ]
+        if verificationSignals.contains(where: combined.contains), !hasDirectContactRequirement {
+            return true
+        }
+
+        let authInterruptionSignals = [
+            "sign in",
+            "log in",
+            "login",
+            "use email instead",
+            "use phone instead",
+            "continue with email",
+            "continue with phone"
+        ]
+        let hasAuthInterruption = authInterruptionSignals.contains(where: combined.contains)
+        let hasModalInterruption = !inspection.dialogs.isEmpty || inspection.pageStage == "dialog"
+        let lateStageContext = combined.contains("complete reservation")
+            || combined.contains("booking/details")
+            || combined.contains("reservation details")
+            || combined.contains("review")
+            || inspection.bookingFunnel?.hasReviewSummary == true
+            || inspection.bookingFunnel?.hasFinalConfirmationBoundary == true
+        let hasExplicitVerificationContext = verificationSignals.contains(where: combined.contains)
+            || inspection.notices.contains { notice in
+                let label = notice.label.lowercased()
+                return label.contains("verification")
+                    || label.contains("code")
+                    || label.contains("passcode")
+                    || label.contains("we texted")
+                    || label.contains("sent a code")
+            }
+            || inspection.stepIndicators.contains { indicator in
+                let label = indicator.label.lowercased()
+                return label.contains("verify")
+                    || label.contains("verification")
+                    || label.contains("code")
+            }
+            || explicitVerificationSurfacePresent(in: inspection)
+
+        return hasAuthInterruption
+            && hasModalInterruption
+            && lateStageContext
+            && hasExplicitVerificationContext
+            && !hasDirectContactRequirement
+    }
+
+    nonisolated static func finalBoundaryMayTriggerVerification(for inspection: ChromiumInspection?) -> Bool {
+        guard let inspection else { return false }
+        guard BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection) != nil else {
+            return false
+        }
+        guard !verificationInterruptionLikely(for: inspection) else {
+            return false
+        }
+        guard let workflow = workflow(for: inspection),
+              ["review", "final_submit"].contains(workflow.stage),
+              workflow.requirements.isEmpty,
+              workflow.hasSuccessSignal == false,
+              workflow.hasFailureSignal == false else {
+            return false
+        }
+        guard !detailsCollectionInterruptionLikely(for: inspection) || workflow.requirements.isEmpty else {
+            return false
+        }
+
+        let combined = [
+            inspection.title,
+            inspection.url,
+            inspection.pageStage,
+            inspection.dialogs.map(\.label).joined(separator: "\n"),
+            inspection.forms.map(\.label).joined(separator: "\n"),
+            inspection.forms.flatMap(\.fields).map { "\($0.label) \($0.value ?? "")" }.joined(separator: "\n"),
+            inspection.interactiveElements.map { "\($0.label) \($0.value ?? "")" }.joined(separator: "\n"),
+            inspection.notices.map(\.label).joined(separator: "\n"),
+            inspection.stepIndicators.map(\.label).joined(separator: "\n"),
+            inspection.primaryActions.map(\.label).joined(separator: "\n"),
+            inspection.transactionalBoundaries.map(\.label).joined(separator: "\n"),
+            inspection.semanticTargets.map(\.label).joined(separator: "\n")
+        ]
+        .joined(separator: "\n")
+        .lowercased()
+
+        let authChoiceSignals = [
+            "use email instead",
+            "use phone instead",
+            "continue with email",
+            "continue with phone",
+            "sign in",
+            "log in",
+            "login"
+        ]
+        let verificationDeliverySignals = [
+            "text message",
+            "we'll send a text",
+            "we will send a text",
+            "sent a text",
+            "verify your account",
+            "verify account",
+            "verify your phone",
+            "verify phone"
+        ]
+        let hasPhoneContext = inspection.forms.contains { form in
+            form.fields.contains { field in
+                classifyFieldKind(
+                    label: field.label,
+                    controlType: field.controlType,
+                    autocomplete: field.autocomplete,
+                    inputMode: field.inputMode,
+                    purpose: field.fieldPurpose,
+                    selector: field.selector
+                ) == "phone_number"
+            }
+        } || inspection.interactiveElements.contains { element in
+            classifyFieldKind(
+                label: element.label,
+                controlType: element.role,
+                autocomplete: nil,
+                inputMode: nil,
+                purpose: element.purpose,
+                selector: element.selector
+            ) == "phone_number"
+        } || combined.contains("phone number")
+
+        return hasPhoneContext
+            && authChoiceSignals.contains(where: combined.contains)
+            && (
+                verificationDeliverySignals.contains(where: combined.contains)
+                    || combined.contains("booking/details")
+                    || combined.contains("complete reservation")
+            )
+    }
+
+    nonisolated static func followUpRequirementAfterApprovedFinalAction(
+        currentInspection: ChromiumInspection?,
+        priorInspection: ChromiumInspection?
+    ) -> BrowserPageRequirement? {
+        guard let currentInspection, let priorInspection else { return nil }
+        let explicitVerificationSurface = explicitVerificationSurfacePresent(in: currentInspection)
+        guard explicitVerificationSurface || finalBoundaryMayTriggerVerification(for: priorInspection) else {
+            return nil
+        }
+
+        let currentWorkflow = workflow(for: currentInspection)
+        guard currentWorkflow?.hasSuccessSignal == false,
+              currentWorkflow?.hasFailureSignal == false else {
+            return nil
+        }
+
+        let currentRequirements = requirements(for: currentInspection)
+        let promptableRequirements = currentRequirements.filter { $0.kind != "consent" }
+        let allowedRequirementKinds: Set<String> = ["phone_number", "verification_code"]
+        guard promptableRequirements.allSatisfy({ allowedRequirementKinds.contains($0.kind) }) else {
+            return nil
+        }
+
+        let verificationRequirement = promptableRequirements.first(where: { $0.kind == "verification_code" })
+        let phoneRequirement = promptableRequirements.first(where: { $0.kind == "phone_number" })
+
+        if explicitVerificationSurface {
+            if let verificationRequirement {
+                return verificationRequirement
+            }
+            return BrowserPageRequirement(
+                id: "synthetic-approved-final-verification-surface",
+                kind: "verification_code",
+                label: "Verification code",
+                selector: nil,
+                controlType: "one-time-code",
+                fillAction: "type_text",
+                options: [],
+                prompt: promptForRequirementKind("verification_code", label: "Verification code"),
+                isSensitive: true,
+                priority: requirementPriority("verification_code") + 10,
+                validationMessage: "The current page is showing a verification code prompt."
+            )
+        }
+
+        if verificationInterruptionLikely(for: currentInspection) {
+            if let phoneRequirement {
+                return phoneRequirement
+            }
+            if let verificationRequirement {
+                return verificationRequirement
+            }
+        }
+
+        guard !currentRequirements.contains(where: { $0.kind != "verification_code" && $0.kind != "consent" && $0.kind != "phone_number" }) else {
+            return nil
+        }
+
+        let currentCombined = [
+            currentInspection.title,
+            currentInspection.url,
+            currentInspection.pageStage,
+            currentInspection.dialogs.map(\.label).joined(separator: "\n"),
+            currentInspection.forms.map(\.label).joined(separator: "\n"),
+            currentInspection.forms.flatMap(\.fields).map { "\($0.label) \($0.value ?? "")" }.joined(separator: "\n"),
+            currentInspection.interactiveElements.map { "\($0.label) \($0.value ?? "")" }.joined(separator: "\n"),
+            currentInspection.notices.map(\.label).joined(separator: "\n"),
+            currentInspection.stepIndicators.map(\.label).joined(separator: "\n"),
+            currentInspection.primaryActions.map(\.label).joined(separator: "\n"),
+            currentInspection.transactionalBoundaries.map(\.label).joined(separator: "\n")
+        ]
+        .joined(separator: "\n")
+        .lowercased()
+
+        let stillInLateStageBooking = currentCombined.contains("booking/details")
+            || currentCombined.contains("complete reservation")
+            || currentInspection.bookingFunnel?.hasReviewSummary == true
+            || currentInspection.bookingFunnel?.hasFinalConfirmationBoundary == true
+            || currentInspection.pageStage == "review"
+            || currentInspection.pageStage == "final_confirmation"
+        guard stillInLateStageBooking else {
+            return nil
+        }
+
+        let authChoiceSignals = [
+            "use email instead",
+            "use phone instead",
+            "continue with email",
+            "continue with phone",
+            "sign in",
+            "log in",
+            "login"
+        ]
+        let hasPhoneContext = currentInspection.forms.contains { form in
+            form.fields.contains { field in
+                classifyFieldKind(
+                    label: field.label,
+                    controlType: field.controlType,
+                    autocomplete: field.autocomplete,
+                    inputMode: field.inputMode,
+                    purpose: field.fieldPurpose,
+                    selector: field.selector
+                ) == "phone_number"
+            }
+        } || currentInspection.interactiveElements.contains { element in
+            classifyFieldKind(
+                label: element.label,
+                controlType: element.role,
+                autocomplete: nil,
+                inputMode: nil,
+                purpose: element.purpose,
+                selector: element.selector
+            ) == "phone_number"
+        } || currentCombined.contains("phone number")
+
+        if let phoneRequirement {
+            return phoneRequirement
+        }
+        if let verificationRequirement {
+            return verificationRequirement
+        }
+        guard hasPhoneContext || authChoiceSignals.contains(where: currentCombined.contains) else {
+            return nil
+        }
+        return BrowserPageRequirement(
+            id: "synthetic-approved-final-verification",
+            kind: "verification_code",
+            label: "Verification code",
+            selector: nil,
+            controlType: "one-time-code",
+            fillAction: "type_text",
+            options: [],
+            prompt: promptForRequirementKind("verification_code", label: "Verification code"),
+            isSensitive: true,
+            priority: requirementPriority("verification_code") + 5,
+            validationMessage: "The current page is waiting on a verification step."
+        )
+    }
+
+    nonisolated static func verificationLikelyAfterApprovedFinalAction(
+        currentInspection: ChromiumInspection?,
+        priorInspection: ChromiumInspection?
+    ) -> Bool {
+        followUpRequirementAfterApprovedFinalAction(
+            currentInspection: currentInspection,
+            priorInspection: priorInspection
+        ) != nil
+    }
+
+    nonisolated static func shouldPreserveVerificationContext(
+        currentInspection: ChromiumInspection?,
+        pendingInspection: ChromiumInspection?
+    ) -> Bool {
+        if let currentInspection, verificationInterruptionLikely(for: currentInspection) {
+            return true
+        }
+
+        guard let pendingInspection,
+              canonicalState(for: pendingInspection)?.requiresVisualRefresh == true else {
+            return false
+        }
+
+        guard let currentInspection else {
+            return true
+        }
+
+        if let currentState = canonicalState(for: currentInspection, priorInspection: pendingInspection) {
+            switch currentState.stage {
+            case .phoneVerificationPrep, .verificationCode:
+                return true
+            case .success, .failure, .detailsForm:
+                return false
+            default:
+                break
+            }
+        }
+
+        let combined = [
+            currentInspection.title,
+            currentInspection.url,
+            currentInspection.pageStage,
+            currentInspection.dialogs.map(\.label).joined(separator: "\n"),
+            currentInspection.forms.map(\.label).joined(separator: "\n"),
+            currentInspection.forms.flatMap(\.fields).map(\.label).joined(separator: "\n"),
+            currentInspection.notices.map(\.label).joined(separator: "\n"),
+            currentInspection.stepIndicators.map(\.label).joined(separator: "\n"),
+            currentInspection.transactionalBoundaries.map(\.label).joined(separator: "\n")
+        ]
+        .joined(separator: "\n")
+        .lowercased()
+
+        let sameBookingDocument = currentInspection.url == pendingInspection.url
+            || (
+                currentInspection.url.contains("opentable.com/booking/details")
+                    && pendingInspection.url.contains("opentable.com/booking/details")
+            )
+
+        let lateStageBooking = sameBookingDocument
+            && (
+                currentInspection.pageStage == "review"
+                    || currentInspection.pageStage == "final_confirmation"
+                    || currentInspection.bookingFunnel?.hasReviewSummary == true
+                    || currentInspection.bookingFunnel?.hasFinalConfirmationBoundary == true
+                    || combined.contains("complete reservation")
+                    || combined.contains("reservation details")
+            )
+
+        return lateStageBooking
+    }
+
+    nonisolated private static func explicitVerificationSurfacePresent(in inspection: ChromiumInspection) -> Bool {
+        let dialogSignals = inspection.dialogs.contains { dialog in
+            let label = dialog.label.lowercased()
+            return label.contains("verification code")
+                || label.contains("enter code")
+                || label.contains("one-time code")
+                || label.contains("otp")
+                || label.contains("passcode")
+        }
+        let formSignals = inspection.forms.contains { form in
+            let combined = [form.label, form.submitLabel ?? ""].joined(separator: " ").lowercased()
+            return combined.contains("verification code")
+                || combined.contains("enter code")
+                || combined.contains("one-time code")
+                || combined.contains("otp")
+                || combined.contains("passcode")
+                || form.fields.contains { field in
+                    let kind = classifyFieldKind(
+                        label: field.label,
+                        controlType: field.controlType,
+                        autocomplete: field.autocomplete,
+                        inputMode: field.inputMode,
+                        purpose: field.fieldPurpose,
+                        selector: field.selector
+                    )
+                    return kind == "verification_code"
+                }
+        }
+        return dialogSignals || formSignals
+    }
+
+    nonisolated private static func detailsCollectionInterruptionLikely(for inspection: ChromiumInspection) -> Bool {
+        let detailsLabels = inspection.dialogs.contains { dialog in
+            let label = dialog.label.lowercased()
+            return label.contains("add some details")
+                || label.contains("last step")
+                || label.contains("complete your details")
+                || label.contains("guest details")
+        } || inspection.forms.contains { form in
+            let combined = [form.label, form.submitLabel ?? ""].joined(separator: " ").lowercased()
+            return combined.contains("add some details")
+                || combined.contains("last step")
+                || combined.contains("guest details")
+                || combined.contains("diner details")
+        }
+
+        let requiredIdentityFieldPresent = inspection.forms.contains { form in
+            form.fields.contains { field in
+                guard fieldNeedsInput(field) else { return false }
+                let kind = classifyFieldKind(
+                    label: field.label,
+                    controlType: field.controlType,
+                    autocomplete: field.autocomplete,
+                    inputMode: field.inputMode,
+                    purpose: field.fieldPurpose,
+                    selector: field.selector
+                )
+                return ["first_name", "last_name", "full_name", "email", "phone_number"].contains(kind)
+            }
+        }
+
+        return detailsLabels || requiredIdentityFieldPresent
     }
 
     nonisolated private static func pageSignals(for inspection: ChromiumInspection) -> (hasSuccess: Bool, hasFailure: Bool) {

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import Vision
 
 struct ChromiumBrowserActionError: Error, LocalizedError {
     let message: String
@@ -26,6 +27,44 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         let url: String
         let title: String
         let visibleLabels: [String]
+    }
+
+    private struct ScrollCaptureRect: Decodable {
+        let x: Double
+        let y: Double
+        let width: Double
+        let height: Double
+    }
+
+    private struct ScrollCapturePlan: Decodable {
+        let mode: String
+        let offsets: [Double]
+        let originalOffset: Double
+        let viewportHeight: Double
+        let contentHeight: Double
+        let viewportRect: ScrollCaptureRect
+    }
+
+    private struct ScrollCapturePosition: Decodable {
+        let mode: String
+        let actualOffset: Double
+        let viewportRect: ScrollCaptureRect
+    }
+
+    static func nativeVerificationAutofillReady(_ details: [String: Any]?) -> Bool {
+        guard let details else { return false }
+        let focused = details["focused"] as? Bool ?? false
+        let hasInputContext = details["hasInputContext"] as? Bool ?? false
+        let responderClass = (details["responderClass"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let inputClientClass = (details["inputClientClass"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard focused, hasInputContext else {
+            return false
+        }
+        guard !responderClass.isEmpty, !inputClientClass.isEmpty else {
+            return false
+        }
+        return responderClass == inputClientClass
     }
 
     @Published private(set) var state = ChromiumBrowserState()
@@ -379,10 +418,11 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         guard !trimmedCode.isEmpty else {
             throw ChromiumBrowserActionError(message: "Verification code requires a non-empty value.")
         }
+        _ = try? await prepareVerificationCodeAutofillForAgent()
         let result = try await performRetriedAsyncAction(
             name: "type_verification_code",
             detail: trimmedCode,
-            policy: RetryPolicy(attempts: 2, delay: 0.3)
+            policy: RetryPolicy(attempts: 3, delay: 0.5)
         ) {
             try await self.evaluateJSONScript(
                 ChromiumBrowserScripts.typeVerificationCode(trimmedCode),
@@ -399,7 +439,7 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         await MainActor.run {
             browserView.focusBrowser()
         }
-        let result = try await performRetriedAsyncAction(
+        _ = try await performRetriedAsyncAction(
             name: "prepare_verification_autofill",
             detail: "Focus one-time-code field",
             policy: RetryPolicy(attempts: 2, delay: 0.2)
@@ -414,13 +454,37 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         let nativeFocusDetails = await MainActor.run {
             browserView.prepareForNativeVerificationAutofill()
         }
+        guard Self.nativeVerificationAutofillReady(nativeFocusDetails) else {
+            throw ChromiumBrowserActionError(message: "Verification field could not be focused for native autofill.")
+        }
+        let verifiedResult = try await evaluateJSONScript(
+            ChromiumBrowserScripts.prepareVerificationCodeAutofill,
+            label: "Verify verification code autofill focus for agent"
+        )
         appendLog("Prepared the verification field for native one-time-code autofill.")
         if let nativeFocusDetails,
            let data = try? JSONSerialization.data(withJSONObject: nativeFocusDetails, options: [.sortedKeys]),
            let json = String(data: data, encoding: .utf8),
            !json.isEmpty {
-            return "\(result) \(json)"
+            return "\(verifiedResult) \(json)"
         }
+        return verifiedResult
+    }
+
+    func advanceVerificationStepForAgent() async throws -> String {
+        let result = try await performRetriedAsyncAction(
+            name: "advance_verification_step",
+            detail: "Continue verification flow",
+            policy: RetryPolicy(attempts: 2, delay: 0.2)
+        ) {
+            try await self.evaluateJSONScript(
+                ChromiumBrowserScripts.advanceVerificationStep,
+                label: "Advance verification step for agent"
+            )
+        } shouldRetry: { _ in
+            false
+        }
+        appendLog("Advanced the verification step in the current browser page.")
         return result
     }
 
@@ -805,6 +869,11 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         return try await captureSnapshot(label: trimmedLabel.isEmpty ? "agent" : trimmedLabel)
     }
 
+    func captureScrolledSnapshotForAgent(label: String?) async throws -> ChromiumSnapshotArtifact {
+        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return try await captureScrolledSnapshot(label: trimmedLabel.isEmpty ? "agent-scroll" : trimmedLabel)
+    }
+
     func setAddressBarEditing(_ isEditing: Bool) {
         isEditingAddressBar = isEditing
         if !isEditing {
@@ -851,7 +920,7 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
     func captureSnapshot() {
         Task {
             do {
-                _ = try await captureSnapshot(label: "manual")
+                _ = try await captureScrolledSnapshot(label: "manual")
             } catch {
                 let message = (error as? ChromiumBrowserActionError)?.message ?? error.localizedDescription
                 appendLog("Snapshot failed: \(message)")
@@ -1139,7 +1208,8 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
             label: label,
             filePath: fileURL.path,
             url: state.urlString,
-            title: state.title
+            title: state.title,
+            recognizedText: nil
         )
         snapshots.insert(artifact, at: 0)
         if snapshots.count > 20 {
@@ -1147,6 +1217,178 @@ final class ChromiumBrowserController: NSObject, ObservableObject {
         }
         appendLog("Captured snapshot: \(fileURL.lastPathComponent)")
         return artifact
+    }
+
+    private func captureScrolledSnapshot(label: String) async throws -> ChromiumSnapshotArtifact {
+        let planJSON = try await evaluateJSONScript(ChromiumBrowserScripts.beginScrollCapture, label: "Begin scrolled snapshot capture")
+        let plan = try decode(ScrollCapturePlan.self, from: planJSON)
+
+        var segmentImages: [CGImage] = []
+        var recognizedSegments: [String] = []
+
+        defer {
+            Task { [weak self] in
+                guard let self else { return }
+                _ = try? await self.evaluateJSONScript(
+                    ChromiumBrowserScripts.endScrollCapture(restoring: plan.originalOffset),
+                    label: "End scrolled snapshot capture"
+                )
+            }
+        }
+
+        for offset in plan.offsets {
+            let positionJSON = try await evaluateJSONScript(
+                ChromiumBrowserScripts.setScrollCaptureOffset(offset),
+                label: "Set scrolled snapshot offset"
+            )
+            let position = try decode(ScrollCapturePosition.self, from: positionJSON)
+            try? await Task.sleep(nanoseconds: 250_000_000)
+
+            let pngData: Data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                browserView.capturePNGSnapshot { data, errorMessage in
+                    if let errorMessage {
+                        continuation.resume(throwing: ChromiumBrowserActionError(message: errorMessage))
+                        return
+                    }
+                    guard let data else {
+                        continuation.resume(throwing: ChromiumBrowserActionError(message: "No snapshot data was returned."))
+                        return
+                    }
+                    continuation.resume(returning: data)
+                }
+            }
+
+            guard let segment = croppedSnapshotImage(from: pngData, rect: position.viewportRect) else {
+                continue
+            }
+            segmentImages.append(segment)
+            if let recognized = recognizeText(in: segment), !recognized.isEmpty {
+                recognizedSegments.append(recognized)
+            }
+        }
+
+        guard !segmentImages.isEmpty else {
+            throw ChromiumBrowserActionError(message: "Failed to capture any scroll snapshot segments.")
+        }
+
+        let stitchedImage = stitchSnapshotSegments(segmentImages)
+        let pngData = try pngData(for: stitchedImage)
+
+        let fileManager = FileManager.default
+        let directory = AppPaths.defaultRoot()
+            .appendingPathComponent("logs", isDirectory: true)
+            .appendingPathComponent("chromium-snapshots", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sanitized = label
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fileURL = directory.appendingPathComponent("\(formatter.string(from: Date()))-\(sanitized)-scroll.png")
+        try pngData.write(to: fileURL, options: Data.WritingOptions.atomic)
+
+        let recognizedText = recognizedSegments
+            .flatMap { $0.components(separatedBy: .newlines) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .reduce(into: [String]()) { result, line in
+                guard !result.contains(line) else { return }
+                result.append(line)
+            }
+            .joined(separator: "\n")
+
+        let artifact = ChromiumSnapshotArtifact(
+            createdAt: Date(),
+            label: label,
+            filePath: fileURL.path,
+            url: state.urlString,
+            title: state.title,
+            recognizedText: recognizedText.isEmpty ? nil : recognizedText
+        )
+        snapshots.insert(artifact, at: 0)
+        if snapshots.count > 20 {
+            snapshots.removeLast(snapshots.count - 20)
+        }
+        appendLog("Captured scrolled snapshot: \(fileURL.lastPathComponent)")
+        return artifact
+    }
+
+    private func croppedSnapshotImage(from pngData: Data, rect: ScrollCaptureRect) -> CGImage? {
+        guard let image = NSImage(data: pngData) else { return nil }
+        var proposedRect = NSRect(origin: .zero, size: image.size)
+        guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
+            return nil
+        }
+
+        let bounds = browserView.bounds
+        let scaleX = CGFloat(cgImage.width) / max(bounds.width, 1)
+        let scaleY = CGFloat(cgImage.height) / max(bounds.height, 1)
+        let cropRect = CGRect(
+            x: max(0, CGFloat(rect.x) * scaleX),
+            y: max(0, CGFloat(cgImage.height) - ((CGFloat(rect.y) + CGFloat(rect.height)) * scaleY)),
+            width: min(CGFloat(cgImage.width), CGFloat(rect.width) * scaleX),
+            height: min(CGFloat(cgImage.height), CGFloat(rect.height) * scaleY)
+        ).integral
+
+        guard cropRect.width > 2, cropRect.height > 2,
+              let cropped = cgImage.cropping(to: cropRect) else {
+            return cgImage
+        }
+        return cropped
+    }
+
+    private func stitchSnapshotSegments(_ segments: [CGImage]) -> CGImage {
+        let width = segments.map(\.width).max() ?? 1
+        let height = segments.reduce(0) { $0 + $1.height }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        )!
+
+        context.setFillColor(NSColor.black.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+        var currentY = height
+        for segment in segments {
+            currentY -= segment.height
+            context.draw(segment, in: CGRect(x: 0, y: currentY, width: segment.width, height: segment.height))
+        }
+
+        return context.makeImage()!
+    }
+
+    private func pngData(for image: CGImage) throws -> Data {
+        let rep = NSBitmapImageRep(cgImage: image)
+        guard let data = rep.representation(using: .png, properties: [:]) else {
+            throw ChromiumBrowserActionError(message: "Failed to encode the scrolled snapshot.")
+        }
+        return data
+    }
+
+    private func recognizeText(in image: CGImage) -> String? {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        do {
+            try handler.perform([request])
+            let lines = (request.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard !lines.isEmpty else { return nil }
+            return lines.joined(separator: "\n")
+        } catch {
+            appendLog("Scrolled snapshot OCR failed: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     private func openURLAndWaitUntilReady(_ url: String) async throws {

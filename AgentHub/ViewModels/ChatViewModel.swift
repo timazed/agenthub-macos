@@ -13,13 +13,14 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var agentName = "Agent"
     @Published private(set) var agentProfilePictureURL: String?
 
-    private let chatSessionService: ChatSessionService
+    private let chatSessionService: ChatSessionServicing
     private let taskOrchestrator: TaskOrchestrator
     private let runtimeConfigStore: AppRuntimeConfigStore
     private let personaManager: PersonaManager
 
     private var streamTask: Task<Void, Never>?
     private var streamingMessageID: UUID?
+    private var didReceiveAssistantOutput = false
 
     var onTasksChanged: (() -> Void)?
     var onActivityChanged: (() -> Void)?
@@ -29,7 +30,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     init(
-        chatSessionService: ChatSessionService,
+        chatSessionService: ChatSessionServicing,
         taskOrchestrator: TaskOrchestrator,
         runtimeConfigStore: AppRuntimeConfigStore,
         personaManager: PersonaManager
@@ -106,6 +107,7 @@ final class ChatViewModel: ObservableObject {
         isBusy = true
         errorMessage = nil
         streamingMessageID = nil
+        didReceiveAssistantOutput = false
 
         let stream = chatSessionService.streamEvents()
         streamTask?.cancel()
@@ -117,7 +119,12 @@ final class ChatViewModel: ObservableObject {
 
         do {
             try await chatSessionService.sendUserMessage(text)
-            load()
+            if let streamTask {
+                await streamTask.value
+            }
+            if !didReceiveAssistantOutput {
+                load()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -129,13 +136,17 @@ final class ChatViewModel: ObservableObject {
     private func handle(_ event: ChatSessionEvent) async {
         switch event {
         case let .assistantDelta(line):
+            didReceiveAssistantOutput = true
             appendStreamingAssistantLine(line)
+        case let .assistantMessage(text):
+            didReceiveAssistantOutput = true
+            appendAssistantMessage(text)
         case let .stderr(line):
             debugLog("stderr \(line)")
         case let .proposal(proposal):
             pendingProposal = proposal
         case .completed:
-            break
+            streamingMessageID = nil
         case let .failed(message):
             debugLog("failed \(message)")
             errorMessage = message
@@ -158,6 +169,23 @@ final class ChatViewModel: ObservableObject {
         messages.append(
             Message(
                 id: messageID,
+                sessionId: UUID(),
+                role: .assistant,
+                text: trimmed,
+                source: .codexStdout,
+                createdAt: Date()
+            )
+        )
+    }
+
+    private func appendAssistantMessage(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        streamingMessageID = nil
+        messages.append(
+            Message(
+                id: UUID(),
                 sessionId: UUID(),
                 role: .assistant,
                 text: trimmed,

@@ -230,3 +230,84 @@ final class PersonaManager {
         return profile
     }
 }
+
+final class UserProfileManager {
+    private let paths: AppPaths
+    private let fileManager: FileManager
+
+    init(paths: AppPaths, fileManager: FileManager = .default) {
+        self.paths = paths
+        self.fileManager = fileManager
+    }
+
+    func loadProfile() -> UserProfile? {
+        if let profile = decodeProfile(at: paths.userProfileURL) {
+            return profile
+        }
+        return decodeProfile(at: paths.legacyUserProfileURL)
+    }
+
+    func loadContactProfile() -> PersonaContactProfile? {
+        guard let profile = loadProfile() else { return nil }
+        let name = profile.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitFirstName = profile.firstName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitLastName = profile.lastName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackNameParts = splitFullName(name)
+        let firstName = emptyToNil(explicitFirstName) ?? fallbackNameParts?.firstName
+        let lastName = emptyToNil(explicitLastName) ?? fallbackNameParts?.lastName
+        let email = profile.email?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let phoneNumber = profile.phoneNumber?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fullName = emptyToNil(name)
+            ?? [firstName, lastName]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard [fullName, firstName, lastName, email, phoneNumber].contains(where: {
+            guard let value = $0 else { return false }
+            return !value.isEmpty
+        }) else {
+            return nil
+        }
+
+        return PersonaContactProfile(
+            fullName: emptyToNil(fullName),
+            firstName: firstName,
+            lastName: lastName,
+            email: emptyToNil(email),
+            phoneNumber: emptyToNil(phoneNumber),
+            addressLine1: nil,
+            addressLine2: nil,
+            city: nil,
+            state: nil,
+            postalCode: nil,
+            country: nil
+        )
+    }
+
+    private func decodeProfile(at url: URL) -> UserProfile? {
+        guard fileManager.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(UserProfile.self, from: data)
+    }
+
+    private func emptyToNil(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private func splitFullName(_ fullName: String?) -> (firstName: String, lastName: String)? {
+        guard let fullName = emptyToNil(fullName) else { return nil }
+        let parts = fullName
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        guard parts.count >= 2 else { return nil }
+        return (parts.first ?? "", parts.dropFirst().joined(separator: " "))
+    }
+}

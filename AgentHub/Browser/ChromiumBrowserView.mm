@@ -231,9 +231,9 @@ static void AHDispatchToOwner(__weak AHChromiumBrowserView* owner,
   });
 }
 
-class AHChromiumApp : public CefApp {
+class AHChromiumBrowserApp : public CefApp {
  public:
-  AHChromiumApp() = default;
+  AHChromiumBrowserApp() = default;
 
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
     return browser_process_handler_;
@@ -264,8 +264,8 @@ class AHChromiumApp : public CefApp {
   CefRefPtr<BrowserProcessHandler> browser_process_handler_ =
       new BrowserProcessHandler();
 
-  IMPLEMENT_REFCOUNTING(AHChromiumApp);
-  DISALLOW_COPY_AND_ASSIGN(AHChromiumApp);
+  IMPLEMENT_REFCOUNTING(AHChromiumBrowserApp);
+  DISALLOW_COPY_AND_ASSIGN(AHChromiumBrowserApp);
 };
 
 class AHChromiumClient : public CefClient,
@@ -558,7 +558,7 @@ class AHChromiumDevToolsObserver : public CefDevToolsMessageObserver {
   CefString(&settings.root_cache_path) = AHUTF8String(rootCacheDirectory);
   CefString(&settings.cache_path) = AHUTF8String(cacheDirectory);
 
-  _app = new AHChromiumApp();
+  _app = new AHChromiumBrowserApp();
   NSLog(@"[AgentHub][ChromiumPrototype] Calling CefInitialize.");
   if (!CefInitialize(mainArgs, settings, _app, nullptr)) {
     _app = nullptr;
@@ -931,27 +931,38 @@ void AHChromiumShutdownRuntime(void) {
     inputContext = inputClientView.inputContext ?: self.inputContext ?: NSTextInputContext.currentInputContext;
   }
 
-  [inputContext activate];
-  if (@available(macOS 15.4, *)) {
-    [inputContext textInputClientDidUpdateSelection];
+  if (inputContext) {
+    [inputContext activate];
+    @try {
+      [inputContext invalidateCharacterCoordinates];
+    } @catch (NSException*) {
+      // Some Chromium text input clients do not fully support the native
+      // AppKit selection/geometry callbacks that invalidateCharacterCoordinates
+      // can walk through. Keep the field focused instead of crashing.
+    }
   }
-  [inputContext invalidateCharacterCoordinates];
 
-  if ([responder respondsToSelector:@selector(complete:)]) {
-    [(id)responder complete:nil];
+  BOOL canRequestCompletion = [responder respondsToSelector:@selector(complete:)]
+      && [responder conformsToProtocol:@protocol(NSTextInputClient)];
+  if (canRequestCompletion) {
+    @try {
+      [(id)responder complete:nil];
+    } @catch (NSException*) {
+      canRequestCompletion = NO;
+    }
   }
 
   NSString* responderClass = responder ? NSStringFromClass([responder class]) : @"";
   NSString* inputClientClass = inputClientView ? NSStringFromClass([inputClientView class]) : @"";
-  BOOL focused = responder != nil;
-  BOOL hasInputContext = inputContext != nil;
+  BOOL focused = responder != nil && inputClientView != nil && responder == inputClientView;
+  BOOL hasInputContext = inputContext != nil && focused;
 
   return @{
     @"focused" : @(focused),
     @"responderClass" : responderClass,
     @"inputClientClass" : inputClientClass,
     @"hasInputContext" : @(hasInputContext),
-    @"usedCompletion" : @([responder respondsToSelector:@selector(complete:)])
+    @"usedCompletion" : @(canRequestCompletion)
   };
 }
 

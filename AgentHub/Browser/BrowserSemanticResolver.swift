@@ -8,6 +8,12 @@ struct BrowserSemanticResolution: Equatable {
 }
 
 enum BrowserSemanticResolver {
+    private enum SelectOptionIntent {
+        case date
+        case time
+        case guestCount
+    }
+
     nonisolated static func resolve(_ command: BrowserAgentCommand, inspection: ChromiumInspection?) -> BrowserSemanticResolution {
         guard let inspection else {
             return BrowserSemanticResolution(
@@ -19,8 +25,17 @@ enum BrowserSemanticResolver {
         }
 
         switch command.action {
-        case .typeText, .selectOption:
+        case .typeText:
             if let target = bestFieldTarget(for: command, inspection: inspection) {
+                return BrowserSemanticResolution(
+                    selector: target.selector,
+                    label: command.label ?? target.label,
+                    transactionalKind: target.transactionalKind,
+                    target: target
+                )
+            }
+        case .selectOption:
+            if let target = bestSelectOptionTarget(for: command, inspection: inspection) {
                 return BrowserSemanticResolution(
                     selector: target.selector,
                     label: command.label ?? target.label,
@@ -118,6 +133,51 @@ enum BrowserSemanticResolver {
             fallbackText: nil,
             preferredKinds: ["field", "autocomplete", "date_picker"],
             preferredPurposes: ["location", "search", "guest_count", "date"],
+            selectorHint: command.selector
+        )
+    }
+
+    nonisolated private static func bestSelectOptionTarget(for command: BrowserAgentCommand, inspection: ChromiumInspection) -> ChromiumSemanticTarget? {
+        let intent = selectOptionIntent(for: command)
+        let preferredKinds: [String]
+        let preferredPurposes: [String]
+        let candidateTargets: [ChromiumSemanticTarget]
+
+        switch intent {
+        case .date:
+            preferredKinds = ["date_picker", "field"]
+            preferredPurposes = ["date"]
+            candidateTargets = inspection.semanticTargets.filter { target in
+                targetMatchesSelectIntent(target, intent: .date)
+            }
+        case .time:
+            preferredKinds = ["field", "slot_option", "group_option", "action"]
+            preferredPurposes = ["time"]
+            candidateTargets = inspection.semanticTargets.filter { target in
+                targetMatchesSelectIntent(target, intent: .time)
+            }
+        case .guestCount:
+            preferredKinds = ["field", "group_option"]
+            preferredPurposes = ["guest_count"]
+            candidateTargets = inspection.semanticTargets.filter { target in
+                targetMatchesSelectIntent(target, intent: .guestCount)
+            }
+        case nil:
+            preferredKinds = ["field", "autocomplete", "date_picker", "group_option", "slot_option"]
+            preferredPurposes = ["location", "search", "guest_count", "date", "time"]
+            candidateTargets = inspection.semanticTargets
+        }
+
+        guard !candidateTargets.isEmpty else {
+            return nil
+        }
+
+        return bestTarget(
+            in: candidateTargets,
+            matching: command.label,
+            fallbackText: command.text,
+            preferredKinds: preferredKinds,
+            preferredPurposes: preferredPurposes,
             selectorHint: command.selector
         )
     }
@@ -321,6 +381,101 @@ enum BrowserSemanticResolver {
             .lowercased()
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func normalizedComparison(_ value: String?) -> String {
+        normalize(value)
+            .replacingOccurrences(of: ".", with: "")
+            .replacingOccurrences(of: ",", with: "")
+            .replacingOccurrences(of: "-", with: " ")
+    }
+
+    nonisolated private static func selectOptionIntent(for command: BrowserAgentCommand) -> SelectOptionIntent? {
+        let combined = normalizedComparison([
+            command.selector,
+            command.label,
+            command.text
+        ]
+        .compactMap { $0 }
+        .joined(separator: " "))
+
+        guard !combined.isEmpty else { return nil }
+        if isDateIntent(combined) {
+            return .date
+        }
+        if isTimeIntent(combined) {
+            return .time
+        }
+        if isGuestCountIntent(combined) {
+            return .guestCount
+        }
+        return nil
+    }
+
+    nonisolated private static func targetMatchesSelectIntent(
+        _ target: ChromiumSemanticTarget,
+        intent: SelectOptionIntent
+    ) -> Bool {
+        let purpose = normalizedComparison(target.purpose)
+        let selector = normalizedComparison(target.selector)
+        let label = normalizedComparison(target.label)
+        let group = normalizedComparison(target.groupLabel)
+        let descriptor = [purpose, selector, label, group].joined(separator: " ")
+
+        switch intent {
+        case .date:
+            return target.kind == "date_picker"
+                || purpose == "date"
+                || isDateIntent(descriptor)
+        case .time:
+            return purpose == "time"
+                || target.kind == "slot_option"
+                || isTimeIntent(descriptor)
+        case .guestCount:
+            return purpose == "guest_count"
+                || isGuestCountIntent(descriptor)
+        }
+    }
+
+    nonisolated private static func isDateIntent(_ text: String) -> Bool {
+        text.contains("date")
+            || text.contains("daypicker")
+            || text.contains("calendar")
+            || text.contains("check in")
+            || text.contains("checkout")
+            || text.contains("arrival")
+            || text.contains("departure")
+            || text.contains("march")
+            || text.contains("april")
+            || text.contains("may ")
+            || text.contains("june")
+            || text.contains("july")
+            || text.contains("august")
+            || text.contains("september")
+            || text.contains("october")
+            || text.contains("november")
+            || text.contains("december")
+            || text.contains("january")
+            || text.contains("february")
+            || text.contains("today")
+            || text.contains("tomorrow")
+    }
+
+    nonisolated private static func isTimeIntent(_ text: String) -> Bool {
+        if text.contains("time") || text.contains("slot") || text.contains("seating") {
+            return true
+        }
+        return text.range(of: #"\b\d{1,2}(:\d{2})?\s?(am|pm)\b"#, options: .regularExpression) != nil
+    }
+
+    nonisolated private static func isGuestCountIntent(_ text: String) -> Bool {
+        text.contains("guest")
+            || text.contains("party")
+            || text.contains("people")
+            || text.contains("traveler")
+            || text.contains("traveller")
+            || text.contains("passenger")
+            || text.contains("room")
     }
 
     nonisolated private static func isAuthChoiceLabel(_ value: String?) -> Bool {

@@ -2,10 +2,18 @@ import Foundation
 
 enum ChatSessionEvent {
     case assistantDelta(String)
+    case assistantMessage(String)
     case stderr(String)
     case proposal(TaskProposal)
     case completed
     case failed(String)
+}
+
+protocol ChatSessionServicing {
+    func loadMessages() throws -> [Message]
+    func streamEvents() -> AsyncStream<ChatSessionEvent>
+    func sendUserMessage(_ text: String) async throws
+    func cancelCurrentRun() throws
 }
 
 struct ChatBrowserIntent: Equatable {
@@ -346,6 +354,22 @@ struct BrowserSessionFollowUpData: Equatable {
     let verificationCode: String?
     let consentDecision: Bool?
 
+    static let empty = BrowserSessionFollowUpData(
+        phoneNumber: nil,
+        email: nil,
+        fullName: nil,
+        firstName: nil,
+        lastName: nil,
+        addressLine1: nil,
+        addressLine2: nil,
+        city: nil,
+        state: nil,
+        postalCode: nil,
+        country: nil,
+        verificationCode: nil,
+        consentDecision: nil
+    )
+
     func merged(with newer: BrowserSessionFollowUpData?) -> BrowserSessionFollowUpData {
         guard let newer else { return self }
         return BrowserSessionFollowUpData(
@@ -379,6 +403,58 @@ struct BrowserSessionFollowUpData: Equatable {
             && country == nil
             && verificationCode == nil
             && consentDecision == nil
+    }
+}
+
+struct BrowserApprovedContinuationContext: Equatable {
+    let intent: GenericBrowserChatIntent
+    let command: BrowserAgentCommand
+    let approvalLabel: String
+}
+
+enum BrowserApprovedContinuationGuard {
+    nonisolated static func matches(
+        _ approved: BrowserApprovedContinuationContext?,
+        command: BrowserAgentCommand?,
+        inspection: ChromiumInspection?
+    ) -> Bool {
+        guard let approved, let command else { return false }
+        if let inspection,
+           let workflow = BrowserPageAnalyzer.workflow(for: inspection),
+           (!workflow.requirements.isEmpty || !workflow.readyToContinue) {
+            return false
+        }
+
+        let approvedSelector = normalized(approved.command.selector)
+        let candidateSelector = normalized(command.selector)
+        if let approvedSelector, let candidateSelector, approvedSelector == candidateSelector {
+            return true
+        }
+
+        let approvedLabel = normalized(approved.approvalLabel)
+        let candidateLabel = normalized(command.label ?? command.text ?? command.selector)
+        if let approvedLabel, let candidateLabel, approvedLabel == candidateLabel {
+            return true
+        }
+
+        if let boundary = inspection.flatMap(BrowserTransactionalGuard.highConfidenceFinalBoundary(in:)) {
+            let boundarySelector = normalized(boundary.selector)
+            if let approvedSelector, let boundarySelector, approvedSelector == boundarySelector {
+                return true
+            }
+            let boundaryLabel = normalized(boundary.label)
+            if let approvedLabel, let boundaryLabel, approvedLabel == boundaryLabel {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    nonisolated private static func normalized(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed.lowercased()
     }
 }
 
@@ -620,7 +696,7 @@ enum BrowserSessionFollowUpParser {
     }
 }
 
-final class ChatSessionService {
+final class ChatSessionService: ChatSessionServicing {
     private struct PendingBrowserApprovalContext {
         let sessionID: UUID
         let intent: GenericBrowserChatIntent
@@ -634,6 +710,7 @@ final class ChatSessionService {
 
     private struct PendingBrowserInputContext {
         let sessionID: UUID
+        let personaID: String
         let intent: GenericBrowserChatIntent
         let latestInspection: ChromiumInspection?
         let inspectionHistory: [ChromiumInspection]
@@ -641,6 +718,7 @@ final class ChatSessionService {
         let persistMessages: Bool
         let scenarioMetadata: BrowserScenarioMetadata?
         let knownFollowUpData: BrowserSessionFollowUpData
+        let approvedContinuation: BrowserApprovedContinuationContext?
     }
 
     private struct BrowserLoopSeed {
@@ -650,8 +728,17 @@ final class ChatSessionService {
         let lastResultSummary: String
     }
 
+    private struct BrowserAutonomousContinuationResult {
+        let inspection: ChromiumInspection?
+        let inspectionHistory: [ChromiumInspection]
+        let recentHistory: [String]
+        let statusLines: [String]
+        let requiredInput: BrowserPageRequirement?
+    }
+
     private let sessionStore: AssistantSessionStore
     private let personaManager: PersonaManager
+    private let userProfileManager: UserProfileManager
     private let runtime: CodexRuntime
     private let paths: AppPaths
     private let runtimeConfigStore: AppRuntimeConfigStore
@@ -663,10 +750,13 @@ final class ChatSessionService {
     private nonisolated(unsafe) var pendingBrowserApproval: PendingBrowserApprovalContext?
     private let pendingInputLock = NSLock()
     private nonisolated(unsafe) var pendingBrowserInput: PendingBrowserInputContext?
+    private let pendingInputMonitorLock = NSLock()
+    private nonisolated(unsafe) var pendingBrowserInputMonitor: Task<Void, Never>?
 
     init(
         sessionStore: AssistantSessionStore,
         personaManager: PersonaManager,
+        userProfileManager: UserProfileManager,
         runtime: CodexRuntime,
         paths: AppPaths,
         runtimeConfigStore: AppRuntimeConfigStore,
@@ -674,6 +764,7 @@ final class ChatSessionService {
     ) {
         self.sessionStore = sessionStore
         self.personaManager = personaManager
+        self.userProfileManager = userProfileManager
         self.runtime = runtime
         self.paths = paths
         self.runtimeConfigStore = runtimeConfigStore
@@ -749,8 +840,7 @@ final class ChatSessionService {
             }
 
             let reminder = approvalPrompt(for: pendingApproval.approvalLabel, inspection: pendingApproval.latestInspection)
-            try persistAssistantMessage(reminder, session: session, shouldStore: true)
-            emit(.assistantDelta(reminder))
+            try emitAssistantMessage(reminder, session: session, shouldStore: true)
             session.updatedAt = Date()
             try sessionStore.save(session)
             emit(.completed)
@@ -803,6 +893,7 @@ final class ChatSessionService {
         let runtimeStream = runtime.streamEvents()
 
         var assistantText = ""
+        var streamedDisplayText = ""
         var stderrText = ""
 
         let bridgeTask = Task {
@@ -810,7 +901,10 @@ final class ChatSessionService {
                 switch event {
                 case let .stdoutLine(line):
                     assistantText += assistantText.isEmpty ? line : "\n\(line)"
-                    let sanitizedLine = BrowserAgentResponseParser.parse(line).displayText
+                    let sanitizedLine = nextSanitizedAssistantDelta(
+                        from: assistantText,
+                        previousDisplayText: &streamedDisplayText
+                    )
                     if !sanitizedLine.isEmpty {
                         emit(.assistantDelta(sanitizedLine))
                     }
@@ -886,7 +980,7 @@ final class ChatSessionService {
             category: scenario.category
         )
 
-        emit(.assistantDelta("Running browser smoke scenario \(scenario.id) (\(scenario.category))."))
+        emit(.assistantMessage("Running browser smoke scenario \(scenario.id) (\(scenario.category))."))
 
         if let browserIntent = ChatBrowserIntent.parse(scenario.goalText) {
             let result = try await handleGenericBrowserIntent(
@@ -946,7 +1040,6 @@ final class ChatSessionService {
         scenarioMetadata: BrowserScenarioMetadata? = nil
     ) async throws -> BrowserScenarioRunSummary {
         let browserController = await MainActor.run { browserControllerProvider() }
-        emit(.assistantDelta("Using the embedded Chromium browser for this web task."))
 
         let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
         let launchConfig = CodexLaunchConfig(
@@ -1005,9 +1098,22 @@ final class ChatSessionService {
         if let verificationCode = followUp.verificationCode {
             do {
                 _ = try await browserController.typeVerificationCodeForAgent(verificationCode)
-                updatedInspection = try await browserController.inspectCurrentPageForAgent()
+                updatedInspection = try await settleAndInspectAfterVerificationInput(
+                    controller: browserController,
+                    fallback: try await browserController.inspectCurrentPageForAgent()
+                ) ?? updatedInspection
                 statusLines.append("Entered the verification code in the current browser page.")
                 handled = true
+                if let advanced = try await advanceVerificationStepIfPossible(
+                    inspection: updatedInspection,
+                    controller: browserController
+                ) {
+                    updatedInspection = try await settleAndInspectAfterVerificationInput(
+                        controller: browserController,
+                        fallback: advanced.inspection
+                    ) ?? advanced.inspection
+                    statusLines.append(advanced.summary)
+                }
             } catch let error as ChromiumBrowserActionError {
                 if !handled && error.message.lowercased().contains("no visible verification field found") {
                     return false
@@ -1041,15 +1147,23 @@ final class ChatSessionService {
             let prefix = statusLines.joined(separator: " ")
             let prompt = approvalPrompt(for: approvalLabel, inspection: updatedInspection)
             let combined = prefix.isEmpty ? prompt : "\(prefix) \(prompt)"
-            try persistAssistantMessage(combined, session: session, shouldStore: true)
-            emit(.assistantDelta(combined))
+            try emitAssistantMessage(combined, session: session, shouldStore: true)
             return true
         }
 
-        let summary = statusLines.joined(separator: " ")
-        guard !summary.isEmpty else { return false }
-        try persistAssistantMessage(summary, session: session, shouldStore: true)
-        emit(.assistantDelta(summary))
+        guard handled else { return false }
+        if let verificationPrompt = await verificationFollowUpPromptIfNeeded(
+            inspection: updatedInspection,
+            controller: browserController
+        ) {
+            try emitAssistantMessage(verificationPrompt, session: session, shouldStore: true)
+            return true
+        }
+        let message = await userFacingBrowserStateMessage(
+            inspection: updatedInspection,
+            controller: browserController
+        ) ?? "I updated the active browser page and I’m continuing in the same session."
+        try emitAssistantMessage(message, session: session, shouldStore: true)
         return true
     }
 
@@ -1066,10 +1180,23 @@ final class ChatSessionService {
             return false
         }
 
-        _ = try? await browserController.prepareVerificationCodeAutofillForAgent()
-        let reminder = "The current browser page is waiting for a verification code. I focused the field for native one-time-code autofill. If macOS offers the code suggestion, you can use it there, or send me the digits and I’ll enter them in the active CEF page."
-        try persistAssistantMessage(reminder, session: session, shouldStore: true)
-        emit(.assistantDelta(reminder))
+        let reminder = browserInputPrompt(
+            for: BrowserPageRequirement(
+                id: "active-browser-verification-code",
+                kind: "verification_code",
+                label: "Verification code",
+                selector: nil,
+                controlType: "one-time-code",
+                fillAction: "type_text",
+                options: [],
+                prompt: "I still need the verification code for this page.",
+                isSensitive: true,
+                priority: 145,
+                validationMessage: "The current page is waiting on a verification step."
+            ),
+            inspection: inspection
+        )
+        try emitAssistantMessage(reminder, session: session, shouldStore: true)
         return true
     }
 
@@ -1108,8 +1235,7 @@ final class ChatSessionService {
                 recentHistory: pending.recentHistory,
                 finalSummary: finalText
             )
-            try persistAssistantMessage(finalText, session: session, shouldStore: pending.persistMessages)
-            emit(.assistantDelta(finalText))
+            try emitAssistantMessage(finalText, session: session, shouldStore: pending.persistMessages)
             return BrowserScenarioRunSummary(
                 scenarioID: "ad_hoc",
                 category: BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
@@ -1118,66 +1244,6 @@ final class ChatSessionService {
             )
         }
 
-        let inspectionForRequirements = currentInspection ?? pending.latestInspection
-        let missingRequirement = primaryUserRequirement(in: inspectionForRequirements)
-        if let missingRequirement,
-           followUpValue(
-                for: missingRequirement,
-                followUp: BrowserSessionFollowUpData(
-                    phoneNumber: response.phoneNumber,
-                    email: response.email,
-                    fullName: response.fullName,
-                    firstName: response.firstName,
-                    lastName: response.lastName,
-                    addressLine1: response.addressLine1,
-                    addressLine2: response.addressLine2,
-                    city: response.city,
-                    state: response.state,
-                    postalCode: response.postalCode,
-                    country: response.country,
-                    verificationCode: response.verificationCode,
-                    consentDecision: response.consentDecision
-                )
-           ) == nil {
-            setPendingBrowserApproval(
-                PendingBrowserApprovalContext(
-                    sessionID: pending.sessionID,
-                    intent: pending.intent,
-                    command: pending.command,
-                    approvalLabel: pending.approvalLabel,
-                    latestInspection: inspectionForRequirements,
-                    inspectionHistory: pending.inspectionHistory,
-                    recentHistory: pending.recentHistory,
-                    persistMessages: pending.persistMessages
-                )
-            )
-            let reminder = "I still need more information before I can complete \"\(pending.approvalLabel)\". \(missingRequirement.prompt) Reply `yes` and include it, or `no` to cancel."
-            try persistAssistantMessage(reminder, session: session, shouldStore: pending.persistMessages)
-            emit(.assistantDelta(reminder))
-            return BrowserScenarioRunSummary(
-                scenarioID: "ad_hoc",
-                category: BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
-                outcome: "awaiting_user_approval",
-                finalSummary: reminder
-            )
-        }
-
-        clearPendingBrowserApproval(for: pending.sessionID)
-        emit(.assistantDelta("Approval received. Completing the final confirmation step now."))
-
-        let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
-        let launchConfig = CodexLaunchConfig(
-            agentHomeDirectory: persona.directoryPath,
-            codexHome: paths.root.path,
-            runtimeMode: .chatOnly,
-            externalDirectory: nil,
-            enableSearch: false,
-            model: runtimeConfig.model,
-            reasoningEffort: runtimeConfig.reasoningEffort
-        )
-
-        var inspectionHistory = pending.inspectionHistory
-        var recentHistory = pending.recentHistory
         let approvalFollowUp = BrowserSessionFollowUpData(
             phoneNumber: response.phoneNumber,
             email: response.email,
@@ -1193,9 +1259,68 @@ final class ChatSessionService {
             verificationCode: response.verificationCode,
             consentDecision: response.consentDecision
         )
+        let approvedIntent = GenericBrowserChatIntent(
+            goalText: pending.intent.goalText,
+            initialURL: pending.intent.initialURL,
+            goalFocusTerms: pending.intent.goalFocusTerms,
+            providedData: (pending.intent.providedData ?? .empty).merged(with: approvalFollowUp)
+        )
+        let knownApprovalData = mergedKnownFollowUpData(
+            personaID: session.personaId,
+            providedData: approvedIntent.providedData
+        ) ?? .empty
+
+        let inspectionForRequirements = currentInspection ?? pending.latestInspection
+        let missingRequirement = primaryUserRequirement(in: inspectionForRequirements)
+        if let missingRequirement,
+           followUpValue(
+                for: missingRequirement,
+                followUp: knownApprovalData
+           ) == nil {
+            setPendingBrowserApproval(
+                PendingBrowserApprovalContext(
+                    sessionID: pending.sessionID,
+                    intent: pending.intent,
+                    command: pending.command,
+                    approvalLabel: pending.approvalLabel,
+                    latestInspection: inspectionForRequirements,
+                    inspectionHistory: pending.inspectionHistory,
+                    recentHistory: pending.recentHistory,
+                    persistMessages: pending.persistMessages
+                )
+            )
+            let reminder = "I still need more information before I can complete \"\(pending.approvalLabel)\". \(missingRequirement.prompt) Reply `yes` and include it, or `no` to cancel."
+            try emitAssistantMessage(reminder, session: session, shouldStore: pending.persistMessages)
+            return BrowserScenarioRunSummary(
+                scenarioID: "ad_hoc",
+                category: BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
+                outcome: "awaiting_user_approval",
+                finalSummary: reminder
+            )
+        }
+
+        clearPendingBrowserApproval(for: pending.sessionID)
+        let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
+        let launchConfig = CodexLaunchConfig(
+            agentHomeDirectory: persona.directoryPath,
+            codexHome: paths.root.path,
+            runtimeMode: .chatOnly,
+            externalDirectory: nil,
+            enableSearch: false,
+            model: runtimeConfig.model,
+            reasoningEffort: runtimeConfig.reasoningEffort
+        )
+
+        var inspectionHistory = pending.inspectionHistory
+        var recentHistory = pending.recentHistory
+        let approvedContinuation = BrowserApprovedContinuationContext(
+            intent: approvedIntent,
+            command: pending.command,
+            approvalLabel: pending.approvalLabel
+        )
         let applicableRequirements = pageRequirements(for: inspectionForRequirements)
         for requirement in applicableRequirements {
-            guard let value = followUpValue(for: requirement, followUp: approvalFollowUp) else { continue }
+            guard let value = followUpValue(for: requirement, followUp: knownApprovalData) else { continue }
             try await applyRequirement(requirement, value: value, controller: browserController)
             let refreshedInspection = try await browserController.inspectCurrentPageForAgent()
             inspectionHistory.append(refreshedInspection)
@@ -1208,36 +1333,165 @@ final class ChatSessionService {
             }
         }
 
-        let execution = try await executePendingApprovedBrowserCommand(
-            pending.command,
-            intent: pending.intent,
-            inspection: inspectionHistory.last ?? currentInspection ?? pending.latestInspection,
-            controller: browserController
-        )
-        if let inspection = execution.inspection {
+        let latestApprovalInspection = try await browserController.inspectCurrentPageForAgent()
+        inspectionHistory.append(latestApprovalInspection)
+        if inspectionHistory.count > 20 {
+            inspectionHistory.removeFirst(inspectionHistory.count - 20)
+        }
+
+        let execution: BrowserAgentExecutionResult?
+        if BrowserApprovedContinuationGuard.matches(
+            approvedContinuation,
+            command: pending.command,
+            inspection: latestApprovalInspection
+        ) {
+            execution = try await executePendingApprovedBrowserCommand(
+                pending.command,
+                intent: approvedIntent,
+                inspection: latestApprovalInspection,
+                controller: browserController
+            )
+        } else {
+            execution = nil
+            recentHistory.append("Skipped the stale approved final step because the page now needs more input before it can continue.")
+            if recentHistory.count > 6 {
+                recentHistory.removeFirst(recentHistory.count - 6)
+            }
+        }
+
+        var postApprovalInspection: ChromiumInspection? = execution?.inspection ?? latestApprovalInspection
+        if let execution, let inspection = execution.inspection {
             inspectionHistory.append(inspection)
             if inspectionHistory.count > 20 {
                 inspectionHistory.removeFirst(inspectionHistory.count - 20)
             }
+            recentHistory.append("Approved final step: \(pending.command.action.rawValue) -> \(execution.summary)")
+            if recentHistory.count > 6 {
+                recentHistory.removeFirst(recentHistory.count - 6)
+            }
         }
-        recentHistory.append("Approved final step: \(pending.command.action.rawValue) -> \(execution.summary)")
-        if recentHistory.count > 6 {
-            recentHistory.removeFirst(recentHistory.count - 6)
+
+        postApprovalInspection = try await settleAndInspectAfterApprovedAction(
+            controller: browserController,
+            fallback: postApprovalInspection ?? inspectionHistory.last ?? inspectionForRequirements,
+            approvedContinuation: approvedContinuation
+        )
+        if let postApprovalInspection {
+            inspectionHistory.append(postApprovalInspection)
+            if inspectionHistory.count > 20 {
+                inspectionHistory.removeFirst(inspectionHistory.count - 20)
+            }
+        }
+
+        let knownFollowUpData = knownApprovalData
+        let continuation = try await continueBrowserAutonomouslyUntilBlocked(
+            inspection: postApprovalInspection,
+            personaID: session.personaId,
+            knownData: knownFollowUpData,
+            controller: browserController,
+            inspectionHistory: inspectionHistory,
+            recentHistory: recentHistory
+        )
+        postApprovalInspection = continuation.inspection
+        inspectionHistory = continuation.inspectionHistory
+        recentHistory = continuation.recentHistory
+        if let requirement = continuation.requiredInput,
+           followUpValue(for: requirement, followUp: knownFollowUpData) == nil {
+            let prompt = await promptForRequiredBrowserInput(
+                requirement,
+                inspection: postApprovalInspection,
+                controller: browserController
+            )
+            setPendingBrowserInput(
+                PendingBrowserInputContext(
+                    sessionID: pending.sessionID,
+                    personaID: session.personaId,
+                    intent: approvedIntent,
+                    latestInspection: postApprovalInspection,
+                    inspectionHistory: inspectionHistory,
+                    recentHistory: recentHistory,
+                    persistMessages: pending.persistMessages,
+                    scenarioMetadata: nil,
+                    knownFollowUpData: knownFollowUpData,
+                    approvedContinuation: approvedContinuation
+                )
+            )
+            try await persistBrowserRunArtifacts(
+                outcome: "awaiting_user_input",
+                goalText: approvedIntent.goalText,
+                initialURL: approvedIntent.initialURL,
+                session: session,
+                controller: browserController,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                finalSummary: prompt
+            )
+            try emitAssistantMessage(prompt, session: session, shouldStore: pending.persistMessages)
+            return BrowserScenarioRunSummary(
+                scenarioID: "ad_hoc",
+                category: BrowserScenarioClassifier.category(forGoalText: approvedIntent.goalText, initialURL: approvedIntent.initialURL),
+                outcome: "awaiting_user_input",
+                finalSummary: prompt
+            )
+        }
+
+        if execution != nil,
+           let requirement = BrowserPageAnalyzer.followUpRequirementAfterApprovedFinalAction(
+                currentInspection: postApprovalInspection,
+                priorInspection: latestApprovalInspection
+           ) {
+            let prompt = await promptForRequiredBrowserInput(
+                requirement,
+                inspection: postApprovalInspection,
+                controller: browserController
+            )
+            setPendingBrowserInput(
+                PendingBrowserInputContext(
+                    sessionID: pending.sessionID,
+                    personaID: session.personaId,
+                    intent: approvedIntent,
+                    latestInspection: postApprovalInspection,
+                    inspectionHistory: inspectionHistory,
+                    recentHistory: recentHistory,
+                    persistMessages: pending.persistMessages,
+                    scenarioMetadata: nil,
+                    knownFollowUpData: knownFollowUpData,
+                    approvedContinuation: approvedContinuation
+                )
+            )
+            try await persistBrowserRunArtifacts(
+                outcome: "awaiting_user_input",
+                goalText: approvedIntent.goalText,
+                initialURL: approvedIntent.initialURL,
+                session: session,
+                controller: browserController,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                finalSummary: prompt
+            )
+            try emitAssistantMessage(prompt, session: session, shouldStore: pending.persistMessages)
+            return BrowserScenarioRunSummary(
+                scenarioID: "ad_hoc",
+                category: BrowserScenarioClassifier.category(forGoalText: approvedIntent.goalText, initialURL: approvedIntent.initialURL),
+                outcome: "awaiting_user_input",
+                finalSummary: prompt
+            )
         }
 
         return try await runGenericBrowserLoop(
-            pending.intent,
+            approvedIntent,
             session: &session,
             controller: browserController,
             launchConfig: launchConfig,
             persistMessages: pending.persistMessages,
             scenarioMetadata: nil,
             seed: BrowserLoopSeed(
-                latestInspection: execution.inspection,
+                latestInspection: postApprovalInspection,
                 inspectionHistory: inspectionHistory,
                 recentHistory: recentHistory,
-                lastResultSummary: execution.summary
-            )
+                lastResultSummary: execution?.summary ?? "Approval was received, but the page still required more input before any final confirmation could continue."
+            ),
+            approvedContinuation: approvedContinuation
         )
     }
 
@@ -1245,7 +1499,82 @@ final class ChatSessionService {
         if let requirement = primaryUserRequirement(in: inspection) {
             return "I’m at the final confirmation step for \"\(approvalLabel)\". \(requirement.prompt) Reply `yes` and include it, or `no` to cancel."
         }
+        if BrowserPageAnalyzer.finalBoundaryMayTriggerVerification(for: inspection) {
+            return "I’m at the approval boundary for \"\(approvalLabel)\". Reply `yes` to continue. This action may immediately open a verification step, and I’ll pause again if the site asks for a code."
+        }
         return "I’m at the final confirmation step for \"\(approvalLabel)\". Reply `yes` to complete it or `no` to cancel."
+    }
+
+    private func settleAndInspectAfterApprovedAction(
+        controller: ChromiumBrowserController,
+        fallback: ChromiumInspection?,
+        approvedContinuation: BrowserApprovedContinuationContext
+    ) async throws -> ChromiumInspection? {
+        var latestInspection = fallback
+        if latestInspection == nil {
+            latestInspection = try? await controller.inspectCurrentPageForAgent()
+        }
+
+        for attempt in 0..<6 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            do {
+                _ = try await controller.waitForSettleForAgent(timeout: 2.5)
+            } catch {
+                // Keep polling inspection even if settle times out.
+            }
+
+            guard let refreshedInspection = try? await controller.inspectCurrentPageForAgent() else {
+                continue
+            }
+            latestInspection = refreshedInspection
+
+            if nextPromptableRequirement(in: refreshedInspection) != nil {
+                break
+            }
+            if let workflow = BrowserPageAnalyzer.workflow(for: refreshedInspection),
+               workflow.hasSuccessSignal || workflow.hasFailureSignal || workflow.stage == "verification" {
+                break
+            }
+            if !BrowserApprovedContinuationGuard.matches(
+                approvedContinuation,
+                command: pendingApprovalCommand(from: refreshedInspection),
+                inspection: refreshedInspection
+            ) {
+                break
+            }
+        }
+
+        if let latestInspection,
+           BrowserPageAnalyzer.finalBoundaryMayTriggerVerification(for: fallback ?? latestInspection),
+           nextPromptableRequirement(in: latestInspection) == nil,
+           let visuallyAugmented = try? await visuallyAugmentedInspectionAfterApprovedAction(
+                latestInspection,
+                fallback: fallback,
+                controller: controller
+           ) {
+            return visuallyAugmented
+        }
+
+        return latestInspection
+    }
+
+    private func visuallyAugmentedInspectionAfterApprovedAction(
+        _ inspection: ChromiumInspection,
+        fallback: ChromiumInspection?,
+        controller: ChromiumBrowserController
+    ) async throws -> ChromiumInspection {
+        let artifact = try await controller.captureScrolledSnapshotForAgent(label: "approved-final")
+        guard let recognizedText = artifact.recognizedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !recognizedText.isEmpty else {
+            return inspection
+        }
+        return BrowserPageAnalyzer.augmentInspection(
+            inspection,
+            withVisualRecognitionText: recognizedText,
+            fallback: fallback
+        )
     }
 
     private func handlePendingBrowserInputResponse(
@@ -1272,8 +1601,7 @@ final class ChatSessionService {
                 finalSummary: finalText,
                 scenarioMetadata: pending.scenarioMetadata
             )
-            try persistAssistantMessage(finalText, session: session, shouldStore: pending.persistMessages)
-            emit(.assistantDelta(finalText))
+            try emitAssistantMessage(finalText, session: session, shouldStore: pending.persistMessages)
             return BrowserScenarioRunSummary(
                 scenarioID: pending.scenarioMetadata?.id ?? "ad_hoc",
                 category: pending.scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
@@ -1287,6 +1615,23 @@ final class ChatSessionService {
         var inspectionHistory = pending.inspectionHistory
         var recentHistory = pending.recentHistory
         let combinedData = pending.knownFollowUpData.merged(with: followUp)
+        var verificationCodeWasApplied = false
+        var preserveVerificationContext = shouldPreserveVerificationContext(
+            currentInspection: latestInspection,
+            pendingInspection: pending.latestInspection
+        )
+
+        if followUp?.verificationCode != nil || shouldPrioritizeVerificationOnly(in: pending.latestInspection) {
+            latestInspection = await refreshVerificationInspectionIfNeeded(
+                currentInspection: latestInspection,
+                fallback: pending.latestInspection,
+                controller: browserController
+            )
+            preserveVerificationContext = shouldPreserveVerificationContext(
+                currentInspection: latestInspection,
+                pendingInspection: pending.latestInspection
+            )
+        }
 
         if followUp?.consentDecision == false,
            nextPromptableRequirement(in: latestInspection)?.kind == "consent" {
@@ -1303,8 +1648,7 @@ final class ChatSessionService {
                 finalSummary: finalText,
                 scenarioMetadata: pending.scenarioMetadata
             )
-            try persistAssistantMessage(finalText, session: session, shouldStore: pending.persistMessages)
-            emit(.assistantDelta(finalText))
+            try emitAssistantMessage(finalText, session: session, shouldStore: pending.persistMessages)
             return BrowserScenarioRunSummary(
                 scenarioID: pending.scenarioMetadata?.id ?? "ad_hoc",
                 category: pending.scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
@@ -1313,67 +1657,195 @@ final class ChatSessionService {
             )
         }
 
-        if let applied = try await applyFollowUpDataToBrowser(
+        do {
+            if let applied = try await applyFollowUpDataToBrowser(
+                    inspection: latestInspection,
+                    followUp: combinedData,
+                    controller: browserController,
+                    includeVerificationCode: true,
+                    forceVerificationOnly: preserveVerificationContext
+               ) {
+                verificationCodeWasApplied = applied.statusLines.contains { $0.localizedCaseInsensitiveContains("Entered the verification code") }
+                latestInspection = applied.inspection
+                preserveVerificationContext = shouldPreserveVerificationContext(
+                    currentInspection: latestInspection,
+                    pendingInspection: pending.latestInspection
+                )
+                inspectionHistory.append(applied.inspection)
+                if inspectionHistory.count > 20 {
+                    inspectionHistory.removeFirst(inspectionHistory.count - 20)
+                }
+                recentHistory.append(contentsOf: applied.statusLines)
+                if recentHistory.count > 6 {
+                    recentHistory.removeFirst(recentHistory.count - 6)
+                }
+            }
+        } catch let error as ChromiumBrowserActionError
+            where followUp?.verificationCode != nil
+                && error.message.lowercased().contains("verification field") {
+            latestInspection = await refreshVerificationInspectionIfNeeded(
+                currentInspection: latestInspection,
+                fallback: pending.latestInspection,
+                controller: browserController
+            )
+            return try await returnAwaitingVerificationInput(
+                pending,
+                requirement: BrowserPageRequirement(
+                    id: "verification-code-retry",
+                    kind: "verification_code",
+                    label: "Verification code",
+                    selector: nil,
+                    controlType: "one-time-code",
+                    fillAction: "type_text",
+                    options: [],
+                    prompt: "I still need the verification code for this page.",
+                    isSensitive: true,
+                    priority: 145,
+                    validationMessage: error.message
+                ),
+                latestInspection: latestInspection,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                combinedData: combinedData,
+                session: &session,
+                controller: browserController
+            )
+        }
+
+        let continuation = try await continueBrowserAutonomouslyUntilBlocked(
+            inspection: latestInspection ?? pending.latestInspection,
+            personaID: session.personaId,
+            knownData: combinedData,
+            controller: browserController,
+            inspectionHistory: inspectionHistory,
+            recentHistory: recentHistory
+        )
+        latestInspection = continuation.inspection
+        inspectionHistory = continuation.inspectionHistory
+        recentHistory = continuation.recentHistory
+        if combinedData.verificationCode != nil || shouldPrioritizeVerificationOnly(in: pending.latestInspection) {
+            latestInspection = await refreshVerificationInspectionIfNeeded(
+                currentInspection: latestInspection,
+                fallback: pending.latestInspection,
+                controller: browserController
+            )
+            preserveVerificationContext = shouldPreserveVerificationContext(
+                currentInspection: latestInspection,
+                pendingInspection: pending.latestInspection
+            )
+            if let latestInspection {
+                inspectionHistory.append(latestInspection)
+                if inspectionHistory.count > 20 {
+                    inspectionHistory.removeFirst(inspectionHistory.count - 20)
+                }
+            }
+        }
+
+        if let requirement = continuation.requiredInput,
+           followUpValue(for: requirement, followUp: combinedData) == nil {
+            return try await returnAwaitingVerificationInput(
+                pending,
+                requirement: requirement,
+                latestInspection: latestInspection,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                combinedData: combinedData,
+                session: &session,
+                controller: browserController
+            )
+        }
+
+        if let requirement = continuation.requiredInput,
+           requirement.kind == "verification_code",
+           combinedData.verificationCode != nil {
+            if let verificationPrompt = await verificationFollowUpPromptIfNeeded(
                 inspection: latestInspection,
-                followUp: combinedData,
-                controller: browserController,
-                includeVerificationCode: true,
-                prepareNativeOTPAutofill: true
+                controller: browserController
+            ) {
+                clearPendingBrowserApproval(for: pending.sessionID)
+                setPendingBrowserInput(
+                    PendingBrowserInputContext(
+                        sessionID: pending.sessionID,
+                        personaID: session.personaId,
+                        intent: pending.intent,
+                        latestInspection: latestInspection,
+                        inspectionHistory: inspectionHistory,
+                        recentHistory: recentHistory,
+                        persistMessages: pending.persistMessages,
+                        scenarioMetadata: pending.scenarioMetadata,
+                        knownFollowUpData: combinedData,
+                        approvedContinuation: pending.approvedContinuation
+                    )
+                )
+                try await persistBrowserRunArtifacts(
+                    outcome: "awaiting_user_input",
+                    goalText: pending.intent.goalText,
+                    initialURL: pending.intent.initialURL,
+                    session: session,
+                    controller: browserController,
+                    inspectionHistory: inspectionHistory,
+                    recentHistory: recentHistory,
+                    finalSummary: verificationPrompt,
+                    scenarioMetadata: pending.scenarioMetadata
+                )
+                try emitAssistantMessage(verificationPrompt, session: session, shouldStore: pending.persistMessages)
+                return BrowserScenarioRunSummary(
+                    scenarioID: pending.scenarioMetadata?.id ?? "ad_hoc",
+                    category: pending.scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
+                    outcome: "awaiting_user_input",
+                    finalSummary: verificationPrompt
+                )
+            }
+        }
+
+        if combinedData.verificationCode != nil,
+           !verificationCodeWasApplied,
+           preserveVerificationContext {
+            return try await returnAwaitingVerificationInput(
+                pending,
+                requirement: BrowserPageRequirement(
+                    id: "verification-code-not-applied",
+                    kind: "verification_code",
+                    label: "Verification code",
+                    selector: nil,
+                    controlType: "one-time-code",
+                    fillAction: "type_text",
+                    options: [],
+                    prompt: "I still need the verification code for this page.",
+                    isSensitive: true,
+                    priority: 145,
+                    validationMessage: "The verification field was not ready for the last code."
+                ),
+                latestInspection: latestInspection,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                combinedData: combinedData,
+                session: &session,
+                controller: browserController
+            )
+        }
+
+        if combinedData.verificationCode != nil,
+           preserveVerificationContext,
+           let verificationPrompt = await verificationFollowUpPromptIfNeeded(
+               inspection: latestInspection ?? pending.latestInspection,
+               controller: browserController
            ) {
-            latestInspection = applied.inspection
-            inspectionHistory.append(applied.inspection)
-            if inspectionHistory.count > 20 {
-                inspectionHistory.removeFirst(inspectionHistory.count - 20)
-            }
-            recentHistory.append(contentsOf: applied.statusLines)
-            if recentHistory.count > 6 {
-                recentHistory.removeFirst(recentHistory.count - 6)
-            }
-            let statusSummary = applied.statusLines.joined(separator: " ")
-            if !statusSummary.isEmpty {
-                emit(.assistantDelta(statusSummary))
-            }
-        } else if followUp == nil {
-            let prompt = browserInputPrompt(for: nextPromptableRequirement(in: latestInspection), inspection: latestInspection)
+            clearPendingBrowserApproval(for: pending.sessionID)
             setPendingBrowserInput(
                 PendingBrowserInputContext(
                     sessionID: pending.sessionID,
+                    personaID: session.personaId,
                     intent: pending.intent,
                     latestInspection: latestInspection ?? pending.latestInspection,
                     inspectionHistory: inspectionHistory,
                     recentHistory: recentHistory,
                     persistMessages: pending.persistMessages,
                     scenarioMetadata: pending.scenarioMetadata,
-                    knownFollowUpData: combinedData
+                    knownFollowUpData: combinedData,
+                    approvedContinuation: pending.approvedContinuation
                 )
             )
-            try persistAssistantMessage(prompt, session: session, shouldStore: pending.persistMessages)
-            emit(.assistantDelta(prompt))
-            return BrowserScenarioRunSummary(
-                scenarioID: pending.scenarioMetadata?.id ?? "ad_hoc",
-                category: pending.scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
-                outcome: "awaiting_user_input",
-                finalSummary: prompt
-            )
-        }
-
-        latestInspection = latestInspection ?? pending.latestInspection
-        if let requirement = nextPromptableRequirement(in: latestInspection),
-           followUpValue(for: requirement, followUp: combinedData) == nil {
-            clearPendingBrowserApproval(for: pending.sessionID)
-            setPendingBrowserInput(
-                PendingBrowserInputContext(
-                    sessionID: pending.sessionID,
-                    intent: pending.intent,
-                    latestInspection: latestInspection,
-                    inspectionHistory: inspectionHistory,
-                    recentHistory: recentHistory,
-                    persistMessages: pending.persistMessages,
-                    scenarioMetadata: pending.scenarioMetadata,
-                    knownFollowUpData: combinedData
-                )
-            )
-            let prompt = browserInputPrompt(for: requirement, inspection: latestInspection)
             try await persistBrowserRunArtifacts(
                 outcome: "awaiting_user_input",
                 goalText: pending.intent.goalText,
@@ -1382,16 +1854,15 @@ final class ChatSessionService {
                 controller: browserController,
                 inspectionHistory: inspectionHistory,
                 recentHistory: recentHistory,
-                finalSummary: prompt,
+                finalSummary: verificationPrompt,
                 scenarioMetadata: pending.scenarioMetadata
             )
-            try persistAssistantMessage(prompt, session: session, shouldStore: pending.persistMessages)
-            emit(.assistantDelta(prompt))
+            try emitAssistantMessage(verificationPrompt, session: session, shouldStore: pending.persistMessages)
             return BrowserScenarioRunSummary(
                 scenarioID: pending.scenarioMetadata?.id ?? "ad_hoc",
                 category: pending.scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
                 outcome: "awaiting_user_input",
-                finalSummary: prompt
+                finalSummary: verificationPrompt
             )
         }
 
@@ -1424,15 +1895,97 @@ final class ChatSessionService {
                 inspectionHistory: inspectionHistory,
                 recentHistory: recentHistory,
                 lastResultSummary: recentHistory.last ?? "Filled the requested information in the active browser session."
+            ),
+            approvedContinuation: pending.approvedContinuation
+        )
+    }
+
+    private func refreshVerificationInspectionIfNeeded(
+        currentInspection: ChromiumInspection?,
+        fallback: ChromiumInspection?,
+        controller: ChromiumBrowserController
+    ) async -> ChromiumInspection? {
+        let baseline = currentInspection ?? fallback
+        guard let baseline else { return currentInspection }
+        let shouldRefresh = verificationRefreshNeeded(for: currentInspection)
+            || verificationRefreshNeeded(for: fallback)
+        guard shouldRefresh else { return currentInspection ?? fallback }
+        guard let artifact = try? await controller.captureScrolledSnapshotForAgent(label: "verification-state"),
+              let recognizedText = artifact.recognizedText,
+              !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return currentInspection ?? fallback
+        }
+        return BrowserPageAnalyzer.augmentInspection(
+            currentInspection ?? baseline,
+            withVisualRecognitionText: recognizedText,
+            fallback: fallback
+        )
+    }
+
+    private func verificationRefreshNeeded(for inspection: ChromiumInspection?) -> Bool {
+        BrowserPageAnalyzer.canonicalState(for: inspection)?.requiresVisualRefresh ?? false
+    }
+
+    private func returnAwaitingVerificationInput(
+        _ pending: PendingBrowserInputContext,
+        requirement: BrowserPageRequirement,
+        latestInspection: ChromiumInspection?,
+        inspectionHistory: [ChromiumInspection],
+        recentHistory: [String],
+        combinedData: BrowserSessionFollowUpData,
+        session: inout AssistantSession,
+        controller browserController: ChromiumBrowserController
+    ) async throws -> BrowserScenarioRunSummary {
+        clearPendingBrowserApproval(for: pending.sessionID)
+        setPendingBrowserInput(
+            PendingBrowserInputContext(
+                sessionID: pending.sessionID,
+                personaID: session.personaId,
+                intent: pending.intent,
+                latestInspection: latestInspection,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                persistMessages: pending.persistMessages,
+                scenarioMetadata: pending.scenarioMetadata,
+                knownFollowUpData: combinedData,
+                approvedContinuation: pending.approvedContinuation
             )
+        )
+        let prompt = await promptForRequiredBrowserInput(
+            requirement,
+            inspection: latestInspection,
+            controller: browserController
+        )
+        try await persistBrowserRunArtifacts(
+            outcome: "awaiting_user_input",
+            goalText: pending.intent.goalText,
+            initialURL: pending.intent.initialURL,
+            session: session,
+            controller: browserController,
+            inspectionHistory: inspectionHistory,
+            recentHistory: recentHistory,
+            finalSummary: prompt,
+            scenarioMetadata: pending.scenarioMetadata
+        )
+        try emitAssistantMessage(prompt, session: session, shouldStore: pending.persistMessages)
+        return BrowserScenarioRunSummary(
+            scenarioID: pending.scenarioMetadata?.id ?? "ad_hoc",
+            category: pending.scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: pending.intent.goalText, initialURL: pending.intent.initialURL),
+            outcome: "awaiting_user_input",
+            finalSummary: prompt
         )
     }
 
     private func browserInputPrompt(for requirement: BrowserPageRequirement?, inspection: ChromiumInspection?) -> String {
         if let requirement {
             switch requirement.kind {
+            case "phone_number":
+                if let inspection, BrowserPageAnalyzer.verificationInterruptionLikely(for: inspection) {
+                    return "The site still needs a phone number before it can send the verification code."
+                }
+                return requirement.prompt
             case "verification_code":
-                return "\(requirement.prompt) If the native macOS one-time-code suggestion appears in the focused field, you can use that, or just send me the digits."
+                return "\(requirement.prompt) If the native macOS one-time-code suggestion appears, you can use it, or just send me the digits."
             case "consent":
                 return "\(requirement.prompt) Reply with `yes` to accept it or `no` to cancel."
             default:
@@ -1445,20 +1998,115 @@ final class ChatSessionService {
         return "The current browser page still needs more information before it can continue. Send the missing details and I’ll keep going in the same browser session."
     }
 
+    private func promptForRequiredBrowserInput(
+        _ requirement: BrowserPageRequirement,
+        inspection: ChromiumInspection?,
+        controller: ChromiumBrowserController
+    ) async -> String {
+        _ = controller
+        return browserInputPrompt(for: requirement, inspection: inspection)
+    }
+
+    private func userFacingBrowserStateMessage(
+        inspection: ChromiumInspection?,
+        priorInspection: ChromiumInspection? = nil,
+        controller: ChromiumBrowserController
+    ) async -> String? {
+        guard let state = BrowserPageAnalyzer.canonicalState(for: inspection, priorInspection: priorInspection) else {
+            return nil
+        }
+
+        switch state.stage {
+        case .approvalBoundary:
+            guard let approvalLabel = state.approvalBoundaryLabel else { return nil }
+            return approvalPrompt(for: approvalLabel, inspection: inspection)
+        case .detailsForm, .phoneVerificationPrep, .verificationCode:
+            guard let requirement = state.promptableRequirement else { return nil }
+            return await promptForRequiredBrowserInput(
+                requirement,
+                inspection: inspection,
+                controller: controller
+            )
+        default:
+            return BrowserPageAnalyzer.userFacingProgressMessage(for: state)
+        }
+    }
+
+    private func verificationFollowUpPromptIfNeeded(
+        inspection: ChromiumInspection?,
+        controller: ChromiumBrowserController
+    ) async -> String? {
+        if let retryPrompt = verificationRetryPrompt(for: inspection) {
+            return retryPrompt
+        }
+        guard let state = BrowserPageAnalyzer.canonicalState(for: inspection) else {
+            return nil
+        }
+        guard state.stage == .phoneVerificationPrep || state.stage == .verificationCode else {
+            return nil
+        }
+        if let requirement = state.promptableRequirement {
+            return await promptForRequiredBrowserInput(
+                requirement,
+                inspection: inspection,
+                controller: controller
+            )
+        }
+        return browserInputPrompt(
+            for: BrowserPageRequirement(
+                id: "follow-up-verification-code",
+                kind: "verification_code",
+                label: "Verification code",
+                selector: nil,
+                controlType: "one-time-code",
+                fillAction: "type_text",
+                options: [],
+                prompt: "I still need the verification code for this page.",
+                isSensitive: true,
+                priority: 145,
+                validationMessage: "The current page is waiting on a verification step."
+            ),
+            inspection: inspection
+        )
+    }
+
+    private func verificationRetryPrompt(for inspection: ChromiumInspection?) -> String? {
+        guard let inspection else { return nil }
+
+        let signals = [
+            inspection.title,
+            inspection.url,
+            inspection.pageStage,
+            inspection.notices.map(\.label).joined(separator: "\n"),
+            inspection.forms.flatMap(\.fields).compactMap(\.validationMessage).joined(separator: "\n"),
+            inspection.interactiveElements.compactMap(\.validationMessage).joined(separator: "\n")
+        ]
+        .joined(separator: "\n")
+        .lowercased()
+
+        if signals.contains("expired") || signals.contains("session expired") || signals.contains("timed out") {
+            return "That verification code expired or timed out. Send a newer code and I’ll try again."
+        }
+        if signals.contains("invalid code")
+            || signals.contains("incorrect code")
+            || signals.contains("invalid verification code")
+            || signals.contains("incorrect verification code")
+            || signals.contains("try again") {
+            return "That verification code was rejected. Send the latest code and I’ll try again."
+        }
+
+        return nil
+    }
+
     private func requiresPhoneNumber(for inspection: ChromiumInspection?) -> Bool {
         pageRequirements(for: inspection).contains { $0.kind == "phone_number" }
     }
 
-    private func requiredPhoneFieldSelector(in inspection: ChromiumInspection?) -> String? {
-        pageRequirements(for: inspection)
-            .filter { $0.kind == "phone_number" }
-            .sorted { $0.priority > $1.priority }
-            .first?
-            .selector
-    }
-
     private func requiresVerificationCode(for inspection: ChromiumInspection?) -> Bool {
-        pageRequirements(for: inspection).contains { $0.kind == "verification_code" }
+        guard let state = BrowserPageAnalyzer.canonicalState(for: inspection) else {
+            return verificationInterruptionRequirement(in: inspection) != nil
+        }
+        return state.stage == .verificationCode
     }
 
     private func isPhoneLikeField(_ field: ChromiumSemanticFormField) -> Bool {
@@ -1477,16 +2125,88 @@ final class ChatSessionService {
     }
 
     private func pageRequirements(for inspection: ChromiumInspection?) -> [BrowserPageRequirement] {
-        BrowserPageAnalyzer.requirements(for: inspection)
+        BrowserPageAnalyzer.canonicalState(for: inspection)?.workflow.requirements
+            ?? BrowserPageAnalyzer.requirements(for: inspection)
     }
 
     private func primaryUserRequirement(in inspection: ChromiumInspection?) -> BrowserPageRequirement? {
-        pageRequirements(for: inspection).first(where: { $0.kind != "consent" })
-            ?? pageRequirements(for: inspection).first
+        if let state = BrowserPageAnalyzer.canonicalState(for: inspection),
+           let promptableRequirement = state.promptableRequirement {
+            return promptableRequirement
+        }
+        let requirements = pageRequirements(for: inspection)
+        return requirements.first(where: { $0.kind != "consent" })
+            ?? requirements.first
+            ?? verificationInterruptionRequirement(in: inspection)
     }
 
     private func nextPromptableRequirement(in inspection: ChromiumInspection?) -> BrowserPageRequirement? {
-        pageRequirements(for: inspection).first(where: isPromptableRequirement)
+        if let state = BrowserPageAnalyzer.canonicalState(for: inspection),
+           let promptableRequirement = state.promptableRequirement {
+            return promptableRequirement
+        }
+        let requirements = pageRequirements(for: inspection)
+        if visibleNonVerificationRequirementExists(in: inspection) {
+            return requirements.first(where: { isPromptableRequirement($0) && $0.kind != "verification_code" })
+                ?? requirements.first(where: isPromptableRequirement)
+        }
+        return requirements.first(where: isPromptableRequirement)
+            ?? verificationInterruptionRequirement(in: inspection)
+    }
+
+    private func verificationInterruptionRequirement(in inspection: ChromiumInspection?) -> BrowserPageRequirement? {
+        guard let inspection else { return nil }
+        guard !visibleNonVerificationRequirementExists(in: inspection) else {
+            return nil
+        }
+        if let requirement = pageRequirements(for: inspection).first(where: { $0.kind == "verification_code" }) {
+            return requirement
+        }
+        guard BrowserPageAnalyzer.verificationInterruptionLikely(for: inspection) else {
+            return nil
+        }
+        return BrowserPageRequirement(
+            id: "synthetic-chat-verification-interruption",
+            kind: "verification_code",
+            label: "Verification code",
+            selector: nil,
+            controlType: "one-time-code",
+            fillAction: "type_text",
+            options: [],
+            prompt: "I still need the verification code for this page.",
+            isSensitive: true,
+            priority: 145,
+            validationMessage: "The current page is waiting on a verification step."
+        )
+    }
+
+    private func shouldPrioritizeVerificationOnly(in inspection: ChromiumInspection?) -> Bool {
+        guard !visibleNonVerificationRequirementExists(in: inspection) else {
+            return false
+        }
+        guard let state = BrowserPageAnalyzer.canonicalState(for: inspection) else {
+            return verificationInterruptionRequirement(in: inspection) != nil
+        }
+        return state.stage == .phoneVerificationPrep || state.stage == .verificationCode
+    }
+
+    private func shouldPreserveVerificationContext(
+        currentInspection: ChromiumInspection?,
+        pendingInspection: ChromiumInspection?
+    ) -> Bool {
+        if shouldPrioritizeVerificationOnly(in: currentInspection) {
+            return true
+        }
+        return BrowserPageAnalyzer.shouldPreserveVerificationContext(
+            currentInspection: currentInspection,
+            pendingInspection: pendingInspection
+        )
+    }
+
+    private func visibleNonVerificationRequirementExists(in inspection: ChromiumInspection?) -> Bool {
+        pageRequirements(for: inspection).contains {
+            isPromptableRequirement($0) && $0.kind != "verification_code" && $0.kind != "consent"
+        }
     }
 
     private func isPromptableRequirement(_ requirement: BrowserPageRequirement) -> Bool {
@@ -1514,10 +2234,10 @@ final class ChatSessionService {
     }
 
     private func mergedKnownFollowUpData(
-        personaID: String,
+        personaID _: String,
         providedData: BrowserSessionFollowUpData?
     ) -> BrowserSessionFollowUpData? {
-        if let profileData = profileFollowUpData(for: personaID) {
+        if let profileData = userProfileFollowUpData() {
             return profileData.merged(with: providedData)
         }
         return providedData
@@ -1561,7 +2281,7 @@ final class ChatSessionService {
         followUp: BrowserSessionFollowUpData,
         controller: ChromiumBrowserController,
         includeVerificationCode: Bool,
-        prepareNativeOTPAutofill: Bool
+        forceVerificationOnly: Bool = false
     ) async throws -> (statusLines: [String], inspection: ChromiumInspection)? {
         guard !followUp.isEmpty else { return nil }
 
@@ -1573,8 +2293,12 @@ final class ChatSessionService {
 
         var statusLines: [String] = []
         var handled = false
+        let verificationOnly = forceVerificationOnly || shouldPrioritizeVerificationOnly(in: updatedInspection)
 
         for requirement in pageRequirements(for: updatedInspection) {
+            if verificationOnly {
+                continue
+            }
             if requirement.kind == "verification_code" {
                 continue
             }
@@ -1587,21 +2311,242 @@ final class ChatSessionService {
 
         if includeVerificationCode,
            let verificationCode = followUp.verificationCode,
-           pageRequirements(for: updatedInspection).contains(where: { $0.kind == "verification_code" }) {
+           (forceVerificationOnly || shouldPrioritizeVerificationOnly(in: updatedInspection)) {
             _ = try await controller.typeVerificationCodeForAgent(verificationCode)
-            updatedInspection = try await controller.inspectCurrentPageForAgent()
+            updatedInspection = try await settleAndInspectAfterVerificationInput(
+                controller: controller,
+                fallback: try await controller.inspectCurrentPageForAgent()
+            ) ?? updatedInspection
             statusLines.append("Entered the verification code in the current browser page.")
             handled = true
-        } else if prepareNativeOTPAutofill,
-                  pageRequirements(for: updatedInspection).contains(where: { $0.kind == "verification_code" }) {
-            if let prepared = try? await controller.prepareVerificationCodeAutofillForAgent() {
-                updatedInspection = try await controller.inspectCurrentPageForAgent()
-                statusLines.append("Prepared the verification field for native one-time-code autofill (\(prepared)).")
+            if let advanced = try await advanceVerificationStepIfPossible(
+                inspection: updatedInspection,
+                controller: controller
+            ) {
+                updatedInspection = try await settleAndInspectAfterVerificationInput(
+                    controller: controller,
+                    fallback: advanced.inspection
+                ) ?? advanced.inspection
+                statusLines.append(advanced.summary)
             }
         }
 
         guard handled, let updatedInspection else { return nil }
         return (statusLines, updatedInspection)
+    }
+
+    private func settleAndInspectAfterVerificationInput(
+        controller: ChromiumBrowserController,
+        fallback: ChromiumInspection?
+    ) async throws -> ChromiumInspection? {
+        var latestInspection = fallback
+        if latestInspection == nil {
+            latestInspection = try? await controller.inspectCurrentPageForAgent()
+        }
+
+        for attempt in 0..<8 {
+            if attempt == 0 {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+            } else {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            do {
+                _ = try await controller.waitForSettleForAgent(timeout: 1.5)
+            } catch {
+                // Keep polling. Some sites auto-submit OTP and transition without a clean settle signal.
+            }
+
+            guard let refreshedInspection = try? await controller.inspectCurrentPageForAgent() else {
+                continue
+            }
+            latestInspection = refreshedInspection
+
+            let nextRequirement = nextPromptableRequirement(in: refreshedInspection)
+            if nextRequirement?.kind != "verification_code" {
+                break
+            }
+
+            if let workflow = BrowserPageAnalyzer.workflow(for: refreshedInspection),
+               workflow.stage != "verification" {
+                break
+            }
+        }
+
+        return latestInspection
+    }
+
+    private func continueBrowserAutonomouslyUntilBlocked(
+        inspection: ChromiumInspection?,
+        personaID: String,
+        knownData: BrowserSessionFollowUpData,
+        controller: ChromiumBrowserController,
+        inspectionHistory initialInspectionHistory: [ChromiumInspection],
+        recentHistory initialRecentHistory: [String],
+        maxCycles: Int = 6
+    ) async throws -> BrowserAutonomousContinuationResult {
+        var latestInspection = inspection
+        var inspectionHistory = initialInspectionHistory
+        var recentHistory = initialRecentHistory
+        var statusLines: [String] = []
+
+        func recordInspection(_ inspection: ChromiumInspection?) {
+            guard let inspection else { return }
+            inspectionHistory.append(inspection)
+            if inspectionHistory.count > 20 {
+                inspectionHistory.removeFirst(inspectionHistory.count - 20)
+            }
+        }
+
+        for cycle in 0..<maxCycles {
+            if latestInspection == nil {
+                latestInspection = try? await controller.inspectCurrentPageForAgent()
+                recordInspection(latestInspection)
+            }
+
+            if let autofill = try await autoFillKnownRequirementsIfPossible(
+                inspection: latestInspection,
+                personaID: personaID,
+                providedData: knownData,
+                controller: controller
+            ) {
+                latestInspection = autofill.inspection
+                recordInspection(autofill.inspection)
+                recentHistory.append("Autofill: \(autofill.summary)")
+                if recentHistory.count > 6 {
+                    recentHistory.removeFirst(recentHistory.count - 6)
+                }
+                statusLines.append(autofill.summary)
+                do {
+                    latestInspection = try await controller.inspectCurrentPageForAgent()
+                    recordInspection(latestInspection)
+                } catch {
+                    latestInspection = autofill.inspection
+                }
+                continue
+            }
+
+            guard let requirement = nextPromptableRequirement(in: latestInspection) else {
+                return BrowserAutonomousContinuationResult(
+                    inspection: latestInspection,
+                    inspectionHistory: inspectionHistory,
+                    recentHistory: recentHistory,
+                    statusLines: statusLines,
+                    requiredInput: nil
+                )
+            }
+
+            if let value = followUpValue(for: requirement, followUp: knownData),
+               requirement.kind != "verification_code" {
+                try await applyRequirement(requirement, value: value, controller: controller)
+                latestInspection = try? await controller.inspectCurrentPageForAgent()
+                recordInspection(latestInspection)
+                let summary = "Filled the required \(humanReadableRequirementLabel(requirement)) in the current browser page."
+                statusLines.append(summary)
+                recentHistory.append(summary)
+                if recentHistory.count > 6 {
+                    recentHistory.removeFirst(recentHistory.count - 6)
+                }
+                continue
+            }
+
+            if requirement.kind == "verification_code" {
+                let settledInspection = try await settleAndInspectAfterVerificationInput(
+                    controller: controller,
+                    fallback: latestInspection
+                ) ?? latestInspection
+                if cycle < maxCycles - 1,
+                   let settledInspection,
+                   !shouldPrioritizeVerificationOnly(in: settledInspection) {
+                    latestInspection = settledInspection
+                    recordInspection(settledInspection)
+                    recentHistory.append("Observed the browser move past the verification step.")
+                    if recentHistory.count > 6 {
+                        recentHistory.removeFirst(recentHistory.count - 6)
+                    }
+                    continue
+                }
+                return BrowserAutonomousContinuationResult(
+                    inspection: settledInspection,
+                    inspectionHistory: inspectionHistory,
+                    recentHistory: recentHistory,
+                    statusLines: statusLines,
+                    requiredInput: requirement
+                )
+            }
+
+            return BrowserAutonomousContinuationResult(
+                inspection: latestInspection,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                statusLines: statusLines,
+                requiredInput: requirement
+            )
+        }
+
+        return BrowserAutonomousContinuationResult(
+            inspection: latestInspection,
+            inspectionHistory: inspectionHistory,
+            recentHistory: recentHistory,
+            statusLines: statusLines,
+            requiredInput: nextPromptableRequirement(in: latestInspection)
+        )
+    }
+
+    private func advanceVerificationStepIfPossible(
+        inspection: ChromiumInspection?,
+        controller: ChromiumBrowserController
+    ) async throws -> (summary: String, inspection: ChromiumInspection)? {
+        guard let inspection, shouldPrioritizeVerificationOnly(in: inspection) else {
+            return nil
+        }
+
+        if let advanced = try? await controller.advanceVerificationStepForAgent() {
+            let refreshedInspection = try await controller.inspectCurrentPageForAgent()
+            return ("Advanced the verification step (\(advanced)).", refreshedInspection)
+        }
+
+        let candidate = inspection.semanticTargets
+            .filter { target in
+                ["dialog_action", "primary_action", "action"].contains(target.kind)
+                    && !target.selector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .filter { target in
+                let label = target.label.lowercased()
+                if label.contains("use email instead")
+                    || label.contains("use phone instead")
+                    || label.contains("sign in")
+                    || label.contains("log in")
+                    || label.contains("login")
+                    || label.contains("close")
+                    || label.contains("dismiss") {
+                    return false
+                }
+                if let purpose = target.purpose, ["continue", "confirm"].contains(purpose) {
+                    return true
+                }
+                return label.contains("continue")
+                    || label.contains("verify")
+                    || label.contains("submit")
+                    || label.contains("done")
+                    || label.contains("next")
+            }
+            .sorted { lhs, rhs in lhs.priority > rhs.priority }
+            .first
+
+        if let candidate {
+            _ = try await controller.clickSelectorForAgent(
+                candidate.selector,
+                label: candidate.label,
+                transactionalKind: candidate.transactionalKind,
+                requireApproval: false
+            )
+            let refreshedInspection = try await controller.inspectCurrentPageForAgent()
+            return ("Advanced the verification step with \(candidate.label).", refreshedInspection)
+        }
+
+        _ = try await controller.pressKeyForAgent("Enter")
+        let refreshedInspection = try await controller.inspectCurrentPageForAgent()
+        return ("Attempted to advance the verification step with Enter.", refreshedInspection)
     }
 
     private func followUpValue(for requirement: BrowserPageRequirement, followUp: BrowserSessionFollowUpData) -> String? {
@@ -1638,8 +2583,8 @@ final class ChatSessionService {
         }
     }
 
-    private func profileFollowUpData(for personaID: String) -> BrowserSessionFollowUpData? {
-        guard let profile = personaManager.loadContactProfile(personaId: personaID) else { return nil }
+    private func userProfileFollowUpData() -> BrowserSessionFollowUpData? {
+        guard let profile = userProfileManager.loadContactProfile() else { return nil }
         let fullName = profile.fullName ?? [profile.firstName, profile.lastName]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -1668,7 +2613,8 @@ final class ChatSessionService {
         controller: ChromiumBrowserController
     ) async throws -> (summary: String, inspection: ChromiumInspection)? {
         guard let inspection,
-              let knownData = mergedKnownFollowUpData(personaID: personaID, providedData: providedData) else {
+              let knownData = mergedKnownFollowUpData(personaID: personaID, providedData: providedData),
+              !shouldPrioritizeVerificationOnly(in: inspection) else {
             return nil
         }
 
@@ -1819,14 +2765,182 @@ final class ChatSessionService {
         pendingInputLock.lock()
         pendingBrowserInput = pending
         pendingInputLock.unlock()
+        configurePendingBrowserInputMonitor(for: pending)
     }
 
     private func clearPendingBrowserInput(for sessionID: UUID) {
+        var cleared = false
         pendingInputLock.lock()
         if pendingBrowserInput?.sessionID == sessionID {
             pendingBrowserInput = nil
+            cleared = true
         }
         pendingInputLock.unlock()
+        if cleared {
+            cancelPendingBrowserInputMonitor()
+        }
+    }
+
+    private func configurePendingBrowserInputMonitor(for pending: PendingBrowserInputContext) {
+        cancelPendingBrowserInputMonitor()
+        guard shouldPrioritizeVerificationOnly(in: pending.latestInspection) else {
+            return
+        }
+
+        pendingInputMonitorLock.lock()
+        pendingBrowserInputMonitor = Task { [weak self] in
+            guard let self else { return }
+            await self.monitorPendingVerificationTransition(for: pending.sessionID)
+        }
+        pendingInputMonitorLock.unlock()
+    }
+
+    private func cancelPendingBrowserInputMonitor() {
+        pendingInputMonitorLock.lock()
+        pendingBrowserInputMonitor?.cancel()
+        pendingBrowserInputMonitor = nil
+        pendingInputMonitorLock.unlock()
+    }
+
+    private func monitorPendingVerificationTransition(for sessionID: UUID) async {
+        guard let pending = pendingBrowserInputContext(for: sessionID) else {
+            return
+        }
+
+        let browserController = await MainActor.run { browserControllerProvider() }
+        var latestInspection = pending.latestInspection
+        for _ in 0..<6 {
+            guard !Task.isCancelled else { return }
+            guard let currentPending = pendingBrowserInputContext(for: sessionID),
+                  currentPending.personaID == pending.personaID else {
+                return
+            }
+
+            let settledInspection = try? await settleAndInspectAfterVerificationInput(
+                controller: browserController,
+                fallback: latestInspection
+            )
+            latestInspection = settledInspection ?? latestInspection
+            if let transitionedInspection = latestInspection,
+               !shouldPrioritizeVerificationOnly(in: transitionedInspection) {
+                try? await resumePendingBrowserInputAfterVerificationAdvance(
+                    currentPending,
+                    transitionedInspection: transitionedInspection,
+                    controller: browserController
+                )
+                return
+            }
+
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+    }
+
+    private func resumePendingBrowserInputAfterVerificationAdvance(
+        _ pending: PendingBrowserInputContext,
+        transitionedInspection: ChromiumInspection,
+        controller browserController: ChromiumBrowserController
+    ) async throws {
+        var latestInspection: ChromiumInspection? = transitionedInspection
+        var inspectionHistory = pending.inspectionHistory
+        var recentHistory = pending.recentHistory
+        let knownData = pending.knownFollowUpData
+
+        inspectionHistory.append(transitionedInspection)
+        if inspectionHistory.count > 20 {
+            inspectionHistory.removeFirst(inspectionHistory.count - 20)
+        }
+        recentHistory.append("Detected that the verification step advanced in the active browser page.")
+        if recentHistory.count > 6 {
+            recentHistory.removeFirst(recentHistory.count - 6)
+        }
+
+        let continuation = try await continueBrowserAutonomouslyUntilBlocked(
+            inspection: latestInspection,
+            personaID: pending.personaID,
+            knownData: knownData,
+            controller: browserController,
+            inspectionHistory: inspectionHistory,
+            recentHistory: recentHistory
+        )
+        latestInspection = continuation.inspection
+        inspectionHistory = continuation.inspectionHistory
+        recentHistory = continuation.recentHistory
+
+        if !continuation.statusLines.isEmpty,
+           let message = await userFacingBrowserStateMessage(
+                inspection: latestInspection,
+                controller: browserController
+           ) {
+            let session = try sessionStore.loadOrCreateDefault(personaId: pending.personaID)
+            try emitAssistantMessage(message, session: session, shouldStore: pending.persistMessages)
+        }
+
+        if let requirement = continuation.requiredInput,
+           followUpValue(for: requirement, followUp: knownData) == nil {
+            let prompt = await promptForRequiredBrowserInput(
+                requirement,
+                inspection: latestInspection,
+                controller: browserController
+            )
+            setPendingBrowserInput(
+                PendingBrowserInputContext(
+                    sessionID: pending.sessionID,
+                    personaID: pending.personaID,
+                    intent: pending.intent,
+                    latestInspection: latestInspection,
+                    inspectionHistory: inspectionHistory,
+                    recentHistory: recentHistory,
+                    persistMessages: pending.persistMessages,
+                    scenarioMetadata: pending.scenarioMetadata,
+                    knownFollowUpData: knownData,
+                    approvedContinuation: pending.approvedContinuation
+                )
+            )
+            let session = try sessionStore.loadOrCreateDefault(personaId: pending.personaID)
+            try emitAssistantMessage(prompt, session: session, shouldStore: pending.persistMessages)
+            return
+        }
+
+        clearPendingBrowserInput(for: pending.sessionID)
+
+        guard let approvedContinuation = pending.approvedContinuation else {
+            return
+        }
+
+        let persona = try personaManager.validatePersona(personaId: pending.personaID)
+        var session = try sessionStore.loadOrCreateDefault(personaId: pending.personaID)
+        let runtimeConfig = try runtimeConfigStore.loadOrCreateDefault()
+        let launchConfig = CodexLaunchConfig(
+            agentHomeDirectory: persona.directoryPath,
+            codexHome: paths.root.path,
+            runtimeMode: .chatOnly,
+            externalDirectory: nil,
+            enableSearch: false,
+            model: runtimeConfig.model,
+            reasoningEffort: runtimeConfig.reasoningEffort
+        )
+
+        _ = try await runGenericBrowserLoop(
+            GenericBrowserChatIntent(
+                goalText: pending.intent.goalText,
+                initialURL: pending.intent.initialURL,
+                goalFocusTerms: pending.intent.goalFocusTerms,
+                providedData: knownData
+            ),
+            session: &session,
+            controller: browserController,
+            launchConfig: launchConfig,
+            persistMessages: pending.persistMessages,
+            scenarioMetadata: pending.scenarioMetadata,
+            seed: BrowserLoopSeed(
+                latestInspection: latestInspection,
+                inspectionHistory: inspectionHistory,
+                recentHistory: recentHistory,
+                lastResultSummary: recentHistory.last ?? "The verification step advanced and the browser flow resumed."
+            ),
+            approvedContinuation: approvedContinuation
+        )
+        try sessionStore.save(session)
     }
 
     private func runGenericBrowserLoop(
@@ -1836,7 +2950,8 @@ final class ChatSessionService {
         launchConfig: CodexLaunchConfig,
         persistMessages: Bool,
         scenarioMetadata: BrowserScenarioMetadata?,
-        seed: BrowserLoopSeed
+        seed: BrowserLoopSeed,
+        approvedContinuation: BrowserApprovedContinuationContext? = nil
     ) async throws -> BrowserScenarioRunSummary {
         var lastResultSummary = seed.lastResultSummary
         var latestInspection = seed.latestInspection
@@ -1846,7 +2961,7 @@ final class ChatSessionService {
         var lastProgressSnapshot: BrowserProgressSnapshot?
         var stalledStepCount = 0
         var recoveryCount = 0
-        let maxSteps = 12
+        let maxSteps = isTransactionalBrowserGoal(intent.goalText) ? 18 : 12
 
         func recordInspection(_ inspection: ChromiumInspection?) {
             guard let inspection else { return }
@@ -1871,7 +2986,6 @@ final class ChatSessionService {
                     if recentHistory.count > 6 {
                         recentHistory.removeFirst(recentHistory.count - 6)
                     }
-                    emit(.assistantDelta(autofill.summary))
                 }
 
                 if scenarioMetadata == nil,
@@ -1879,29 +2993,17 @@ final class ChatSessionService {
                    followUpValue(
                         for: requirement,
                         followUp: mergedKnownFollowUpData(personaID: session.personaId, providedData: intent.providedData)
-                            ?? BrowserSessionFollowUpData(
-                                phoneNumber: nil,
-                                email: nil,
-                                fullName: nil,
-                                firstName: nil,
-                                lastName: nil,
-                                addressLine1: nil,
-                                addressLine2: nil,
-                                city: nil,
-                                state: nil,
-                                postalCode: nil,
-                                country: nil,
-                                verificationCode: nil,
-                                consentDecision: nil
-                            )
-                   ) == nil {
-                    if requirement.kind == "verification_code" {
-                        _ = try? await browserController.prepareVerificationCodeAutofillForAgent()
-                    }
-                    let finalText = browserInputPrompt(for: requirement, inspection: latestInspection)
+                            ?? .empty
+                    ) == nil {
+                    let finalText = await promptForRequiredBrowserInput(
+                        requirement,
+                        inspection: latestInspection,
+                        controller: browserController
+                    )
                     setPendingBrowserInput(
                         PendingBrowserInputContext(
                             sessionID: session.id,
+                            personaID: session.personaId,
                             intent: intent,
                             latestInspection: latestInspection,
                             inspectionHistory: inspectionHistory,
@@ -1909,21 +3011,8 @@ final class ChatSessionService {
                             persistMessages: persistMessages,
                             scenarioMetadata: scenarioMetadata,
                             knownFollowUpData: mergedKnownFollowUpData(personaID: session.personaId, providedData: intent.providedData)
-                                ?? BrowserSessionFollowUpData(
-                                    phoneNumber: nil,
-                                    email: nil,
-                                    fullName: nil,
-                                    firstName: nil,
-                                    lastName: nil,
-                                    addressLine1: nil,
-                                    addressLine2: nil,
-                                    city: nil,
-                                    state: nil,
-                                    postalCode: nil,
-                                    country: nil,
-                                    verificationCode: nil,
-                                    consentDecision: nil
-                                )
+                                ?? .empty,
+                            approvedContinuation: approvedContinuation
                         )
                     )
                     try await persistBrowserRunArtifacts(
@@ -1974,9 +3063,6 @@ final class ChatSessionService {
                 }
 
                 let parsed = parseBrowserAssistantResponse(turn.assistantText)
-                if !parsed.displayText.isEmpty {
-                    emit(.assistantDelta(parsed.displayText))
-                }
 
                 guard let command = parsed.command else {
                     throw ChromiumBrowserActionError(message: "Codex did not return a browser command.")
@@ -1998,7 +3084,6 @@ final class ChatSessionService {
                     if recentHistory.count > 6 {
                         recentHistory.removeFirst(recentHistory.count - 6)
                     }
-                    emit(.assistantDelta(lastResultSummary))
                     actionSignatureCounts[signature] = 0
                     stalledStepCount = 0
                     recoveryCount += 1
@@ -2015,7 +3100,6 @@ final class ChatSessionService {
                         if recentHistory.count > 6 {
                             recentHistory.removeFirst(recentHistory.count - 6)
                         }
-                        emit(.assistantDelta(reason))
                         stalledStepCount = 0
                         recoveryCount += 1
                         if recoveryCount >= 4 {
@@ -2023,6 +3107,69 @@ final class ChatSessionService {
                         }
                         continue
                     }
+
+                    if let approvalCommand = pendingApprovalCommand(from: latestInspection),
+                       let approvalLabel = approvalBoundaryLabelIfNeeded(for: approvalCommand, inspection: latestInspection),
+                       !BrowserApprovedContinuationGuard.matches(
+                            approvedContinuation,
+                            command: approvalCommand,
+                            inspection: latestInspection
+                       ) {
+                        if scenarioMetadata != nil {
+                            let finalText = "Stopped before the final confirmation boundary at \"\(approvalLabel)\". Approval is still required for any final transaction step."
+                            try await persistBrowserRunArtifacts(
+                                outcome: "stopped_at_confirmation_boundary",
+                                goalText: intent.goalText,
+                                initialURL: intent.initialURL,
+                                session: session,
+                                controller: browserController,
+                                inspectionHistory: inspectionHistory,
+                                recentHistory: recentHistory,
+                                finalSummary: finalText,
+                                scenarioMetadata: scenarioMetadata
+                            )
+                            try persistAssistantMessage(finalText, session: session, shouldStore: persistMessages)
+                            return BrowserScenarioRunSummary(
+                                scenarioID: scenarioMetadata?.id ?? "ad_hoc",
+                                category: scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: intent.goalText, initialURL: intent.initialURL),
+                                outcome: "stopped_at_confirmation_boundary",
+                                finalSummary: finalText
+                            )
+                        }
+
+                        let finalText = approvalPrompt(for: approvalLabel, inspection: latestInspection)
+                        setPendingBrowserApproval(
+                            PendingBrowserApprovalContext(
+                                sessionID: session.id,
+                                intent: intent,
+                                command: approvalCommand,
+                                approvalLabel: approvalLabel,
+                                latestInspection: latestInspection,
+                                inspectionHistory: inspectionHistory,
+                                recentHistory: recentHistory,
+                                persistMessages: persistMessages
+                            )
+                        )
+                        try await persistBrowserRunArtifacts(
+                            outcome: "awaiting_user_approval",
+                            goalText: intent.goalText,
+                            initialURL: intent.initialURL,
+                            session: session,
+                            controller: browserController,
+                            inspectionHistory: inspectionHistory,
+                            recentHistory: recentHistory,
+                            finalSummary: finalText,
+                            scenarioMetadata: scenarioMetadata
+                        )
+                        try persistAssistantMessage(finalText, session: session, shouldStore: persistMessages)
+                        return BrowserScenarioRunSummary(
+                            scenarioID: scenarioMetadata?.id ?? "ad_hoc",
+                            category: scenarioMetadata?.category ?? BrowserScenarioClassifier.category(forGoalText: intent.goalText, initialURL: intent.initialURL),
+                            outcome: "awaiting_user_approval",
+                            finalSummary: finalText
+                        )
+                    }
+
                     let finalText = parsed.displayText.isEmpty
                         ? (command.finalResponse?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Finished the browser task.")
                         : parsed.displayText
@@ -2046,7 +3193,14 @@ final class ChatSessionService {
                     )
                 }
 
-                if let approvalBoundaryLabel = approvalBoundaryLabelIfNeeded(for: command, inspection: latestInspection) {
+                let isApprovedContinuationCommand = BrowserApprovedContinuationGuard.matches(
+                    approvedContinuation,
+                    command: command,
+                    inspection: latestInspection
+                )
+
+                if let approvalBoundaryLabel = approvalBoundaryLabelIfNeeded(for: command, inspection: latestInspection),
+                   !isApprovedContinuationCommand {
                     if scenarioMetadata != nil {
                         let finalText = "Stopped before the final confirmation boundary at \"\(approvalBoundaryLabel)\". Approval is still required for any final transaction step."
                         try await persistBrowserRunArtifacts(
@@ -2109,7 +3263,8 @@ final class ChatSessionService {
                         command,
                         inspection: latestInspection,
                         goalFocusTerms: intent.goalFocusTerms,
-                        controller: browserController
+                        controller: browserController,
+                        requireApproval: !isApprovedContinuationCommand
                     )
                 } catch {
                     let message = (error as? ChromiumBrowserActionError)?.message ?? error.localizedDescription
@@ -2123,7 +3278,8 @@ final class ChatSessionService {
                         staleInspection: latestInspection,
                         refreshedInspection: refreshedInspection,
                         goalFocusTerms: intent.goalFocusTerms,
-                        controller: browserController
+                        controller: browserController,
+                        requireApproval: !isApprovedContinuationCommand
                     ) {
                         latestInspection = recoveredExecution.inspection ?? refreshedInspection
                         recordInspection(latestInspection)
@@ -2132,7 +3288,6 @@ final class ChatSessionService {
                         if recentHistory.count > 6 {
                             recentHistory.removeFirst(recentHistory.count - 6)
                         }
-                        emit(.assistantDelta(recoveredExecution.summary))
                         let recoveredState = await MainActor.run { browserController.browserSnapshot() }
                         lastProgressSnapshot = browserProgressSnapshot(state: recoveredState, inspection: latestInspection)
                         stalledStepCount = 0
@@ -2152,7 +3307,6 @@ final class ChatSessionService {
                     if recentHistory.count > 6 {
                         recentHistory.removeFirst(recentHistory.count - 6)
                     }
-                    emit(.assistantDelta(lastResultSummary))
                     stalledStepCount = 0
                     recoveryCount += 1
                     if recoveryCount >= 4 {
@@ -2168,9 +3322,20 @@ final class ChatSessionService {
                 if recentHistory.count > 6 {
                     recentHistory.removeFirst(recentHistory.count - 6)
                 }
-                emit(.assistantDelta(execution.summary))
 
                 if let stopReason = BrowserTransactionalGuard.stopReason(goalText: intent.goalText, inspection: latestInspection) {
+                    let approvedBoundaryCommand = pendingApprovalCommand(from: latestInspection)
+                    if BrowserApprovedContinuationGuard.matches(
+                        approvedContinuation,
+                        command: approvedBoundaryCommand,
+                        inspection: latestInspection
+                    ) {
+                        recentHistory.append("Continuing the already-approved final step while the page advances.")
+                        if recentHistory.count > 6 {
+                            recentHistory.removeFirst(recentHistory.count - 6)
+                        }
+                        continue
+                    }
                     if scenarioMetadata == nil,
                        let approvalCommand = pendingApprovalCommand(from: latestInspection),
                        let approvalLabel = approvalBoundaryLabelIfNeeded(for: approvalCommand, inspection: latestInspection) {
@@ -2251,7 +3416,6 @@ final class ChatSessionService {
                     if recentHistory.count > 6 {
                         recentHistory.removeFirst(recentHistory.count - 6)
                     }
-                    emit(.assistantDelta(lastResultSummary))
                     stalledStepCount = 0
                     recoveryCount += 1
                     if recoveryCount >= 4 {
@@ -2268,7 +3432,8 @@ final class ChatSessionService {
                 scenarioMetadata: scenarioMetadata,
                 latestInspection: &latestInspection,
                 inspectionHistory: &inspectionHistory,
-                recentHistory: &recentHistory
+                recentHistory: &recentHistory,
+                approvedContinuation: approvedContinuation
             ) {
                 return finalSummary
             }
@@ -2300,7 +3465,8 @@ final class ChatSessionService {
         scenarioMetadata: BrowserScenarioMetadata?,
         latestInspection: inout ChromiumInspection?,
         inspectionHistory: inout [ChromiumInspection],
-        recentHistory: inout [String]
+        recentHistory: inout [String],
+        approvedContinuation: BrowserApprovedContinuationContext?
     ) async throws -> BrowserScenarioRunSummary? {
         do {
             try await browserController.settlePageForAgent(timeout: 4)
@@ -2320,7 +3486,12 @@ final class ChatSessionService {
         }
 
         if let approvalCommand = pendingApprovalCommand(from: refreshedInspection),
-           let approvalLabel = approvalBoundaryLabelIfNeeded(for: approvalCommand, inspection: refreshedInspection) {
+           let approvalLabel = approvalBoundaryLabelIfNeeded(for: approvalCommand, inspection: refreshedInspection),
+           !BrowserApprovedContinuationGuard.matches(
+                approvedContinuation,
+                command: approvalCommand,
+                inspection: refreshedInspection
+           ) {
             if scenarioMetadata != nil {
                 let finalText = "Stopped before the final confirmation boundary at \"\(approvalLabel)\". Approval is still required for any final transaction step."
                 try await persistBrowserRunArtifacts(
@@ -2654,7 +3825,7 @@ final class ChatSessionService {
             let inspection = try await controller.inspectCurrentPageForAgent()
             return BrowserAgentExecutionResult(summary: "Page settled at \(state.urlString).", inspection: inspection)
         case .captureSnapshot:
-            let artifact = try await controller.captureSnapshotForAgent(label: command.label)
+            let artifact = try await controller.captureScrolledSnapshotForAgent(label: command.label)
             return BrowserAgentExecutionResult(summary: "Captured browser snapshot at \(artifact.filePath).", inspection: nil)
         case .done:
             return BrowserAgentExecutionResult(summary: command.finalResponse ?? "Browser task completed.", inspection: nil)
@@ -2714,6 +3885,8 @@ final class ChatSessionService {
     ) async throws -> BrowserCodexTurnResult {
         let runtimeStream = runtime.streamEvents()
         var assistantLines: [String] = []
+        var streamedAssistantText = ""
+        var streamedDisplayText = ""
         var stderrLines: [String] = []
         var identifiedThreadId: String?
 
@@ -2722,8 +3895,15 @@ final class ChatSessionService {
                 switch event {
                 case let .stdoutLine(line):
                     assistantLines.append(line)
+                    streamedAssistantText += streamedAssistantText.isEmpty ? line : "\n\(line)"
                     if forwardAssistantLines {
-                        emit(.assistantDelta(line))
+                        let sanitizedLine = nextSanitizedAssistantDelta(
+                            from: streamedAssistantText,
+                            previousDisplayText: &streamedDisplayText
+                        )
+                        if !sanitizedLine.isEmpty {
+                            emit(.assistantDelta(sanitizedLine))
+                        }
                     }
                 case let .stderrLine(line):
                     stderrLines.append(line)
@@ -2759,6 +3939,25 @@ final class ChatSessionService {
         return BrowserCodexTurnResult(assistantText: assistantText, stderrText: stderrText, result: result)
     }
 
+    private func nextSanitizedAssistantDelta(
+        from fullAssistantText: String,
+        previousDisplayText: inout String
+    ) -> String {
+        let parsedDisplayText = BrowserAgentResponseParser.parse(fullAssistantText).displayText
+        guard parsedDisplayText != previousDisplayText else {
+            return ""
+        }
+
+        let delta: String
+        if parsedDisplayText.hasPrefix(previousDisplayText) {
+            delta = String(parsedDisplayText.dropFirst(previousDisplayText.count))
+        } else {
+            delta = parsedDisplayText
+        }
+        previousDisplayText = parsedDisplayText
+        return delta.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func persistBrowserRunArtifacts(
         outcome: String,
         goalText: String,
@@ -2772,7 +3971,7 @@ final class ChatSessionService {
     ) async throws {
         var captureWarnings: [String] = []
         do {
-            _ = try await controller.captureSnapshotForAgent(label: outcome)
+            _ = try await controller.captureScrolledSnapshotForAgent(label: outcome)
         } catch {
             captureWarnings.append("Automatic final snapshot failed: \(error.localizedDescription)")
         }
@@ -2889,15 +4088,19 @@ final class ChatSessionService {
         resolution: BrowserSemanticResolution,
         inspection: ChromiumInspection?
     ) throws {
-        guard let workflow = BrowserPageAnalyzer.workflow(for: inspection),
-              !workflow.requirements.isEmpty else {
+        guard let workflow = BrowserPageAnalyzer.workflow(for: inspection) else {
+            return
+        }
+        let promptableRequirement = nextPromptableRequirement(in: inspection)
+        guard !workflow.requirements.isEmpty || promptableRequirement != nil else {
             return
         }
 
         let detail = (resolution.label ?? command.label ?? command.text ?? command.selector ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedDetail = detail.lowercased()
-        let missing = workflow.requirements.prefix(3).map(\.label).joined(separator: ", ")
+        let missing = (workflow.requirements.isEmpty ? [promptableRequirement].compactMap { $0?.label } : workflow.requirements.prefix(3).map(\.label))
+            .joined(separator: ", ")
         let isNoiseAction = normalizedDetail.contains("use email instead")
             || normalizedDetail.contains("use phone instead")
             || normalizedDetail.contains("sign in")
@@ -2918,6 +4121,14 @@ final class ChatSessionService {
     private func pendingApprovalCommand(from inspection: ChromiumInspection?) -> BrowserAgentCommand? {
         guard let inspection,
               let boundary = BrowserTransactionalGuard.highConfidenceFinalBoundary(in: inspection) else {
+            return nil
+        }
+        guard BrowserTransactionalGuard.approvalShouldBeRequired(
+            actionName: BrowserAgentAction.clickSelector.rawValue,
+            detail: boundary.label,
+            transactionalKind: boundary.kind,
+            inspection: inspection
+        ) else {
             return nil
         }
 
@@ -3166,6 +4377,17 @@ final class ChatSessionService {
             createdAt: Date()
         )
         try sessionStore.appendMessage(assistantMessage)
+    }
+
+    private func emitAssistantMessage(
+        _ text: String,
+        session: AssistantSession? = nil,
+        shouldStore: Bool = false
+    ) throws {
+        if let session {
+            try persistAssistantMessage(text, session: session, shouldStore: shouldStore)
+        }
+        emit(.assistantMessage(text))
     }
 }
 

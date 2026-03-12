@@ -14,6 +14,22 @@ struct PersonaContactProfile: Codable, Hashable {
     var country: String?
 }
 
+struct UserProfile: Codable, Hashable {
+    var name: String?
+    var firstName: String?
+    var lastName: String?
+    var email: String?
+    var phoneNumber: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case firstName
+        case lastName
+        case email
+        case phoneNumber
+    }
+}
+
 struct Persona: Identifiable, Codable, Hashable {
     var id: String
     var name: String

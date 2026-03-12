@@ -21,13 +21,13 @@ static bool AHChromiumIsSubprocess(int argc, char* _Nullable argv[_Nullable]) {
   return false;
 }
 
-class AHChromiumApp : public CefApp {
+class AHChromiumSubprocessApp : public CefApp {
  public:
-  AHChromiumApp() = default;
+  AHChromiumSubprocessApp() = default;
 
  private:
-  IMPLEMENT_REFCOUNTING(AHChromiumApp);
-  DISALLOW_COPY_AND_ASSIGN(AHChromiumApp);
+  IMPLEMENT_REFCOUNTING(AHChromiumSubprocessApp);
+  DISALLOW_COPY_AND_ASSIGN(AHChromiumSubprocessApp);
 };
 
 int AHChromiumMaybeRunSubprocess(int argc, char* _Nullable argv[_Nullable]) {
@@ -41,6 +41,6 @@ int AHChromiumMaybeRunSubprocess(int argc, char* _Nullable argv[_Nullable]) {
   }
 
   CefMainArgs mainArgs(argc, argv);
-  CefRefPtr<CefApp> app = new AHChromiumApp();
+  CefRefPtr<CefApp> app = new AHChromiumSubprocessApp();
   return CefExecuteProcess(mainArgs, app, nullptr);
 }

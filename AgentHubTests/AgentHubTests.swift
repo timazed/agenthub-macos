@@ -81,6 +81,75 @@ struct AgentHubTests {
     }
 
     @Test
+    func userProfileManagerLoadsContactProfileFromUserDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubUserProfile-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        try paths.prepare()
+        try """
+        {
+          "name": "Tima Zelinsky",
+          "email": "tima@example.com",
+          "phoneNumber": "4244134321"
+        }
+        """.write(to: paths.userProfileURL, atomically: true, encoding: .utf8)
+
+        let manager = UserProfileManager(paths: paths)
+        let profile = try #require(manager.loadContactProfile())
+
+        #expect(profile.fullName == "Tima Zelinsky")
+        #expect(profile.firstName == "Tima")
+        #expect(profile.lastName == "Zelinsky")
+        #expect(profile.email == "tima@example.com")
+        #expect(profile.phoneNumber == "4244134321")
+    }
+
+    @Test
+    func userProfileManagerPrefersExplicitFirstAndLastName() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubExplicitUserProfile-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        try paths.prepare()
+        try """
+        {
+          "name": "Tima",
+          "firstName": "Timothy",
+          "lastName": "Zelinsky",
+          "email": "timothy@example.com",
+          "phoneNumber": "4244134321"
+        }
+        """.write(to: paths.userProfileURL, atomically: true, encoding: .utf8)
+
+        let manager = UserProfileManager(paths: paths)
+        let profile = try #require(manager.loadContactProfile())
+
+        #expect(profile.fullName == "Tima")
+        #expect(profile.firstName == "Timothy")
+        #expect(profile.lastName == "Zelinsky")
+        #expect(profile.email == "timothy@example.com")
+        #expect(profile.phoneNumber == "4244134321")
+    }
+
+    @Test
+    func userProfileManagerFallsBackToLegacyRootProfile() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubLegacyUserProfile-\(UUID().uuidString)", isDirectory: true)
+        let paths = AppPaths(root: root)
+        try paths.prepare()
+        try """
+        {
+          "name": "Legacy User",
+          "email": "legacy@example.com",
+          "phoneNumber": "5551234567"
+        }
+        """.write(to: paths.legacyUserProfileURL, atomically: true, encoding: .utf8)
+
+        let manager = UserProfileManager(paths: paths)
+        let profile = try #require(manager.loadContactProfile())
+
+        #expect(profile.fullName == "Legacy User")
+        #expect(profile.email == "legacy@example.com")
+        #expect(profile.phoneNumber == "5551234567")
+    }
+
+    @Test
     func restaurantSearchRequestDefaultsMatchPrototypeInputs() throws {
         let request = ChromiumRestaurantSearchRequest.opentableDefault
 
@@ -132,6 +201,10 @@ struct AgentHubTests {
         #expect(goAhead.approved)
         #expect(goAhead.phoneNumber == nil)
 
+        let yesDoIt = try #require(BrowserApprovalResponseParser.parse("yes do it"))
+        #expect(yesDoIt.approved)
+        #expect(yesDoIt.phoneNumber == nil)
+
         let reservation = try #require(BrowserApprovalResponseParser.parse("make the reservation"))
         #expect(reservation.approved)
         #expect(reservation.phoneNumber == nil)
@@ -155,6 +228,210 @@ struct AgentHubTests {
 
         #expect(response.approved)
         #expect(response.phoneNumber == "4244134321")
+    }
+
+    @Test
+    func browserApprovedContinuationGuardMatchesApprovedFinalSelector() throws {
+        let approved = BrowserApprovedContinuationContext(
+            intent: GenericBrowserChatIntent(
+                goalText: "Complete the reservation",
+                initialURL: nil,
+                goalFocusTerms: [],
+                providedData: nil
+            ),
+            command: BrowserAgentCommand(
+                action: .clickSelector,
+                url: nil,
+                selector: "#complete-reservation",
+                text: nil,
+                key: nil,
+                timeoutSeconds: nil,
+                deltaY: nil,
+                label: "Complete reservation",
+                finalResponse: nil,
+                rationale: nil
+            ),
+            approvalLabel: "Complete reservation"
+        )
+
+        let candidate = BrowserAgentCommand(
+            action: .clickSelector,
+            url: nil,
+            selector: "#complete-reservation",
+            text: nil,
+            key: nil,
+            timeoutSeconds: nil,
+            deltaY: nil,
+            label: "Complete reservation",
+            finalResponse: nil,
+            rationale: nil
+        )
+
+        #expect(BrowserApprovedContinuationGuard.matches(approved, command: candidate, inspection: nil))
+    }
+
+    @Test
+    func browserApprovedContinuationGuardDoesNotMatchAuthToggleNoise() throws {
+        let approved = BrowserApprovedContinuationContext(
+            intent: GenericBrowserChatIntent(
+                goalText: "Complete the reservation",
+                initialURL: nil,
+                goalFocusTerms: [],
+                providedData: nil
+            ),
+            command: BrowserAgentCommand(
+                action: .clickSelector,
+                url: nil,
+                selector: "#complete-reservation",
+                text: nil,
+                key: nil,
+                timeoutSeconds: nil,
+                deltaY: nil,
+                label: "Complete reservation",
+                finalResponse: nil,
+                rationale: nil
+            ),
+            approvalLabel: "Complete reservation"
+        )
+
+        let candidate = BrowserAgentCommand(
+            action: .clickSelector,
+            url: nil,
+            selector: "#continue-with-email",
+            text: nil,
+            key: nil,
+            timeoutSeconds: nil,
+            deltaY: nil,
+            label: "Use email instead",
+            finalResponse: nil,
+            rationale: nil
+        )
+
+        #expect(BrowserApprovedContinuationGuard.matches(approved, command: candidate, inspection: nil) == false)
+    }
+
+    @Test
+    func browserApprovedContinuationGuardDoesNotMatchBlockedFinalStep() throws {
+        let approved = BrowserApprovedContinuationContext(
+            intent: GenericBrowserChatIntent(
+                goalText: "Complete the reservation",
+                initialURL: nil,
+                goalFocusTerms: [],
+                providedData: nil
+            ),
+            command: BrowserAgentCommand(
+                action: .clickSelector,
+                url: nil,
+                selector: "#complete-reservation",
+                text: nil,
+                key: nil,
+                timeoutSeconds: nil,
+                deltaY: nil,
+                label: "Complete reservation",
+                finalResponse: nil,
+                rationale: nil
+            ),
+            approvalLabel: "Complete reservation"
+        )
+
+        let candidate = BrowserAgentCommand(
+            action: .clickSelector,
+            url: nil,
+            selector: "#complete-reservation",
+            text: nil,
+            key: nil,
+            timeoutSeconds: nil,
+            deltaY: nil,
+            label: "Complete reservation",
+            finalResponse: nil,
+            rationale: nil
+        )
+
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "final_confirmation",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "details-dialog-form",
+                    label: "Last step, you'll need to add some details to reserve",
+                    selector: "#details-dialog form",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "first-name-field",
+                            label: "First name",
+                            selector: "#firstName",
+                            controlType: "text",
+                            value: nil,
+                            options: [],
+                            autocomplete: "given-name",
+                            inputMode: nil,
+                            fieldPurpose: "first_name",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: "First name is required."
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [
+                ChromiumSemanticDialog(
+                    id: "details-dialog",
+                    label: "Last step, you'll need to add some details to reserve",
+                    selector: "#details-dialog",
+                    primaryActionLabel: "Complete reservation",
+                    primaryActionSelector: "#complete-reservation",
+                    dismissSelector: "#close"
+                )
+            ],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(BrowserApprovedContinuationGuard.matches(approved, command: candidate, inspection: inspection) == false)
     }
 
     @Test
@@ -244,6 +521,119 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserAgentResponseParserExtractsCommandPayloadWithoutClosingTag() throws {
+        let response = """
+        Opening the date picker now.
+        <agenthub_browser_command>{"action":"click_selector","selector":"#restaurantProfileDtpDayPicker","text":null,"url":null,"key":null,"timeoutSeconds":null,"deltaY":null,"label":"Date selector","finalResponse":null,"rationale":"Open the venue date picker first."}
+        """
+
+        let parsed = BrowserAgentResponseParser.parse(response)
+
+        #expect(parsed.displayText == "Opening the date picker now.")
+        #expect(parsed.command?.action == .clickSelector)
+        #expect(parsed.command?.selector == "#restaurantProfileDtpDayPicker")
+    }
+
+    @Test
+    func browserAgentResponseParserSuppressesPartialStreamingCommandFragment() throws {
+        let response = """
+        Opening the date picker now.
+        <agenthub_browser_command>{"action":"click_selector","selector":"#restaurantProfileDtpDayPicker"
+        """
+
+        let parsed = BrowserAgentResponseParser.parse(response)
+
+        #expect(parsed.displayText == "Opening the date picker now.")
+        #expect(parsed.command == nil)
+    }
+
+    @Test
+    @MainActor
+    func chatViewModelPreservesDiscreteBrowserMessagesAcrossReload() async throws {
+        let harness = try makeChatViewModelHarness()
+        let userText = "make a reservation for me on opentable. Sake House By Hikari. culver city. march 11. 7pm. 2 people."
+        let firstPrompt = "I still need the verification code for this page."
+        let secondPrompt = "That verification code was rejected. Send the latest code and I’ll try again."
+
+        harness.chatService.onSend = { service, text in
+            let now = Date()
+            service.persistedMessages = [
+                Message(id: UUID(), sessionId: harness.sessionID, role: .user, text: text, source: .userInput, createdAt: now),
+                Message(id: UUID(), sessionId: harness.sessionID, role: .assistant, text: firstPrompt, source: .codexStdout, createdAt: now),
+                Message(id: UUID(), sessionId: harness.sessionID, role: .assistant, text: secondPrompt, source: .codexStdout, createdAt: now)
+            ]
+            service.emit(.assistantMessage(firstPrompt))
+            service.emit(.assistantMessage(secondPrompt))
+        }
+
+        harness.viewModel.inputText = userText
+        harness.viewModel.sendCurrentInput()
+        await waitForChatViewModelToSettle(harness.viewModel, expectedMessageCount: 3)
+
+        #expect(harness.viewModel.messages.map(\.text) == [userText, firstPrompt, secondPrompt])
+
+        harness.viewModel.load()
+        #expect(harness.viewModel.messages.map(\.text) == [userText, firstPrompt, secondPrompt])
+    }
+
+    @Test
+    @MainActor
+    func chatViewModelStillStreamsRuntimeDeltasIntoSingleMessage() async throws {
+        let harness = try makeChatViewModelHarness()
+
+        harness.chatService.onSend = { service, text in
+            let now = Date()
+            service.persistedMessages = [
+                Message(id: UUID(), sessionId: harness.sessionID, role: .user, text: text, source: .userInput, createdAt: now),
+                Message(id: UUID(), sessionId: harness.sessionID, role: .assistant, text: "Line one\nLine two", source: .codexStdout, createdAt: now)
+            ]
+            service.emit(.assistantDelta("Line one"))
+            service.emit(.assistantDelta("Line two"))
+        }
+
+        harness.viewModel.inputText = "hello"
+        harness.viewModel.sendCurrentInput()
+        await waitForChatViewModelToSettle(harness.viewModel, expectedMessageCount: 2)
+
+        #expect(harness.viewModel.messages.map(\.text) == ["hello", "Line one\nLine two"])
+    }
+
+    @Test
+    func browserReplayFixturePromotesOpenTablePhoneVerificationPrepFromVisualText() throws {
+        let fixture = try loadBrowserReplayFixture(named: "opentable-phone-verification-prep")
+        let inspection = replayedInspection(for: fixture)
+        let canonical = try #require(BrowserPageAnalyzer.canonicalState(for: inspection, priorInspection: fixture.priorInspection))
+        let requirement = try #require(
+            BrowserPageAnalyzer.followUpRequirementAfterApprovedFinalAction(
+                currentInspection: inspection,
+                priorInspection: fixture.priorInspection
+            )
+        )
+
+        #expect(canonical.stage.rawValue == fixture.expectedStage)
+        #expect(requirement.kind == fixture.expectedRequirementKind)
+        #expect(BrowserPageAnalyzer.requirements(for: inspection).contains(where: { $0.kind == fixture.expectedRequirementKind }))
+    }
+
+    @Test
+    func browserReplayFixturePromotesOpenTableVerificationCodeGateFromVisualText() throws {
+        let fixture = try loadBrowserReplayFixture(named: "opentable-verification-code-gate")
+        let inspection = replayedInspection(for: fixture)
+        let canonical = try #require(BrowserPageAnalyzer.canonicalState(for: inspection, priorInspection: fixture.priorInspection))
+        let requirement = try #require(
+            BrowserPageAnalyzer.followUpRequirementAfterApprovedFinalAction(
+                currentInspection: inspection,
+                priorInspection: fixture.priorInspection
+            )
+        )
+
+        #expect(canonical.stage.rawValue == fixture.expectedStage)
+        #expect(requirement.kind == fixture.expectedRequirementKind)
+        #expect(BrowserPageAnalyzer.requirements(for: inspection).contains(where: { $0.kind == fixture.expectedRequirementKind }))
+        #expect(BrowserPageAnalyzer.verificationInterruptionLikely(for: inspection))
+    }
+
+    @Test
     func browserSemanticResolverRetargetsStaleFieldSelector() throws {
         let command = BrowserAgentCommand(
             action: .typeText,
@@ -269,6 +659,51 @@ struct AgentHubTests {
 
         #expect(resolution?.selector == "#destination-new")
         #expect(resolution?.label == "Destination")
+    }
+
+    @Test
+    func browserSemanticResolverKeepsDateIntentOnDatePickerTargets() throws {
+        let command = BrowserAgentCommand(
+            action: .selectOption,
+            url: nil,
+            selector: "#restaurantProfileDtpDayPicker-stale",
+            text: "March 11",
+            key: nil,
+            timeoutSeconds: nil,
+            deltaY: nil,
+            label: "Date selector restaurantProfileDtpDayPicker",
+            finalResponse: nil,
+            rationale: "Set the booking date first."
+        )
+        let timeTarget = ChromiumSemanticTarget(
+            id: "target-time",
+            kind: "field",
+            label: "Time selector restaurantProfiletimePickerDtpPicker",
+            selector: "#restaurantProfiletimePickerDtpPicker",
+            purpose: "time",
+            groupLabel: "Reservation details",
+            transactionalKind: nil,
+            priority: 220
+        )
+        let dateTarget = ChromiumSemanticTarget(
+            id: "target-date",
+            kind: "date_picker",
+            label: "Date selector restaurantProfileDtpDayPicker",
+            selector: "#restaurantProfileDtpDayPicker",
+            purpose: "date",
+            groupLabel: "Reservation details",
+            transactionalKind: nil,
+            priority: 60
+        )
+        let inspection = sampleInspection(
+            destinationSelector: "#destination",
+            semanticTargets: [timeTarget, dateTarget]
+        )
+
+        let resolution = BrowserSemanticResolver.resolve(command, inspection: inspection)
+
+        #expect(resolution.selector == "#restaurantProfileDtpDayPicker")
+        #expect(resolution.target?.purpose == "date")
     }
 
     @Test
@@ -753,6 +1188,55 @@ struct AgentHubTests {
         #expect(script.contains("inputmode"))
         #expect(script.contains("bestField.click"))
         #expect(script.contains("bestField.focus"))
+        #expect(script.contains("verificationRoot"))
+        #expect(script.contains("includes(\"phone\")"))
+        #expect(script.contains("queryAllDeep"))
+        #expect(script.contains("document.activeElement"))
+    }
+
+    @Test
+    @MainActor
+    func browserNativeVerificationAutofillReadinessRequiresRealInputContext() {
+        #expect(
+            ChromiumBrowserController.nativeVerificationAutofillReady([
+                "focused": true,
+                "hasInputContext": false,
+                "responderClass": "RenderWidgetHostViewCocoa",
+                "inputClientClass": "RenderWidgetHostViewCocoa"
+            ]) == false
+        )
+
+        #expect(
+            ChromiumBrowserController.nativeVerificationAutofillReady([
+                "focused": true,
+                "hasInputContext": true,
+                "responderClass": "RenderWidgetHostViewCocoa",
+                "inputClientClass": "RenderWidgetHostViewCocoa"
+            ])
+        )
+    }
+
+    @Test
+    func browserAdvanceVerificationStepScriptPrefersContinueOverAuthToggles() throws {
+        let script = ChromiumBrowserScripts.advanceVerificationStep
+
+        #expect(script.contains("requestSubmit"))
+        #expect(script.contains("continuationRegex"))
+        #expect(script.contains("use email instead"))
+        #expect(script.contains("use phone instead"))
+        #expect(script.contains("KeyboardEvent"))
+    }
+
+    @Test
+    func browserVerificationCodeScriptScopesToVerificationDialog() throws {
+        let script = ChromiumBrowserScripts.typeVerificationCode("823600")
+
+        #expect(script.contains("verificationRoot"))
+        #expect(script.contains("includes(\"phone\")"))
+        #expect(script.contains("document.activeElement"))
+        #expect(script.contains("editableFields.length === 1"))
+        #expect(script.contains("targetField.blur"))
+        #expect(script.contains("queryAllDeep"))
     }
 
     @Test
@@ -772,6 +1256,14 @@ struct AgentHubTests {
         #expect(script.contains("sameCalendarDay"))
         #expect(script.contains("data-date"))
         #expect(script.contains("datetime"))
+    }
+
+    @Test
+    func browserSelectOptionScriptNormalizesMeridiemPunctuation() throws {
+        let script = ChromiumBrowserScripts.selectOption(selector: "#restaurantProfiletimePickerDtpPicker", text: "7:00 p.m.")
+
+        #expect(script.contains("$1m"))
+        #expect(script.contains("replace(/[.,]/g, \"\")"))
     }
 
     @Test
@@ -803,6 +1295,22 @@ struct AgentHubTests {
         #expect(script.contains("review(?: reservation| booking| details| step| summary)"))
         #expect(script.contains("hasLateStageBookingStructure"))
         #expect(script.contains("isStandaloneControl"))
+    }
+
+    @Test
+    func browserInspectionScriptExtractsDialogHostedFormFields() throws {
+        let script = ChromiumBrowserScripts.inspectPage
+
+        #expect(script.contains("dialogDerivedForms"))
+        #expect(script.contains("dialog-form-"))
+        #expect(script.contains("modalLikeContainers"))
+        #expect(script.contains("candidateModalAncestorsFor"))
+        #expect(script.contains("document.body"))
+        #expect(script.contains("containerLabelFor"))
+        #expect(script.contains("combinedForms"))
+        #expect(script.contains("forms: combinedForms"))
+        #expect(script.contains("activeVerificationField"))
+        #expect(script.contains("queryAllDeep"))
     }
 
     @Test
@@ -1251,6 +1759,450 @@ struct AgentHubTests {
     }
 
     @Test
+    func browserPageAnalyzerCanonicalStateClassifiesFinalSubmitAsApprovalBoundary() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "final_confirmation",
+            formCount: 0,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 98
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "final_confirmation",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let state = try #require(BrowserPageAnalyzer.canonicalState(for: inspection))
+
+        #expect(state.stage == .approvalBoundary)
+        #expect(state.approvalBoundaryLabel == "Complete reservation")
+        #expect(state.promptableRequirement == nil)
+    }
+
+    @Test
+    func browserPageAnalyzerCanonicalStateClassifiesPhoneVerificationPrep() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "contact-form",
+                    label: "Diner details",
+                    selector: "form.diner-details",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "#phoneNumber",
+                            controlType: "tel",
+                            value: nil,
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: "Phone number is required."
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [
+                ChromiumSemanticNotice(
+                    id: "notice-phone",
+                    kind: "status",
+                    label: "You will receive a text message to verify your account.",
+                    selector: ".verify-account"
+                )
+            ],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-auth",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 10
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let state = try #require(BrowserPageAnalyzer.canonicalState(for: inspection))
+
+        #expect(state.stage == .phoneVerificationPrep)
+        #expect(state.promptableRequirement?.kind == "phone_number")
+        #expect(state.requiresVisualRefresh)
+    }
+
+    @Test
+    func browserPageAnalyzerUserFacingProgressCopyUsesCanonicalResultsState() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable Search Results",
+            url: "https://www.opentable.com/s?term=sake-house-by-hikari",
+            pageStage: "results",
+            formCount: 0,
+            hasSearchField: true,
+            interactiveElements: [],
+            forms: [],
+            resultLists: [
+                ChromiumSemanticResultList(
+                    id: "results",
+                    label: "Results",
+                    selector: ".results",
+                    itemCount: 4,
+                    itemTitles: ["Sake House By Hikari"]
+                )
+            ],
+            cards: [
+                ChromiumSemanticCard(
+                    id: "card-0",
+                    title: "Sake House By Hikari",
+                    subtitle: "Culver City",
+                    selector: ".card",
+                    actionSelector: ".card a",
+                    badges: []
+                )
+            ],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [],
+            transactionalBoundaries: [],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "results",
+                selectedParameterCount: 0,
+                hasVenueAction: true,
+                hasBookingWidget: false,
+                hasSlotSelection: false,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: false,
+                hasFinalConfirmationBoundary: false,
+                selectedDate: false,
+                selectedTime: false,
+                selectedPartySize: false
+            )
+        )
+
+        let state = try #require(BrowserPageAnalyzer.canonicalState(for: inspection))
+        let message = BrowserPageAnalyzer.userFacingProgressMessage(for: state)
+
+        #expect(state.stage == .results)
+        #expect(message == "I’m on the results step and narrowing to the exact venue.")
+    }
+
+    @Test
+    func browserPageAnalyzerUserFacingProgressCopyUsesCanonicalDetailState() throws {
+        let inspection = ChromiumInspection(
+            title: "Sake House By Hikari Restaurant - Culver City, CA | OpenTable",
+            url: "https://www.opentable.com/r/sake-house-by-hikari-culver-city",
+            pageStage: "venue_detail",
+            formCount: 0,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [],
+            resultLists: [],
+            cards: [
+                ChromiumSemanticCard(
+                    id: "venue-card",
+                    title: "Sake House By Hikari",
+                    subtitle: "Culver City",
+                    selector: ".venue",
+                    actionSelector: nil,
+                    badges: []
+                )
+            ],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "reserve",
+                    label: "Reserve table",
+                    selector: ".reserve",
+                    role: "button",
+                    priority: 80
+                )
+            ],
+            transactionalBoundaries: [],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "venue_detail",
+                selectedParameterCount: 1,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: false,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: false,
+                hasFinalConfirmationBoundary: false,
+                selectedDate: true,
+                selectedTime: false,
+                selectedPartySize: false
+            )
+        )
+
+        let state = try #require(BrowserPageAnalyzer.canonicalState(for: inspection))
+        let message = BrowserPageAnalyzer.userFacingProgressMessage(for: state)
+
+        #expect(state.stage == .detail)
+        #expect(message == "I’m on the venue detail step and still working through the booking flow.")
+    }
+
+    @Test
+    func browserPageAnalyzerCanonicalStateClassifiesVerificationCodeDialog() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "verification-form",
+                    label: "Enter verification code to reserve",
+                    selector: "#auth-form",
+                    submitLabel: "Continue",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "otp-field",
+                            label: "Enter verification code",
+                            selector: "#authenticationModalIframe input",
+                            controlType: "text",
+                            value: nil,
+                            options: [],
+                            autocomplete: "one-time-code",
+                            inputMode: "numeric",
+                            fieldPurpose: "verification_code",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [
+                ChromiumSemanticDialog(
+                    id: "otp-dialog",
+                    label: "Enter verification code to reserve",
+                    selector: "#otp-dialog",
+                    primaryActionLabel: "Continue",
+                    primaryActionSelector: "#continue",
+                    dismissSelector: "#close"
+                )
+            ],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [
+                ChromiumSemanticNotice(
+                    id: "notice-otp",
+                    kind: "status",
+                    label: "We sent a text message to verify your account.",
+                    selector: ".otp-notice"
+                )
+            ],
+            stepIndicators: [
+                ChromiumStepIndicator(
+                    id: "step-verify",
+                    label: "Verify phone",
+                    selector: ".verify-step",
+                    isCurrent: true
+                )
+            ],
+            primaryActions: [],
+            transactionalBoundaries: [],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: false,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let state = try #require(BrowserPageAnalyzer.canonicalState(for: inspection))
+
+        #expect(state.stage == .verificationCode)
+        #expect(state.promptableRequirement?.kind == "verification_code")
+        #expect(state.requiresVisualRefresh)
+    }
+
+    @Test
+    func browserPageAnalyzerCanonicalStateClassifiesRejectedVerificationCodeAsFailure() throws {
+        let inspection = ChromiumInspection(
+            title: "Verify your code",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "verification-form",
+                    label: "Enter verification code",
+                    selector: "#auth-form",
+                    submitLabel: "Continue",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "otp-field",
+                            label: "Verification code",
+                            selector: "#verificationCode",
+                            controlType: "text",
+                            value: nil,
+                            options: [],
+                            autocomplete: "one-time-code",
+                            inputMode: "numeric",
+                            fieldPurpose: "verification_code",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: "Incorrect code. Try again."
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [
+                ChromiumSemanticDialog(
+                    id: "otp-dialog",
+                    label: "Enter verification code to reserve",
+                    selector: "#otp-dialog",
+                    primaryActionLabel: "Continue",
+                    primaryActionSelector: "#continue",
+                    dismissSelector: "#close"
+                )
+            ],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [
+                ChromiumSemanticNotice(
+                    id: "notice-error",
+                    kind: "error",
+                    label: "Incorrect code. Try again.",
+                    selector: ".otp-error"
+                )
+            ],
+            stepIndicators: [],
+            primaryActions: [],
+            transactionalBoundaries: [],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: nil
+        )
+
+        let state = try #require(BrowserPageAnalyzer.canonicalState(for: inspection))
+
+        #expect(state.stage == .failure)
+        #expect(state.workflow.hasFailureSignal)
+    }
+
+    @Test
     func browserPageAnalyzerInfersVerificationFromStepIndicatorsAndNotices() throws {
         let inspection = ChromiumInspection(
             title: "Verify your code",
@@ -1291,6 +2243,1019 @@ struct AgentHubTests {
 
         let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspection))
         #expect(workflow.stage == "verification")
+    }
+
+    @Test
+    func browserPageAnalyzerSynthesizesVerificationRequirementForLateStageAuthDialog() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 0,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [],
+            resultLists: [],
+            cards: [],
+            dialogs: [
+                ChromiumSemanticDialog(
+                    id: "dialog-0",
+                    label: "Sign in",
+                    selector: "#signin-dialog",
+                    primaryActionLabel: "Continue",
+                    primaryActionSelector: "#continue",
+                    dismissSelector: nil
+                )
+            ],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [
+                ChromiumSemanticNotice(
+                    id: "notice-0",
+                    kind: "info",
+                    label: "We texted you a verification code to finish signing in.",
+                    selector: ".verification-message"
+                )
+            ],
+            stepIndicators: [
+                ChromiumStepIndicator(
+                    id: "step-0",
+                    label: "Verify phone",
+                    selector: ".step.verify",
+                    isCurrent: true
+                )
+            ],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-email",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 5
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let requirements = BrowserPageAnalyzer.requirements(for: inspection)
+        let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspection))
+
+        #expect(requirements.first?.kind == "verification_code")
+        #expect(workflow.stage == "verification")
+        #expect(workflow.readyToContinue == false)
+    }
+
+    @Test
+    func browserPageAnalyzerFlagsFinalBoundaryThatMayOpenVerification() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "final_confirmation",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "diner-form",
+                    label: "Diner details",
+                    selector: "#diner-form",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "#phoneNumber",
+                            controlType: "tel",
+                            value: "4244134321",
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-auth",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 10
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "final_confirmation",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(BrowserPageAnalyzer.verificationInterruptionLikely(for: inspection) == false)
+        #expect(BrowserPageAnalyzer.finalBoundaryMayTriggerVerification(for: inspection))
+    }
+
+    @Test
+    func browserPageAnalyzerInfersVerificationAfterApprovedFinalActionWhenLateStagePageStalls() throws {
+        let priorInspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "final_confirmation",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "diner-form",
+                    label: "Diner details",
+                    selector: "#diner-form",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "#phoneNumber",
+                            controlType: "tel",
+                            value: "4244134321",
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-auth",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 10
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "final_confirmation",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+        let currentInspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "diner-form",
+                    label: "Diner details",
+                    selector: "#diner-form",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "#phoneNumber",
+                            controlType: "tel",
+                            value: "4244134321",
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-auth",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 10
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let followUpRequirement = BrowserPageAnalyzer.followUpRequirementAfterApprovedFinalAction(
+            currentInspection: currentInspection,
+            priorInspection: priorInspection
+        )
+        #expect(followUpRequirement?.kind == "verification_code")
+        #expect(
+            BrowserPageAnalyzer.verificationLikelyAfterApprovedFinalAction(
+                currentInspection: currentInspection,
+                priorInspection: priorInspection
+            )
+        )
+    }
+
+    @Test
+    func browserPageAnalyzerPreservesVerificationContextWhenLateStageInspectionGoesStale() throws {
+        let pendingVerificationInspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "verification-form",
+                    label: "Enter verification code to reserve",
+                    selector: "#auth-form",
+                    submitLabel: "Continue",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "otp-field",
+                            label: "Enter verification code",
+                            selector: "#authenticationModalIframe input",
+                            controlType: "text",
+                            value: nil,
+                            options: [],
+                            autocomplete: "one-time-code",
+                            inputMode: "numeric",
+                            fieldPurpose: "verification_code",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [
+                ChromiumSemanticDialog(
+                    id: "otp-dialog",
+                    label: "Enter verification code to reserve",
+                    selector: "#otp-dialog",
+                    primaryActionLabel: "Continue",
+                    primaryActionSelector: "#continue",
+                    dismissSelector: "#close"
+                )
+            ],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [
+                ChromiumSemanticNotice(
+                    id: "notice-otp",
+                    kind: "status",
+                    label: "We sent a text message to verify your account.",
+                    selector: ".otp-notice"
+                )
+            ],
+            stepIndicators: [],
+            primaryActions: [],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let staleLateStageInspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "final_confirmation",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "phone-form",
+                    label: "Reservation details",
+                    selector: "#reservation-details",
+                    submitLabel: nil,
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "#phoneNumber",
+                            controlType: "tel",
+                            value: "4244134321",
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [
+                ChromiumSemanticDialog(
+                    id: "details-dialog",
+                    label: "You’re almost done!",
+                    selector: "#details-dialog",
+                    primaryActionLabel: "Complete reservation",
+                    primaryActionSelector: "#complete-reservation",
+                    dismissSelector: "#close"
+                )
+            ],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "final_confirmation",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        #expect(
+            BrowserPageAnalyzer.shouldPreserveVerificationContext(
+                currentInspection: staleLateStageInspection,
+                pendingInspection: pendingVerificationInspection
+            )
+        )
+    }
+
+    @Test
+    func browserPageAnalyzerSynthesizesVerificationCodeAfterApprovedFinalActionWhenOnlyAuthChromeRemains() throws {
+        let priorInspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "final_confirmation",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "diner-form",
+                    label: "Diner details",
+                    selector: "#diner-form",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "#phoneNumber",
+                            controlType: "tel",
+                            value: "4244134321",
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-auth",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 10
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "final_confirmation",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+        let currentInspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 0,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [
+                ChromiumSemanticNotice(
+                    id: "notice-auth",
+                    kind: "status",
+                    label: "You will receive a text message to verify your account.",
+                    selector: ".verify-notice"
+                )
+            ],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-auth",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 10
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: false,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let followUpRequirement = BrowserPageAnalyzer.followUpRequirementAfterApprovedFinalAction(
+            currentInspection: currentInspection,
+            priorInspection: priorInspection
+        )
+        #expect(followUpRequirement?.kind == "verification_code")
+        #expect(BrowserPageAnalyzer.verificationLikelyAfterApprovedFinalAction(
+            currentInspection: currentInspection,
+            priorInspection: priorInspection
+        ))
+    }
+
+    @Test
+    func browserPageAnalyzerDoesNotSynthesizeVerificationForGenericLateStageSignInDialog() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "diner-form",
+                    label: "Diner details",
+                    selector: "#dinerForm",
+                    submitLabel: "Use email instead",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "#phoneNumber",
+                            controlType: "tel",
+                            value: "4244134321",
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: nil,
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [
+                ChromiumSemanticDialog(
+                    id: "dialog-0",
+                    label: "Sign in",
+                    selector: "#signin-dialog",
+                    primaryActionLabel: "Continue",
+                    primaryActionSelector: "#continue",
+                    dismissSelector: nil
+                )
+            ],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-email",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 5
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let requirements = BrowserPageAnalyzer.requirements(for: inspection)
+        let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspection))
+
+        #expect(requirements.isEmpty)
+        #expect(BrowserPageAnalyzer.verificationInterruptionLikely(for: inspection) == false)
+        #expect(workflow.stage == "final_submit")
+        #expect(workflow.readyToContinue)
+    }
+
+    @Test
+    func browserPageAnalyzerDoesNotTreatReviewAuthChromeAsVerificationWithoutDialog() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "contact-form",
+                    label: "Diner details",
+                    selector: "form.diner-details",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "phone-field",
+                            label: "Phone number",
+                            selector: "#phoneNumber",
+                            controlType: "tel",
+                            value: "4244134321",
+                            options: [],
+                            autocomplete: "tel",
+                            inputMode: "tel",
+                            fieldPurpose: "phone_number",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                ),
+                ChromiumSemanticAction(
+                    id: "action-auth",
+                    label: "Use email instead",
+                    selector: "#continue-with-email",
+                    role: "button",
+                    priority: 20
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let requirements = BrowserPageAnalyzer.requirements(for: inspection)
+        let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspection))
+
+        #expect(requirements.isEmpty)
+        #expect(workflow.stage == "final_submit")
+        #expect(workflow.readyToContinue)
+    }
+
+    @Test
+    func browserPageAnalyzerTreatsPostVerificationDetailsDialogAsDetailsForm() throws {
+        let inspection = ChromiumInspection(
+            title: "OpenTable - Complete your reservation",
+            url: "https://www.opentable.com/booking/details?rid=1036534",
+            pageStage: "review",
+            formCount: 1,
+            hasSearchField: false,
+            interactiveElements: [],
+            forms: [
+                ChromiumSemanticForm(
+                    id: "details-dialog-form",
+                    label: "Last step, you'll need to add some details to reserve",
+                    selector: "#details-dialog form",
+                    submitLabel: "Complete reservation",
+                    fields: [
+                        ChromiumSemanticFormField(
+                            id: "first-name-field",
+                            label: "First name",
+                            selector: "#firstName",
+                            controlType: "text",
+                            value: nil,
+                            options: [],
+                            autocomplete: "given-name",
+                            inputMode: nil,
+                            fieldPurpose: "first_name",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: "First name is required."
+                        ),
+                        ChromiumSemanticFormField(
+                            id: "last-name-field",
+                            label: "Last name",
+                            selector: "#lastName",
+                            controlType: "text",
+                            value: nil,
+                            options: [],
+                            autocomplete: "family-name",
+                            inputMode: nil,
+                            fieldPurpose: "last_name",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        ),
+                        ChromiumSemanticFormField(
+                            id: "email-field",
+                            label: "Email",
+                            selector: "#email",
+                            controlType: "email",
+                            value: nil,
+                            options: [],
+                            autocomplete: "email",
+                            inputMode: "email",
+                            fieldPurpose: "email",
+                            isRequired: true,
+                            isSelected: false,
+                            validationMessage: nil
+                        )
+                    ]
+                )
+            ],
+            resultLists: [],
+            cards: [],
+            dialogs: [
+                ChromiumSemanticDialog(
+                    id: "details-dialog",
+                    label: "Last step, you'll need to add some details to reserve",
+                    selector: "#details-dialog",
+                    primaryActionLabel: "Complete reservation",
+                    primaryActionSelector: "#complete-reservation",
+                    dismissSelector: "#close"
+                )
+            ],
+            controlGroups: [],
+            autocompleteSurfaces: [],
+            datePickers: [],
+            notices: [
+                ChromiumSemanticNotice(
+                    id: "notice-phone",
+                    kind: "info",
+                    label: "We sent a text message to 4244134321 to verify your account.",
+                    selector: ".verification-message"
+                )
+            ],
+            stepIndicators: [],
+            primaryActions: [
+                ChromiumSemanticAction(
+                    id: "action-final",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    role: "button",
+                    priority: 100
+                )
+            ],
+            transactionalBoundaries: [
+                ChromiumTransactionalBoundary(
+                    id: "boundary-final",
+                    kind: "final_confirmation",
+                    label: "Complete reservation",
+                    selector: "#complete-reservation",
+                    confidence: 95
+                )
+            ],
+            semanticTargets: [],
+            booking: nil,
+            bookingFunnel: ChromiumBookingFunnelState(
+                stage: "review",
+                selectedParameterCount: 3,
+                hasVenueAction: true,
+                hasBookingWidget: true,
+                hasSlotSelection: true,
+                hasGuestDetailsForm: true,
+                hasPaymentForm: false,
+                hasReviewSummary: true,
+                hasFinalConfirmationBoundary: true,
+                selectedDate: true,
+                selectedTime: true,
+                selectedPartySize: true
+            )
+        )
+
+        let requirements = BrowserPageAnalyzer.requirements(for: inspection)
+        let workflow = try #require(BrowserPageAnalyzer.workflow(for: inspection))
+
+        #expect(requirements.contains(where: { $0.kind == "first_name" }))
+        #expect(requirements.contains(where: { $0.kind == "last_name" }))
+        #expect(requirements.contains(where: { $0.kind == "email" }))
+        #expect(requirements.contains(where: { $0.kind == "verification_code" }) == false)
+        #expect(BrowserPageAnalyzer.verificationInterruptionLikely(for: inspection) == false)
+        #expect(workflow.stage == "details_form")
     }
 
     @Test
@@ -1421,6 +3386,78 @@ private func sampleInspection(
     )
 }
 
+@MainActor
+private func makeChatViewModelHarness() throws -> ChatViewModelHarness {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentHubChatVM-\(UUID().uuidString)", isDirectory: true)
+    let paths = AppPaths(root: root)
+    let chatService = StubChatSessionService()
+    let personaManager = PersonaManager(paths: paths)
+    let runtimeConfigStore = AppRuntimeConfigStore(paths: paths)
+    let taskOrchestrator = TaskOrchestrator(
+        taskStore: try TaskStore(paths: paths),
+        taskRunStore: TaskRunStore(paths: paths),
+        activityLogStore: ActivityLogStore(paths: paths),
+        personaManager: personaManager,
+        workspaceManager: WorkspaceManager(),
+        paths: paths,
+        runtimeConfigStore: runtimeConfigStore,
+        runtimeFactory: { DummyRuntime() }
+    )
+    let viewModel = ChatViewModel(
+        chatSessionService: chatService,
+        taskOrchestrator: taskOrchestrator,
+        runtimeConfigStore: runtimeConfigStore,
+        personaManager: personaManager
+    )
+
+    return ChatViewModelHarness(
+        viewModel: viewModel,
+        chatService: chatService,
+        sessionID: UUID()
+    )
+}
+
+@MainActor
+private func waitForChatViewModelToSettle(
+    _ viewModel: ChatViewModel,
+    expectedMessageCount: Int? = nil
+) async {
+    var observedBusy = false
+    for _ in 0..<200 {
+        observedBusy = observedBusy || viewModel.isBusy
+        let reachedExpectedCount = expectedMessageCount.map { viewModel.messages.count >= $0 } ?? true
+        if observedBusy, !viewModel.isBusy, reachedExpectedCount {
+            await Task.yield()
+            await Task.yield()
+            return
+        }
+        await Task.yield()
+    }
+}
+
+private func loadBrowserReplayFixture(named name: String) throws -> BrowserReplayFixture {
+    let testFileURL = URL(fileURLWithPath: #filePath)
+    let fixtureURL = testFileURL
+        .deletingLastPathComponent()
+        .appendingPathComponent("Fixtures", isDirectory: true)
+        .appendingPathComponent("BrowserReplay", isDirectory: true)
+        .appendingPathComponent("\(name).json")
+    let data = try Data(contentsOf: fixtureURL)
+    return try JSONDecoder().decode(BrowserReplayFixture.self, from: data)
+}
+
+private func replayedInspection(for fixture: BrowserReplayFixture) -> ChromiumInspection {
+    guard let recognizedText = fixture.recognizedText,
+          !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return fixture.currentInspection
+    }
+    return BrowserPageAnalyzer.augmentInspection(
+        fixture.currentInspection,
+        withVisualRecognitionText: recognizedText,
+        fallback: fixture.priorInspection
+    )
+}
+
 private struct DummyRuntime: CodexRuntime {
     func startNewThread(prompt: String, config: CodexLaunchConfig) async throws -> CodexExecutionResult {
         CodexExecutionResult(threadId: "dummy", exitCode: 0, stdout: "", stderr: "")
@@ -1437,4 +3474,50 @@ private struct DummyRuntime: CodexRuntime {
     }
 
     func cancelCurrentRun() throws {}
+}
+
+private struct ChatViewModelHarness {
+    let viewModel: ChatViewModel
+    let chatService: StubChatSessionService
+    let sessionID: UUID
+}
+
+private final class StubChatSessionService: ChatSessionServicing {
+    var persistedMessages: [Message] = []
+    var onSend: ((_ service: StubChatSessionService, _ text: String) async throws -> Void)?
+
+    private var continuation: AsyncStream<ChatSessionEvent>.Continuation?
+
+    func loadMessages() throws -> [Message] {
+        persistedMessages
+    }
+
+    func streamEvents() -> AsyncStream<ChatSessionEvent> {
+        AsyncStream { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func sendUserMessage(_ text: String) async throws {
+        try await onSend?(self, text)
+        continuation?.yield(.completed)
+        continuation?.finish()
+        continuation = nil
+    }
+
+    func cancelCurrentRun() throws {}
+
+    func emit(_ event: ChatSessionEvent) {
+        continuation?.yield(event)
+    }
+}
+
+private struct BrowserReplayFixture: Decodable {
+    let name: String
+    let sourceArtifact: String
+    let recognizedText: String?
+    let expectedStage: String
+    let expectedRequirementKind: String
+    let priorInspection: ChromiumInspection
+    let currentInspection: ChromiumInspection
 }

@@ -341,6 +341,7 @@ struct ChromiumSnapshotArtifact: Codable, Identifiable, Equatable {
     let filePath: String
     let url: String
     let title: String
+    let recognizedText: String?
 
     init(
         id: UUID = UUID(),
@@ -348,7 +349,8 @@ struct ChromiumSnapshotArtifact: Codable, Identifiable, Equatable {
         label: String,
         filePath: String,
         url: String,
-        title: String
+        title: String,
+        recognizedText: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -356,6 +358,7 @@ struct ChromiumSnapshotArtifact: Codable, Identifiable, Equatable {
         self.filePath = filePath
         self.url = url
         self.title = title
+        self.recognizedText = recognizedText
     }
 }
 

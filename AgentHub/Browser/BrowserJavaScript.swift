@@ -223,7 +223,12 @@ enum ChromiumBrowserScripts {
                 && rect.width > 1
                 && rect.height > 1;
         };
-        const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+        const normalize = (value) => (value || "")
+            .toLowerCase()
+            .replace(/\\b([ap])\\.?\\s*m\\.?\\b/g, "$1m")
+            .replace(/[.,]/g, "")
+            .replace(/\\s+/g, " ")
+            .trim();
         const candidates = Array.from(document.querySelectorAll('a[href], button, [role="button"], [role="link"]'))
             .filter(isVisible)
             .map((element) => {
@@ -398,11 +403,92 @@ enum ChromiumBrowserScripts {
             return element.tagName.toLowerCase();
         };
         const verificationRegex = /verification|verify|one time|one-time|passcode|security code|sms|text message|otp|pin|code/;
+        const collectRoots = () => {
+            const roots = [document];
+            const seenRoots = new Set([document]);
+            const queue = [document.documentElement];
+            while (queue.length > 0) {
+                const node = queue.shift();
+                if (!(node instanceof Element)) { continue; }
+                if (node.shadowRoot && !seenRoots.has(node.shadowRoot)) {
+                    seenRoots.add(node.shadowRoot);
+                    roots.push(node.shadowRoot);
+                    queue.push(...Array.from(node.shadowRoot.children));
+                }
+                queue.push(...Array.from(node.children));
+            }
+            return roots;
+        };
+        const queryAllDeep = (selector) => {
+            const seen = new Set();
+            return collectRoots().flatMap((root) => Array.from(root.querySelectorAll(selector)))
+                .filter((element) => {
+                    if (seen.has(element)) { return false; }
+                    seen.add(element);
+                    return true;
+                });
+        };
+        const isPhoneLikeField = (element) => {
+            const descriptor = normalizeLower([
+                labelFor(element),
+                element?.getAttribute?.("autocomplete"),
+                element?.getAttribute?.("inputmode"),
+                element?.getAttribute?.("type"),
+                element?.getAttribute?.("name"),
+                element?.getAttribute?.("placeholder")
+            ].filter(Boolean).join(" "));
+            return descriptor.includes("phone")
+                || descriptor.includes("tel");
+        };
+        const isEditableField = (element) => {
+            if (!element || !(element instanceof Element)) { return false; }
+            if (element.matches('input, textarea, [role="textbox"]')) { return true; }
+            if (element.getAttribute("contenteditable") === "true"
+                || element.getAttribute("contenteditable") === ""
+                || element.getAttribute("contenteditable") === "plaintext-only") {
+                return true;
+            }
+            return false;
+        };
         const editableSelector = 'input, textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]';
-        const editableFields = Array.from(document.querySelectorAll(editableSelector))
+        const dialogCandidates = queryAllDeep('[role="dialog"], dialog, [aria-modal="true"]')
+            .filter(isVisible)
+            .map((dialog) => {
+                const descriptor = normalizeLower([
+                    labelFor(dialog),
+                    dialog.getAttribute("aria-label"),
+                    dialog.textContent
+                ].filter(Boolean).join(" "));
+                const rect = dialog.getBoundingClientRect();
+                let score = rect.width * rect.height;
+                if (verificationRegex.test(descriptor)) { score += 1_000_000; }
+                if (descriptor.includes("enter verification code")) { score += 1_000_000; }
+                return { dialog, score };
+            })
+            .sort((lhs, rhs) => rhs.score - lhs.score);
+        const verificationRoot = dialogCandidates[0]?.dialog || document.body;
+        const editableFields = queryAllDeep(editableSelector)
             .filter(isVisible);
+        const pageVerificationContext = normalizeLower([
+            verificationRoot.textContent || "",
+            document.body.textContent || ""
+        ].filter(Boolean).join(" "));
+        const activeField = (() => {
+            const active = document.activeElement;
+            if (!isEditableField(active) || !isVisible(active) || isPhoneLikeField(active)) { return null; }
+            const descriptor = normalizeLower([
+                labelFor(active),
+                active.getAttribute?.("autocomplete"),
+                active.getAttribute?.("inputmode"),
+                active.getAttribute?.("type"),
+                verificationRoot.textContent || "",
+                active.closest?.('form, [role="dialog"], dialog, section, div')?.textContent || "",
+                pageVerificationContext
+            ].filter(Boolean).join(" "));
+            return verificationRegex.test(descriptor) ? active : null;
+        })();
 
-        const digitGroups = Array.from(document.querySelectorAll('form, [role="dialog"], dialog, section, div'))
+        const digitGroups = queryAllDeep('form, [role="dialog"], dialog, section, div')
             .filter(isVisible)
             .map((container) => {
                 const fields = Array.from(container.querySelectorAll('input'))
@@ -440,6 +526,8 @@ enum ChromiumBrowserScripts {
                 field.focus?.();
                 commitTextEntry(field, digits[index] || "");
             });
+            const lastField = digitGroup.fields[Math.min(digitGroup.fields.length, Math.max(digits.length, 1)) - 1];
+            lastField?.blur?.();
             return {
                 selector: selectorFor(digitGroup.fields[0]),
                 mode: "digit_group",
@@ -454,35 +542,235 @@ enum ChromiumBrowserScripts {
                     field.getAttribute("autocomplete"),
                     field.getAttribute("inputmode"),
                     field.getAttribute("type"),
+                    verificationRoot.textContent || "",
                     field.closest('form, [role="dialog"], dialog, section, div')?.textContent || ""
                 ].filter(Boolean).join(" "));
                 let score = 0;
-                if (verificationRegex.test(descriptor)) { score += 12; }
-                if (descriptor.includes("one-time-code")) { score += 14; }
-                if (descriptor.includes("otp")) { score += 10; }
-                if (descriptor.includes("numeric") || descriptor.includes("tel") || descriptor.includes("number")) { score += 3; }
+                if (verificationRegex.test(descriptor)) { score += 40; }
+                if (descriptor.includes("one-time-code")) { score += 32; }
+                if (descriptor.includes("otp")) { score += 18; }
+                if (descriptor.includes("numeric") || descriptor.includes("tel") || descriptor.includes("number")) { score += 8; }
+                if ((field.getAttribute("name") || "").toLowerCase().includes("phone")) { score -= 100; }
+                if ((field.getAttribute("autocomplete") || "").toLowerCase().includes("tel")) { score -= 100; }
                 return { field, score };
             })
             .filter((candidate) => candidate.score > 0)
             .sort((lhs, rhs) => rhs.score - lhs.score)[0]?.field;
 
-        if (!bestField) {
+        const fallbackField = activeField
+            || editableFields.find((field) => {
+                const type = (field.getAttribute("type") || "").toLowerCase();
+                const autocomplete = (field.getAttribute("autocomplete") || "").toLowerCase();
+                const inputMode = (field.getAttribute("inputmode") || "").toLowerCase();
+                const placeholder = normalizeLower(field.getAttribute("placeholder"));
+                const name = normalizeLower(field.getAttribute("name"));
+                const label = normalizeLower(labelFor(field));
+                const descriptor = [placeholder, name, label, autocomplete, inputMode, type].join(" ");
+                if (descriptor.includes("phone") || autocomplete.includes("tel") || type === "tel") {
+                    return false;
+                }
+                return descriptor.includes("verification")
+                    || descriptor.includes("code")
+                    || descriptor.includes("otp")
+                    || descriptor.includes("one-time-code")
+                    || (editableFields.length === 1 && verificationRegex.test(normalizeLower(verificationRoot.textContent || "")));
+            })
+            || queryAllDeep(editableSelector)
+                .filter(isVisible)
+                .find((field) => {
+                    const descriptor = normalizeLower([
+                        labelFor(field),
+                        field.getAttribute("placeholder"),
+                        field.getAttribute("name"),
+                        field.closest?.('[role="dialog"], dialog, [aria-modal="true"]')?.textContent || ""
+                    ].filter(Boolean).join(" "));
+                    return verificationRegex.test(descriptor)
+                        && !descriptor.includes("phone");
+                })
+            || null;
+        const targetField = bestField || fallbackField;
+
+        if (!targetField) {
             throw new Error("No visible verification field found.");
         }
 
-        bestField.focus?.();
-        const committedValue = commitTextEntry(bestField, code);
+        targetField.focus?.();
+        const committedValue = commitTextEntry(targetField, code);
+        targetField.blur?.();
         return {
-            selector: selectorFor(bestField),
+            selector: selectorFor(targetField),
             mode: "single_field",
             value: committedValue
         };
         """
     }
 
+    static let advanceVerificationStep = """
+        const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
+        const normalizeLower = (value) => normalize(value).toLowerCase();
+        const isVisible = (element) => {
+            if (!element) { return false; }
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== "none"
+                && style.visibility !== "hidden"
+                && rect.width > 1
+                && rect.height > 1;
+        };
+        const labelFor = (element) => normalize([
+            element?.getAttribute?.("aria-label"),
+            element?.getAttribute?.("placeholder"),
+            element?.getAttribute?.("name"),
+            element?.getAttribute?.("value"),
+            element?.id,
+            element?.labels ? Array.from(element.labels).map((label) => label.textContent || "").join(" ") : "",
+            element?.closest?.("label")?.textContent,
+            element?.textContent
+        ].filter(Boolean).join(" "));
+        const selectorFor = (element) => {
+            if (!element || !(element instanceof Element)) { return ""; }
+            if (element.id) {
+                return `#${CSS.escape(element.id)}`;
+            }
+            if (element.getAttribute("name")) {
+                return `${element.tagName.toLowerCase()}[name="${element.getAttribute("name")}"]`;
+            }
+            if (element.getAttribute("aria-label")) {
+                return `${element.tagName.toLowerCase()}[aria-label="${element.getAttribute("aria-label")}"]`;
+            }
+            return element.tagName.toLowerCase();
+        };
+        const verificationRegex = /verification|verify|one time|one-time|passcode|security code|sms|text message|otp|pin|code/;
+        const continuationRegex = /continue|verify|submit|done|next|confirm|reserve|book/;
+        const rejectRegex = /use email instead|use phone instead|sign in|log in|login|close|dismiss|cancel|back/;
+        const collectRoots = () => {
+            const roots = [document];
+            const seenRoots = new Set([document]);
+            const queue = [document.documentElement];
+            while (queue.length > 0) {
+                const node = queue.shift();
+                if (!(node instanceof Element)) { continue; }
+                if (node.shadowRoot && !seenRoots.has(node.shadowRoot)) {
+                    seenRoots.add(node.shadowRoot);
+                    roots.push(node.shadowRoot);
+                    queue.push(...Array.from(node.shadowRoot.children));
+                }
+                queue.push(...Array.from(node.children));
+            }
+            return roots;
+        };
+        const queryAllDeep = (selector) => {
+            const seen = new Set();
+            return collectRoots().flatMap((root) => Array.from(root.querySelectorAll(selector)))
+                .filter((element) => {
+                    if (seen.has(element)) { return false; }
+                    seen.add(element);
+                    return true;
+                });
+        };
+        const findVerificationField = (root) => {
+            return Array.from(root.querySelectorAll('input, textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'))
+                .filter(isVisible)
+                .map((element) => {
+                    const descriptor = normalizeLower([
+                        labelFor(element),
+                        element.getAttribute("autocomplete"),
+                        element.getAttribute("inputmode"),
+                        element.getAttribute("type"),
+                        root.textContent
+                    ].filter(Boolean).join(" "));
+                    let score = 0;
+                    if (verificationRegex.test(descriptor)) { score += 35; }
+                    if ((element.getAttribute("autocomplete") || "").toLowerCase().includes("one-time-code")) { score += 30; }
+                    if ((element.getAttribute("inputmode") || "").toLowerCase().includes("numeric")) { score += 8; }
+                    if ((element.getAttribute("type") || "").toLowerCase() === "tel") { score += 5; }
+                    return { element, score };
+                })
+                .filter((candidate) => candidate.score > 0)
+                .sort((lhs, rhs) => rhs.score - lhs.score)[0]?.element || null;
+        };
+        const roots = queryAllDeep('[role="dialog"], dialog, [aria-modal="true"], form, section')
+            .filter(isVisible)
+            .map((root) => {
+                const descriptor = normalizeLower([labelFor(root), root.textContent].filter(Boolean).join(" "));
+                const verificationField = findVerificationField(root);
+                let score = 0;
+                if (verificationField) { score += 50; }
+                if (verificationRegex.test(descriptor)) { score += 35; }
+                return { root, verificationField, score };
+            })
+            .filter((candidate) => candidate.score > 0)
+            .sort((lhs, rhs) => rhs.score - lhs.score);
+        const targetRoot = roots[0]?.root || document.body;
+        const verificationField = roots[0]?.verificationField || findVerificationField(targetRoot) || findVerificationField(document.body);
+        const candidateActions = Array.from(targetRoot.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], a[href]'))
+            .filter(isVisible)
+            .filter((element) => !element.disabled && element.getAttribute("aria-disabled") !== "true")
+            .map((element) => {
+                const label = normalizeLower(labelFor(element));
+                let score = 0;
+                if (continuationRegex.test(label)) { score += 80; }
+                if (label.includes("continue")) { score += 20; }
+                if (label.includes("verify")) { score += 20; }
+                if ((element.getAttribute("type") || "").toLowerCase() === "submit") { score += 20; }
+                if (/primary|submit|continue|verify|next/.test((element.className || "").toString().toLowerCase())) { score += 10; }
+                if (rejectRegex.test(label)) { score -= 200; }
+                return { element, label, score };
+            })
+            .filter((candidate) => candidate.score > 0)
+            .sort((lhs, rhs) => rhs.score - lhs.score);
+        const primaryAction = candidateActions[0]?.element || null;
+        if (primaryAction) {
+            primaryAction.scrollIntoView({ block: "center", inline: "center" });
+            primaryAction.click?.();
+            return {
+                action: "click",
+                selector: selectorFor(primaryAction),
+                label: labelFor(primaryAction)
+            };
+        }
+        const form = verificationField?.closest?.('form') || targetRoot.querySelector?.('form') || null;
+        if (form && typeof form.requestSubmit === "function") {
+            form.requestSubmit();
+            return {
+                action: "requestSubmit",
+                selector: selectorFor(form),
+                label: labelFor(form) || "verification form"
+            };
+        }
+        if (verificationField) {
+            verificationField.focus?.();
+            ["keydown", "keypress", "keyup"].forEach((type) => {
+                try {
+                    verificationField.dispatchEvent(new KeyboardEvent(type, {
+                        key: "Enter",
+                        code: "Enter",
+                        keyCode: 13,
+                        which: 13,
+                        bubbles: true,
+                        cancelable: true
+                    }));
+                } catch (_) {}
+            });
+            return {
+                action: "enter",
+                selector: selectorFor(verificationField),
+                label: labelFor(verificationField) || "verification field"
+            };
+        }
+        throw new Error("No visible verification continuation action found.");
+        """
+
     static let prepareVerificationCodeAutofill = """
         const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
         const normalizeLower = (value) => normalize(value).toLowerCase();
+        const activeElementDeep = () => {
+            let active = document.activeElement;
+            while (active && active.shadowRoot && active.shadowRoot.activeElement) {
+                active = active.shadowRoot.activeElement;
+            }
+            return active;
+        };
         const isVisible = (element) => {
             if (!element) { return false; }
             const style = window.getComputedStyle(element);
@@ -515,7 +803,73 @@ enum ChromiumBrowserScripts {
             return element.tagName.toLowerCase();
         };
         const verificationRegex = /verification|verify|one time|one-time|passcode|security code|sms|text message|otp|pin|code/;
-        const candidates = Array.from(document.querySelectorAll('input, textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'))
+        const collectRoots = () => {
+            const roots = [document];
+            const seenRoots = new Set([document]);
+            const queue = [document.documentElement];
+            while (queue.length > 0) {
+                const node = queue.shift();
+                if (!(node instanceof Element)) { continue; }
+                if (node.shadowRoot && !seenRoots.has(node.shadowRoot)) {
+                    seenRoots.add(node.shadowRoot);
+                    roots.push(node.shadowRoot);
+                    queue.push(...Array.from(node.shadowRoot.children));
+                }
+                queue.push(...Array.from(node.children));
+            }
+            return roots;
+        };
+        const queryAllDeep = (selector) => {
+            const seen = new Set();
+            return collectRoots().flatMap((root) => Array.from(root.querySelectorAll(selector)))
+                .filter((element) => {
+                    if (seen.has(element)) { return false; }
+                    seen.add(element);
+                    return true;
+                });
+        };
+        const isPhoneLikeField = (element) => {
+            const descriptor = normalizeLower([
+                labelFor(element),
+                element?.getAttribute?.("autocomplete"),
+                element?.getAttribute?.("inputmode"),
+                element?.getAttribute?.("type"),
+                element?.getAttribute?.("name"),
+                element?.getAttribute?.("placeholder")
+            ].filter(Boolean).join(" "));
+            return descriptor.includes("phone")
+                || descriptor.includes("tel");
+        };
+        const dialogCandidates = queryAllDeep('[role="dialog"], dialog, [aria-modal="true"]')
+            .filter(isVisible)
+            .map((dialog) => {
+                const descriptor = normalizeLower([
+                    labelFor(dialog),
+                    dialog.getAttribute("aria-label"),
+                    dialog.textContent
+                ].filter(Boolean).join(" "));
+                const rect = dialog.getBoundingClientRect();
+                let score = rect.width * rect.height;
+                if (verificationRegex.test(descriptor)) { score += 1_000_000; }
+                if (descriptor.includes("enter verification code")) { score += 1_000_000; }
+                return { dialog, score };
+            })
+            .sort((lhs, rhs) => rhs.score - lhs.score);
+        const verificationRoot = dialogCandidates[0]?.dialog || document.body;
+        const activeField = (() => {
+            const active = document.activeElement;
+            if (!active || !(active instanceof Element) || !isVisible(active) || isPhoneLikeField(active)) { return null; }
+            const descriptor = normalizeLower([
+                labelFor(active),
+                active.getAttribute?.("autocomplete"),
+                active.getAttribute?.("inputmode"),
+                active.getAttribute?.("type"),
+                active.closest?.('form, [role="dialog"], dialog, section, div')?.textContent || "",
+                document.body.textContent || ""
+            ].filter(Boolean).join(" "));
+            return verificationRegex.test(descriptor) ? active : null;
+        })();
+        const candidates = queryAllDeep('input, textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]')
             .filter(isVisible)
             .map((field) => {
                 const descriptor = normalizeLower([
@@ -523,37 +877,54 @@ enum ChromiumBrowserScripts {
                     field.getAttribute("autocomplete"),
                     field.getAttribute("inputmode"),
                     field.getAttribute("type"),
+                    verificationRoot.textContent || "",
                     field.closest('form, [role="dialog"], dialog, section, div')?.textContent || ""
                 ].filter(Boolean).join(" "));
                 let score = 0;
-                if (verificationRegex.test(descriptor)) { score += 20; }
-                if (descriptor.includes("one-time-code")) { score += 25; }
-                if (descriptor.includes("otp")) { score += 12; }
-                if (descriptor.includes("numeric") || descriptor.includes("tel") || descriptor.includes("number")) { score += 5; }
+                if (verificationRegex.test(descriptor)) { score += 45; }
+                if (descriptor.includes("one-time-code")) { score += 40; }
+                if (descriptor.includes("otp")) { score += 20; }
+                if (descriptor.includes("numeric") || descriptor.includes("tel") || descriptor.includes("number")) { score += 8; }
+                if ((field.getAttribute("name") || "").toLowerCase().includes("phone")) { score -= 120; }
+                if ((field.getAttribute("autocomplete") || "").toLowerCase().includes("tel")) { score -= 120; }
                 return { field, score };
             })
             .filter((candidate) => candidate.score > 0)
             .sort((lhs, rhs) => rhs.score - lhs.score);
-        const bestField = candidates[0]?.field;
+        const bestField = candidates[0]?.field || activeField;
         if (!bestField) {
             throw new Error("No visible verification field found.");
         }
+        bestField.scrollIntoView?.({ block: "center", inline: "center" });
         bestField.setAttribute("autocomplete", "one-time-code");
         if (!bestField.getAttribute("inputmode")) {
             bestField.setAttribute("inputmode", "numeric");
         }
         bestField.setAttribute("autocapitalize", "off");
         bestField.setAttribute("spellcheck", "false");
+        try {
+            bestField.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+            bestField.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        } catch (_) {}
         bestField.click?.();
         bestField.focus?.();
+        if (typeof bestField.setSelectionRange === "function") {
+            const end = typeof bestField.value === "string" ? bestField.value.length : 0;
+            try { bestField.setSelectionRange(0, end); } catch (_) {}
+        }
         if (typeof bestField.select === "function") {
             bestField.select();
+        }
+        const focused = activeElementDeep() === bestField;
+        if (!focused) {
+            throw new Error("Verification field could not be focused.");
         }
         return {
             selector: selectorFor(bestField),
             label: labelFor(bestField),
             autocomplete: bestField.getAttribute("autocomplete") || "",
-            inputMode: bestField.getAttribute("inputmode") || ""
+            inputMode: bestField.getAttribute("inputmode") || "",
+            focused
         };
         """
 
@@ -567,7 +938,12 @@ enum ChromiumBrowserScripts {
         if (!element) {
             throw new Error(`No element matched ${selector}.`);
         }
-        const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+        const normalize = (value) => (value || "")
+            .toLowerCase()
+            .replace(/\\b([ap])\\.?\\s*m\\.?\\b/g, "$1m")
+            .replace(/[.,]/g, "")
+            .replace(/\\s+/g, " ")
+            .trim();
         const isVisible = (candidate) => {
             if (!candidate) { return false; }
             const style = window.getComputedStyle(candidate);
@@ -1268,6 +1644,132 @@ enum ChromiumBrowserScripts {
         """
     }
 
+    static let beginScrollCapture = """
+        const markerAttribute = "data-agenthub-scroll-capture-target";
+        const isVisible = (element) => {
+            if (!(element instanceof Element)) { return false; }
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== "none"
+                && style.visibility !== "hidden"
+                && style.opacity !== "0"
+                && rect.width > 40
+                && rect.height > 40;
+        };
+        const clearMarkers = () => {
+            document.querySelectorAll(`[${markerAttribute}]`).forEach((element) => element.removeAttribute(markerAttribute));
+        };
+        const candidates = Array.from(document.querySelectorAll("*"))
+            .filter(isVisible)
+            .filter((element) => {
+                const style = window.getComputedStyle(element);
+                const overflowY = style.overflowY || "";
+                const scrollable = /(auto|scroll|overlay)/.test(overflowY) || element.scrollHeight > element.clientHeight + 24;
+                return scrollable && element.scrollHeight > element.clientHeight + 24 && element.clientHeight > 120;
+            })
+            .map((element) => {
+                const rect = element.getBoundingClientRect();
+                const inModal = element.closest('[role="dialog"], dialog, [aria-modal="true"]') ? 1 : 0;
+                const containsActive = element.contains(document.activeElement) ? 1 : 0;
+                const score = (rect.width * rect.height)
+                    + (inModal * 1_000_000)
+                    + (containsActive * 500_000)
+                    + Math.min(element.scrollHeight, 20_000);
+                return { element, rect, score };
+            })
+            .sort((lhs, rhs) => rhs.score - lhs.score);
+
+        clearMarkers();
+        const target = candidates[0]?.element || null;
+        if (target) {
+            target.setAttribute(markerAttribute, "true");
+        }
+
+        const rect = target
+            ? target.getBoundingClientRect()
+            : { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+        const viewportHeight = target ? target.clientHeight : window.innerHeight;
+        const contentHeight = target ? target.scrollHeight : Math.max(
+            document.documentElement ? document.documentElement.scrollHeight : 0,
+            document.body ? document.body.scrollHeight : 0
+        );
+        const currentOffset = target ? target.scrollTop : window.scrollY;
+        const maxOffset = Math.max(0, contentHeight - viewportHeight);
+        const step = Math.max(1, Math.floor(viewportHeight));
+        const offsets = [];
+        for (let offset = 0; offset <= maxOffset; offset += step) {
+            offsets.push(offset);
+        }
+        if (offsets.length === 0) {
+            offsets.push(currentOffset);
+        } else if (offsets[offsets.length - 1] !== maxOffset) {
+            offsets.push(maxOffset);
+        }
+
+        return {
+            mode: target ? "element" : "window",
+            offsets,
+            originalOffset: currentOffset,
+            viewportHeight,
+            contentHeight,
+            viewportRect: {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height
+            }
+        };
+        """
+
+    static func setScrollCaptureOffset(_ offset: Double) -> String {
+        """
+        const offset = \(offset);
+        const markerAttribute = "data-agenthub-scroll-capture-target";
+        const target = document.querySelector(`[${markerAttribute}]`);
+        if (target instanceof Element) {
+            target.scrollTo({ top: offset, behavior: "instant" });
+            const rect = target.getBoundingClientRect();
+            return {
+                mode: "element",
+                actualOffset: target.scrollTop,
+                viewportRect: {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height
+                }
+            };
+        }
+        window.scrollTo({ top: offset, behavior: "instant" });
+        return {
+            mode: "window",
+            actualOffset: window.scrollY,
+            viewportRect: {
+                x: 0,
+                y: 0,
+                width: window.innerWidth,
+                height: window.innerHeight
+            }
+        };
+        """
+    }
+
+    static func endScrollCapture(restoring offset: Double) -> String {
+        """
+        const offset = \(offset);
+        const markerAttribute = "data-agenthub-scroll-capture-target";
+        const target = document.querySelector(`[${markerAttribute}]`);
+        if (target instanceof Element) {
+            target.scrollTo({ top: offset, behavior: "instant" });
+            target.removeAttribute(markerAttribute);
+            return { mode: "element", actualOffset: target.scrollTop };
+        }
+        window.scrollTo({ top: offset, behavior: "instant" });
+        document.querySelectorAll(`[${markerAttribute}]`).forEach((element) => element.removeAttribute(markerAttribute));
+        return { mode: "window", actualOffset: window.scrollY };
+        """
+    }
+
     static func clickSelector(_ selector: String) -> String {
         let selectorLiteral = jsStringLiteral(selector)
         return """
@@ -1503,7 +2005,174 @@ enum ChromiumBrowserScripts {
             if (!container || container === element) { return ""; }
             return labelFor(container);
         };
-        const interactiveElements = Array.from(document.querySelectorAll('input, button, select, textarea, a[href], [role="button"], [role="link"], [role="combobox"], [role="textbox"]'))
+        const previewTextFor = (element, maxLength = 220) => {
+            const text = normalize(element?.innerText || element?.textContent || "");
+            if (!text) { return ""; }
+            return text.slice(0, maxLength);
+        };
+        const isEditableField = (element) => {
+            if (!element || !(element instanceof Element)) { return false; }
+            if (element.matches('input, textarea, [role="textbox"]')) { return true; }
+            if (element.getAttribute("contenteditable") === "true"
+                || element.getAttribute("contenteditable") === ""
+                || element.getAttribute("contenteditable") === "plaintext-only") {
+                return true;
+            }
+            return false;
+        };
+        const isPhoneLikeField = (element) => {
+            const descriptor = normalizeLower([
+                labelFor(element),
+                element?.getAttribute?.("autocomplete"),
+                element?.getAttribute?.("inputmode"),
+                element?.getAttribute?.("type"),
+                element?.getAttribute?.("name"),
+                element?.getAttribute?.("placeholder")
+            ].filter(Boolean).join(" "));
+            return descriptor.includes("phone")
+                || descriptor.includes("tel");
+        };
+        const collectRoots = () => {
+            const roots = [document];
+            const seenRoots = new Set([document]);
+            const queue = [document.documentElement];
+            while (queue.length > 0) {
+                const node = queue.shift();
+                if (!(node instanceof Element)) { continue; }
+                if (node.shadowRoot && !seenRoots.has(node.shadowRoot)) {
+                    seenRoots.add(node.shadowRoot);
+                    roots.push(node.shadowRoot);
+                    queue.push(...Array.from(node.shadowRoot.children));
+                }
+                queue.push(...Array.from(node.children));
+            }
+            return roots;
+        };
+        const queryAllDeep = (selector) => {
+            const seen = new Set();
+            return collectRoots().flatMap((root) => Array.from(root.querySelectorAll(selector)))
+                .filter((element) => {
+                    if (seen.has(element)) { return false; }
+                    seen.add(element);
+                    return true;
+                });
+        };
+        const activeVerificationField = (() => {
+            const active = document.activeElement;
+            if (!isEditableField(active) || !isVisible(active) || isPhoneLikeField(active)) { return null; }
+            const descriptor = normalizeLower([
+                labelFor(active),
+                active.getAttribute?.("autocomplete"),
+                active.getAttribute?.("inputmode"),
+                active.getAttribute?.("type"),
+                active.getAttribute?.("placeholder"),
+                active.closest?.('[role="dialog"], dialog, [aria-modal="true"], form, section, div')?.textContent || "",
+                document.body.textContent || ""
+            ].filter(Boolean).join(" "));
+            return /verification|verify|one time|one-time|passcode|security code|sms|text message|otp|pin|code/.test(descriptor)
+                ? active
+                : null;
+        })();
+        const modalHeadingAnchors = queryAllDeep('h1, h2, h3, h4, [role="heading"]')
+            .filter(isVisible)
+            .filter((element) => /you.?re almost done|last step|add some details|guest details|reservation details|sign in|verify|verification|enter verification code|complete reservation/.test(normalizeLower(element.textContent || "")));
+        const candidateModalAncestorsFor = (anchor) => {
+            const candidates = [];
+            let current = anchor;
+            for (let depth = 0; current && depth < 8; depth += 1) {
+                if (!(current instanceof Element)) { break; }
+                if (current === document.body || current === document.documentElement) {
+                    current = current.parentElement;
+                    continue;
+                }
+                if (!isVisible(current)) {
+                    current = current.parentElement;
+                    continue;
+                }
+                const rect = current.getBoundingClientRect();
+                const style = window.getComputedStyle(current);
+                const fieldCount = Array.from(current.querySelectorAll('input, select, textarea, [role="combobox"], [role="textbox"]'))
+                    .filter(isVisible)
+                    .length;
+                const actionCount = Array.from(current.querySelectorAll('button, [role="button"], a[href], input[type="submit"]'))
+                    .filter(isVisible)
+                    .length;
+                if (fieldCount === 0 && actionCount === 0) {
+                    current = current.parentElement;
+                    continue;
+                }
+                let score = 0;
+                if (style.position === "fixed" || style.position === "absolute" || style.position === "sticky") { score += 35; }
+                if ((Number.parseInt(style.zIndex || "0", 10) || 0) >= 10) { score += 20; }
+                if (rect.width >= 220 && rect.width <= window.innerWidth * 0.95) { score += 20; }
+                if (rect.height >= 140 && rect.height <= window.innerHeight * 0.95) { score += 20; }
+                if (rect.width >= window.innerWidth * 0.95 && rect.height >= window.innerHeight * 0.95) { score -= 120; }
+                if (fieldCount > 0) { score += 25 + Math.min(fieldCount, 4) * 12; }
+                if (actionCount > 0) { score += 10; }
+                candidates.push({ container: current, score, fieldCount });
+                current = current.parentElement;
+            }
+            return candidates;
+        };
+        const containerLabelFor = (element) => {
+            if (!element) { return ""; }
+            const heading = normalize(
+                element.querySelector?.('h1, h2, h3, h4, [role="heading"]')?.textContent || ""
+            );
+            const explicit = normalize(element.getAttribute?.("aria-label") || "");
+            if (heading) { return heading; }
+            if (explicit) { return explicit; }
+            return previewTextFor(element, 160);
+        };
+        const modalLikeContainers = [
+            ...queryAllDeep('[role="dialog"], dialog, [aria-modal="true"], [data-testid*="modal" i], [data-testid*="dialog" i], [data-test*="modal" i], [data-test*="dialog" i], [class*="modal" i], [class*="dialog" i], [class*="sheet" i], [class*="drawer" i], [class*="overlay" i]')
+                .filter(isVisible)
+                .map((container) => ({ container })),
+            ...modalHeadingAnchors.flatMap((anchor) => candidateModalAncestorsFor(anchor)),
+            ...candidateModalAncestorsFor(activeVerificationField)
+        ]
+            .map((container) => {
+                const element = container.container || container;
+                if (!element || element === document.body || element === document.documentElement) {
+                    return { container: element, score: -999, fieldCount: 0 };
+                }
+                const style = window.getComputedStyle(element);
+                const descriptor = normalizeLower([
+                    containerLabelFor(element),
+                    previewTextFor(element, 320)
+                ].filter(Boolean).join(" "));
+                const fieldCount = Array.from(element.querySelectorAll('input, select, textarea, [role="combobox"], [role="textbox"]'))
+                    .filter(isVisible)
+                    .length;
+                const actionCount = Array.from(element.querySelectorAll('button, [role="button"], a[href], input[type="submit"]'))
+                    .filter(isVisible)
+                    .length;
+                const rect = element.getBoundingClientRect();
+                const zIndex = Number.parseInt(style.zIndex || "0", 10) || 0;
+                let score = typeof container.score === "number" ? container.score : 0;
+                if (element.matches('[role="dialog"], dialog, [aria-modal="true"]')) { score += 90; }
+                if (style.position === "fixed" || style.position === "sticky") { score += 25; }
+                if (zIndex >= 10) { score += 10; }
+                if (rect.width >= window.innerWidth * 0.95 && rect.height >= window.innerHeight * 0.95) { score -= 120; }
+                if (fieldCount > 0) { score += 30 + Math.min(fieldCount, 4) * 15; }
+                if (actionCount > 0) { score += 10; }
+                if (/last step|add some details|guest details|reservation details|sign in|log in|login|verification|verify|complete reservation|reserve/.test(descriptor)) {
+                    score += 25;
+                }
+                return {
+                    container: element,
+                    score,
+                    fieldCount
+                };
+            })
+            .filter((candidate, index, collection) =>
+                candidate.container
+                && collection.findIndex((other) => other.container === candidate.container) === index
+            )
+            .filter((candidate) => candidate.score >= 40 && candidate.fieldCount > 0)
+            .sort((lhs, rhs) => rhs.score - lhs.score)
+            .slice(0, 4);
+        const interactiveElements = queryAllDeep('input, button, select, textarea, a[href], [role="button"], [role="link"], [role="combobox"], [role="textbox"]')
             .filter(isVisible)
             .map((element, index) => {
                 const label = labelFor(element);
@@ -1531,7 +2200,7 @@ enum ChromiumBrowserScripts {
 
         const hasSearchField = interactiveElements.some((element) => /search|restaurant|location|cuisine|where/i.test(element.label));
 
-        const forms = Array.from(document.querySelectorAll('form'))
+        const forms = queryAllDeep('form')
             .filter(isVisible)
             .slice(0, 6)
             .map((form, formIndex) => {
@@ -1555,7 +2224,7 @@ enum ChromiumBrowserScripts {
                             || field.getAttribute("aria-checked") === "true",
                         validationMessage: validationMessageFor(field)
                     }))
-                    .filter((field) => field.label || field.validationMessage || field.isRequired)
+                    .filter((field) => field.label || field.validationMessage || field.isRequired || field.fieldPurpose === "verification_code")
                     .sort((lhs, rhs) => {
                         const lhsScore = (lhs.isRequired ? 20 : 0) + (lhs.validationMessage ? 10 : 0);
                         const rhsScore = (rhs.isRequired ? 20 : 0) + (rhs.validationMessage ? 10 : 0);
@@ -1572,6 +2241,58 @@ enum ChromiumBrowserScripts {
                     fields
                 };
             });
+
+        const dialogDerivedForms = modalLikeContainers
+            .map(({ container }, dialogIndex) => {
+                const fields = Array.from(container.querySelectorAll('input, select, textarea, [role="combobox"], [role="textbox"]'))
+                    .filter(isVisible)
+                    .map((field, fieldIndex) => ({
+                        id: `dialog-form-${dialogIndex}-field-${fieldIndex}`,
+                        label: labelFor(field),
+                        selector: selectorFor(field),
+                        controlType: field.getAttribute("type") || field.getAttribute("role") || field.tagName.toLowerCase(),
+                        value: "value" in field ? field.value : null,
+                        options: field instanceof HTMLSelectElement
+                            ? Array.from(field.options).map((option) => normalize(option.textContent || option.label || option.value)).filter(Boolean).slice(0, 8)
+                            : [],
+                        autocomplete: field.getAttribute("autocomplete"),
+                        inputMode: field.getAttribute("inputmode"),
+                        fieldPurpose: inferPurpose(field, labelFor(field)),
+                        isRequired: field.required || field.getAttribute("aria-required") === "true",
+                        isSelected: field.checked === true
+                            || field.getAttribute("aria-selected") === "true"
+                            || field.getAttribute("aria-checked") === "true",
+                        validationMessage: validationMessageFor(field)
+                    }))
+                    .filter((field) => field.label || field.validationMessage || field.isRequired || field.fieldPurpose === "verification_code")
+                    .sort((lhs, rhs) => {
+                        const lhsScore = (lhs.isRequired ? 20 : 0) + (lhs.validationMessage ? 10 : 0);
+                        const rhsScore = (rhs.isRequired ? 20 : 0) + (rhs.validationMessage ? 10 : 0);
+                        return rhsScore - lhsScore;
+                    })
+                    .slice(0, 12);
+                if (fields.length === 0) { return null; }
+                const submit = Array.from(container.querySelectorAll('button, input[type="submit"], [role="button"]'))
+                    .filter(isVisible)
+                    .find((element) => /continue|next|reserve|book|confirm|complete|done|submit/i.test(labelFor(element)))
+                    || Array.from(container.querySelectorAll('button, input[type="submit"], [role="button"]'))
+                        .filter(isVisible)[0];
+                return {
+                    id: `dialog-form-${dialogIndex}`,
+                    label: containerLabelFor(container),
+                    selector: selectorFor(container),
+                    submitLabel: submit ? labelFor(submit) : null,
+                    fields
+                };
+            })
+            .filter(Boolean);
+
+        const combinedForms = [...forms];
+        for (const dialogForm of dialogDerivedForms) {
+            if (!combinedForms.some((form) => form.selector === dialogForm.selector && form.label === dialogForm.label)) {
+                combinedForms.push(dialogForm);
+            }
+        }
 
         const controlGroups = Array.from(document.querySelectorAll('[role="tablist"], [role="radiogroup"], [role="listbox"], fieldset, nav'))
             .filter(isVisible)
@@ -1705,23 +2426,54 @@ enum ChromiumBrowserScripts {
             .filter((card) => card.title && !card.isStandaloneControl && card.formControlCount <= 1 && (card.actionSelector || card.subtitle || card.badges.length > 0))
             .slice(0, 8);
 
-        const dialogs = Array.from(document.querySelectorAll('[role="dialog"], dialog, [aria-modal="true"]'))
-            .filter(isVisible)
+        const dialogs = modalLikeContainers
             .slice(0, 3)
-            .map((dialog, index) => {
-                const primaryAction = Array.from(dialog.querySelectorAll('button, [role="button"], a[href]'))
+            .map(({ container }, index) => {
+                const primaryAction = Array.from(container.querySelectorAll('button, [role="button"], a[href]'))
                     .filter(isVisible)
                     .find((element) => /continue|next|reserve|book|confirm|done/i.test(labelFor(element)));
-                const dismiss = Array.from(dialog.querySelectorAll('button, [role="button"]'))
+                const scoredVerificationField = Array.from(container.querySelectorAll('input, textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'))
+                    .filter(isVisible)
+                    .map((element) => {
+                        const descriptor = normalizeLower([
+                            labelFor(element),
+                            element.getAttribute("autocomplete"),
+                            element.getAttribute("inputmode"),
+                            element.getAttribute("name"),
+                            element.getAttribute("placeholder"),
+                            element.getAttribute("type"),
+                            previewTextFor(container, 320)
+                        ].filter(Boolean).join(" "));
+                        let score = 0;
+                        if (/verification|verify|one time|one-time|passcode|security code|sms|text message|otp|pin|code/.test(descriptor)) { score += 30; }
+                        if (descriptor.includes("one-time-code")) { score += 35; }
+                        if ((element.getAttribute("inputmode") || "").toLowerCase().includes("numeric")) { score += 10; }
+                        if ((element.getAttribute("autocomplete") || "").toLowerCase().includes("one-time-code")) { score += 20; }
+                        if ((element.getAttribute("type") || "").toLowerCase() === "tel") { score += 5; }
+                        return { element, score };
+                    })
+                    .sort((lhs, rhs) => rhs.score - lhs.score)[0]?.element;
+                const verificationField = activeVerificationField && container.contains(activeVerificationField)
+                    ? activeVerificationField
+                    : scoredVerificationField;
+                const dialogDescriptor = normalizeLower([
+                    containerLabelFor(container),
+                    primaryAction ? labelFor(primaryAction) : "",
+                    previewTextFor(container, 320)
+                ].filter(Boolean).join(" "));
+                const isVerificationInterruption = /verification|verify|one time|one-time|passcode|security code|sms|text message|otp|pin|code|use email instead|use phone instead|continue with email|continue with phone|sign in|log in|login/.test(dialogDescriptor);
+                const dismiss = Array.from(container.querySelectorAll('button, [role="button"]'))
                     .filter(isVisible)
                     .find((element) => /close|cancel|dismiss|back/i.test(labelFor(element)));
                 return {
                     id: `dialog-${index}`,
-                    label: labelFor(dialog),
-                    selector: selectorFor(dialog),
+                    label: containerLabelFor(container),
+                    selector: selectorFor(container),
                     primaryActionLabel: primaryAction ? labelFor(primaryAction) : null,
                     primaryActionSelector: primaryAction ? selectorFor(primaryAction) : null,
-                    dismissSelector: dismiss ? selectorFor(dismiss) : null
+                    dismissSelector: isVerificationInterruption ? null : (dismiss ? selectorFor(dismiss) : null),
+                    verificationFieldSelector: verificationField ? selectorFor(verificationField) : null,
+                    isVerificationInterruption
                 };
             });
 
@@ -1912,7 +2664,7 @@ enum ChromiumBrowserScripts {
             .sort((lhs, rhs) => rhs.confidence - lhs.confidence)
             .slice(0, 8);
 
-        const reviewStructureSignal = forms.some((form) => {
+        const reviewStructureSignal = combinedForms.some((form) => {
             const haystack = normalizeLower([
                 form.label,
                 form.submitLabel || "",
@@ -1929,7 +2681,7 @@ enum ChromiumBrowserScripts {
                 return "dialog";
             }
             if (resultLists.length > 0 || cards.length >= 2) { return "results"; }
-            if (forms.length > 0 || hasSearchField) { return "form"; }
+            if (combinedForms.length > 0 || hasSearchField) { return "form"; }
             if (primaryActions.some((action) => /search|find|show results/i.test(action.label))) { return "search"; }
             return "browse";
         })();
@@ -1945,7 +2697,7 @@ enum ChromiumBrowserScripts {
                 transactionalKind: element.purpose === "confirm" ? "final_confirmation" : null,
                 priority: element.priority
             })),
-            ...forms.flatMap((form) => form.fields.map((field) => ({
+            ...combinedForms.flatMap((form) => form.fields.map((field) => ({
                 id: `target-form-field-${field.id}`,
                 kind: "field",
                 label: field.label,
@@ -2007,6 +2759,18 @@ enum ChromiumBrowserScripts {
             })),
             ...dialogs.flatMap((dialog) => {
                 const targets = [];
+                if (dialog.verificationFieldSelector) {
+                    targets.push({
+                        id: `target-dialog-field-${dialog.id}`,
+                        kind: "field",
+                        label: `${dialog.label || "Verification"} code`,
+                        selector: dialog.verificationFieldSelector,
+                        purpose: "verification_code",
+                        groupLabel: dialog.label || null,
+                        transactionalKind: null,
+                        priority: 104
+                    });
+                }
                 if (dialog.primaryActionSelector) {
                     targets.push({
                         id: `target-dialog-primary-${dialog.id}`,
@@ -2118,7 +2882,7 @@ enum ChromiumBrowserScripts {
                 value: normalizeLower(element.value || element.text || ""),
                 purpose: element.purpose || ""
             })),
-            ...forms.flatMap((form) => form.fields.map((field) => ({
+            ...combinedForms.flatMap((form) => form.fields.map((field) => ({
                 label: normalizeLower(field.label),
                 value: normalizeLower(field.value || ""),
                 purpose: inferPurpose({ getAttribute: () => field.controlType }, field.label) || ""
@@ -2155,7 +2919,7 @@ enum ChromiumBrowserScripts {
                 || (/\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b/i.test(entry.label) && hasMeaningfulValue(entry.value) && entry.value.length <= 24)
         );
         const bookingFieldLabels = [
-            ...forms.flatMap((form) => form.fields.map((field) => field.label)),
+            ...combinedForms.flatMap((form) => form.fields.map((field) => field.label)),
             ...interactiveElements.map((element) => element.label),
             ...controlGroups.map((group) => group.label),
             ...autocompleteSurfaces.map((surface) => surface.label),
@@ -2171,14 +2935,14 @@ enum ChromiumBrowserScripts {
         const hasTimeControl = bookingFieldLabels.some((label) => /time|seating/.test(label))
             || bookingTimeOptions.length > 0;
         const hasBookingWidget = (hasPartyControl && hasDateControl) || (hasDateControl && hasTimeControl) || (hasPartyControl && hasTimeControl);
-        const guestDetailFieldCount = forms.reduce((total, form) => total + form.fields.filter((field) =>
+        const guestDetailFieldCount = combinedForms.reduce((total, form) => total + form.fields.filter((field) =>
             /name|email|phone|contact|special request|occasion|notes?|guest/.test(field.label.toLowerCase())
         ).length, 0);
-        const paymentFieldCount = forms.reduce((total, form) => total + form.fields.filter((field) =>
+        const paymentFieldCount = combinedForms.reduce((total, form) => total + form.fields.filter((field) =>
             /card|credit|debit|payment|billing|cvv|security code|expiry|exp date/.test(field.label.toLowerCase())
         ).length, 0);
         const reviewSignalLabels = [
-            ...forms.map((form) => form.label),
+            ...combinedForms.map((form) => form.label),
             ...dialogs.map((dialog) => dialog.label),
             ...primaryActions.map((action) => action.label),
             ...transactionalBoundaries.map((boundary) => boundary.label)
@@ -2262,7 +3026,7 @@ enum ChromiumBrowserScripts {
             formCount: document.forms.length,
             hasSearchField,
             interactiveElements,
-            forms,
+            forms: combinedForms,
             resultLists,
             cards,
             dialogs,

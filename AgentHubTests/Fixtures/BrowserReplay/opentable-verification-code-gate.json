@@ -1,0 +1,196 @@
+{
+  "name": "OpenTable verification code gate after approved final click",
+  "sourceArtifact": "/Users/tima/.agenthub/logs/browser-agent-runs/2CA91109-05FD-497E-BA1E-CB026F963176/2026-03-11T18:39:49.586Z-awaiting_user_input.json",
+  "recognizedText": "Enter verification code to reserve\nWe sent a text message to 4244134321 to verify your account. Message and data rates apply.\nEnter verification code\nContinue\nDidn\u2019t receive the code? More options",
+  "expectedStage": "verification_code",
+  "expectedRequirementKind": "verification_code",
+  "priorInspection": {
+    "title": "OpenTable - Complete your reservation",
+    "url": "https://www.opentable.com/booking/details?rid=1036534",
+    "pageStage": "final_confirmation",
+    "formCount": 1,
+    "hasSearchField": false,
+    "interactiveElements": [
+      {
+        "id": "action-final",
+        "role": "button",
+        "label": "Complete reservation complete-reservation",
+        "text": "Complete reservation",
+        "selector": "#complete-reservation",
+        "value": "",
+        "href": null,
+        "purpose": "continue",
+        "groupLabel": "Reservation details",
+        "isRequired": false,
+        "isSelected": false,
+        "validationMessage": null,
+        "priority": 60
+      }
+    ],
+    "forms": [
+      {
+        "id": "diner-form",
+        "label": "You\u2019re almost done!",
+        "selector": "#dinerForm",
+        "submitLabel": "Complete reservation complete-reservation",
+        "fields": [
+          {
+            "id": "phone-field",
+            "label": "Phone number Phone number phoneNumber",
+            "selector": "#phoneNumber",
+            "controlType": "tel",
+            "value": "4244134321",
+            "options": [],
+            "autocomplete": "tel",
+            "inputMode": null,
+            "fieldPurpose": "phone_number",
+            "isRequired": true,
+            "isSelected": false,
+            "validationMessage": null
+          }
+        ]
+      }
+    ],
+    "resultLists": [],
+    "cards": [],
+    "dialogs": [
+      {
+        "id": "dialog-details",
+        "label": "Reservation details",
+        "selector": "#dinerForm",
+        "primaryActionLabel": null,
+        "primaryActionSelector": null,
+        "dismissSelector": null
+      }
+    ],
+    "controlGroups": [],
+    "autocompleteSurfaces": [],
+    "datePickers": [],
+    "notices": [],
+    "stepIndicators": [],
+    "primaryActions": [
+      {
+        "id": "action-final-primary",
+        "label": "Complete reservation complete-reservation",
+        "selector": "#complete-reservation",
+        "role": "button",
+        "priority": 15
+      }
+    ],
+    "transactionalBoundaries": [
+      {
+        "id": "boundary-final",
+        "kind": "final_confirmation",
+        "label": "Complete reservation complete-reservation",
+        "selector": "#complete-reservation",
+        "confidence": 125
+      }
+    ],
+    "semanticTargets": [],
+    "booking": null,
+    "bookingFunnel": {
+      "stage": "final_confirmation",
+      "selectedParameterCount": 0,
+      "hasVenueAction": false,
+      "hasBookingWidget": false,
+      "hasSlotSelection": false,
+      "hasGuestDetailsForm": true,
+      "hasPaymentForm": false,
+      "hasReviewSummary": true,
+      "hasFinalConfirmationBoundary": true,
+      "selectedDate": false,
+      "selectedTime": false,
+      "selectedPartySize": false
+    }
+  },
+  "currentInspection": {
+    "title": "OpenTable - Complete your reservation",
+    "url": "https://www.opentable.com/booking/details?rid=1036534",
+    "pageStage": "final_confirmation",
+    "formCount": 1,
+    "hasSearchField": false,
+    "interactiveElements": [
+      {
+        "id": "action-final",
+        "role": "button",
+        "label": "Complete reservation complete-reservation",
+        "text": "Complete reservation",
+        "selector": "#complete-reservation",
+        "value": "",
+        "href": null,
+        "purpose": "continue",
+        "groupLabel": "Reservation details",
+        "isRequired": false,
+        "isSelected": false,
+        "validationMessage": null,
+        "priority": 60
+      }
+    ],
+    "forms": [
+      {
+        "id": "diner-form",
+        "label": "You\u2019re almost done!",
+        "selector": "#dinerForm",
+        "submitLabel": "Complete reservation complete-reservation",
+        "fields": [
+          {
+            "id": "phone-field",
+            "label": "Phone number Phone number phoneNumber",
+            "selector": "#phoneNumber",
+            "controlType": "tel",
+            "value": "4244134321",
+            "options": [],
+            "autocomplete": "tel",
+            "inputMode": null,
+            "fieldPurpose": "phone_number",
+            "isRequired": true,
+            "isSelected": false,
+            "validationMessage": null
+          }
+        ]
+      }
+    ],
+    "resultLists": [],
+    "cards": [],
+    "dialogs": [],
+    "controlGroups": [],
+    "autocompleteSurfaces": [],
+    "datePickers": [],
+    "notices": [],
+    "stepIndicators": [],
+    "primaryActions": [
+      {
+        "id": "action-final-primary",
+        "label": "Complete reservation complete-reservation",
+        "selector": "#complete-reservation",
+        "role": "button",
+        "priority": 15
+      }
+    ],
+    "transactionalBoundaries": [
+      {
+        "id": "boundary-final",
+        "kind": "final_confirmation",
+        "label": "Complete reservation complete-reservation",
+        "selector": "#complete-reservation",
+        "confidence": 125
+      }
+    ],
+    "semanticTargets": [],
+    "booking": null,
+    "bookingFunnel": {
+      "stage": "final_confirmation",
+      "selectedParameterCount": 0,
+      "hasVenueAction": false,
+      "hasBookingWidget": false,
+      "hasSlotSelection": false,
+      "hasGuestDetailsForm": true,
+      "hasPaymentForm": false,
+      "hasReviewSummary": true,
+      "hasFinalConfirmationBoundary": true,
+      "selectedDate": false,
+      "selectedTime": false,
+      "selectedPartySize": false
+    }
+  }
+}

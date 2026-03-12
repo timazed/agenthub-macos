@@ -15,6 +15,7 @@ private enum PreviewFactory {
 
         let sessionStore = AssistantSessionStore(paths: paths)
         let personaManager = PersonaManager(paths: paths)
+        let userProfileManager = UserProfileManager(paths: paths)
         let runtime = PreviewCodexRuntime()
         let configStore = AppRuntimeConfigStore(paths: paths)
         let browserController = ChromiumBrowserController()
@@ -22,6 +23,7 @@ private enum PreviewFactory {
         let chatSessionService = ChatSessionService(
             sessionStore: sessionStore,
             personaManager: personaManager,
+            userProfileManager: userProfileManager,
             runtime: runtime,
             paths: paths,
             runtimeConfigStore: configStore,

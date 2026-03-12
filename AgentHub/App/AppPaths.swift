@@ -12,6 +12,10 @@ struct AppPaths {
         root.appendingPathComponent("assistant", isDirectory: true)
     }
 
+    var userDirectory: URL {
+        root.appendingPathComponent("user", isDirectory: true)
+    }
+
     var mainAssistantDirectory: URL {
         assistantDirectory.appendingPathComponent("main-session", isDirectory: true)
     }
@@ -64,6 +68,14 @@ struct AppPaths {
         mainAssistantDirectory.appendingPathComponent("metadata.json")
     }
 
+    var userProfileURL: URL {
+        userDirectory.appendingPathComponent("profile.json")
+    }
+
+    var legacyUserProfileURL: URL {
+        root.appendingPathComponent("profile.json")
+    }
+
     var assistantTranscriptURL: URL {
         mainAssistantDirectory.appendingPathComponent("transcript.ndjson")
     }
@@ -82,6 +94,7 @@ struct AppPaths {
     func prepare(fileManager: FileManager = .default) throws {
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: personasDirectory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: userDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: assistantDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: mainAssistantDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: tasksDirectory, withIntermediateDirectories: true)
