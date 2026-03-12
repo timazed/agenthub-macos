@@ -73,8 +73,8 @@ final class CodexLoginCoordinator {
         self.init(
             statusRefresher: statusRefresher,
             paths: paths,
-            bundle: bundle,
             fileManager: fileManager,
+            codexBinaryLocator: CodexBinaryLocator(bundle: bundle, fileManager: fileManager),
             testBinaryURLProvider: nil,
             pollIntervalNanoseconds: CodexLoginCoordinator.defaultPollIntervalNanoseconds,
             timeoutNanoseconds: CodexLoginCoordinator.defaultTimeoutNanoseconds,
@@ -86,8 +86,8 @@ final class CodexLoginCoordinator {
     init(
         statusRefresher: @escaping () throws -> AuthState,
         paths: AppPaths,
-        bundle: Bundle = .main,
         fileManager: FileManager = .default,
+        codexBinaryLocator: CodexBinaryLocator,
         testBinaryURLProvider: (() throws -> URL)? = nil,
         pollIntervalNanoseconds: UInt64 = CodexLoginCoordinator.defaultPollIntervalNanoseconds,
         timeoutNanoseconds: UInt64 = CodexLoginCoordinator.defaultTimeoutNanoseconds,
@@ -96,7 +96,7 @@ final class CodexLoginCoordinator {
         self.statusRefresher = statusRefresher
         self.paths = paths
         self.fileManager = fileManager
-        self.codexBinaryLocator = CodexBinaryLocator(bundle: bundle, fileManager: fileManager)
+        self.codexBinaryLocator = codexBinaryLocator
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
         self.timeoutNanoseconds = timeoutNanoseconds
         self.testBinaryURLProvider = testBinaryURLProvider
