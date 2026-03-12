@@ -3,7 +3,6 @@ import SwiftUI
 struct AssistantPanelView: View {
     @ObservedObject var tasksViewModel: TasksViewModel
     @ObservedObject var activityViewModel: ActivityLogViewModel
-    @ObservedObject var iMessageViewModel: IMessageIntegrationViewModel
     let onClose: () -> Void
     let onAddTask: () -> Void
     let onEditTask: (TaskRecord) -> Void
@@ -39,7 +38,6 @@ struct AssistantPanelView: View {
 
             ScrollView(showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 22) {
-                    iMessageSection
                     panelSection("Current Tasks", tasksViewModel.currentTasks)
                     panelSection("Backlog", tasksViewModel.backlogTasks)
                     activitySection
@@ -79,82 +77,6 @@ struct AssistantPanelView: View {
         }
     }
 
-    private var iMessageSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("iMessage")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle("Enable iMessage", isOn: Binding(
-                    get: { iMessageViewModel.config.isEnabled },
-                    set: { iMessageViewModel.setEnabled($0) }
-                ))
-                .toggleStyle(.switch)
-
-                Text("Only whitelisted senders can trigger an agent. Mention an agent with `@Name` to execute a query.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                permissionsSection
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Allowed Senders")
-                        .font(.subheadline.weight(.semibold))
-
-                    HStack(spacing: 8) {
-                        TextField("Phone number or handle", text: $iMessageViewModel.draftHandle)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Add", action: iMessageViewModel.addHandle)
-                            .buttonStyle(.bordered)
-                    }
-
-                    if iMessageViewModel.config.allowedHandles.isEmpty {
-                        Text("No sender whitelist entries")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(iMessageViewModel.config.allowedHandles, id: \.self) { handle in
-                                removableWhitelistRow(handle, removeAction: { iMessageViewModel.removeHandle(handle) })
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.primary.opacity(0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                    )
-            )
-        }
-    }
-
-    private func removableWhitelistRow(_ text: String, removeAction: @escaping () -> Void) -> some View {
-        HStack(spacing: 10) {
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-
-            Spacer(minLength: 8)
-
-            Button("Remove", action: removeAction)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
-        )
-    }
-
     private var activitySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Activity Log")
@@ -174,99 +96,6 @@ struct AssistantPanelView: View {
                     )
                 }
             }
-        }
-    }
-
-    private var permissionsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Permissions")
-                .font(.subheadline.weight(.semibold))
-
-            permissionRow(
-                title: "Full Disk Access",
-                state: iMessageViewModel.permissionStatus.fullDiskAccess,
-                actionTitle: "Open Settings",
-                action: iMessageViewModel.openFullDiskAccessSettings
-            )
-
-            permissionRow(
-                title: "Messages Automation",
-                state: iMessageViewModel.permissionStatus.automation,
-                actionTitle: "Open Settings",
-                action: iMessageViewModel.openAutomationSettings
-            )
-
-            HStack(spacing: 8) {
-                Button("Refresh", action: iMessageViewModel.refreshPermissions)
-                    .buttonStyle(.bordered)
-
-                Button("Reveal AgentHub", action: iMessageViewModel.revealAppInFinder)
-                    .buttonStyle(.bordered)
-            }
-            .controlSize(.small)
-
-            Text(iMessageViewModel.permissionStatus.appPath)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .textSelection(.enabled)
-        }
-    }
-
-    private func permissionRow(
-        title: String,
-        state: IMessagePermissionStatus.State,
-        actionTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(permissionColor(for: state))
-                .frame(width: 8, height: 8)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text(permissionLabel(for: state))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 8)
-
-            if state != .granted {
-                Button(actionTitle, action: action)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
-        )
-    }
-
-    private func permissionLabel(for state: IMessagePermissionStatus.State) -> String {
-        switch state {
-        case .granted:
-            return "Granted"
-        case .missing:
-            return "Missing"
-        case .unavailable:
-            return "Unavailable"
-        }
-    }
-
-    private func permissionColor(for state: IMessagePermissionStatus.State) -> Color {
-        switch state {
-        case .granted:
-            return .green
-        case .missing:
-            return .orange
-        case .unavailable:
-            return .secondary
         }
     }
 }

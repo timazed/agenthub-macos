@@ -254,6 +254,7 @@ EOF
   assert_contains "${output}" "Built release app"
   assert_contains "$(head -n 1 "${bootstrap_log}")" "bootstrap"
   assert_contains "$(sed -n '2p' "${bootstrap_log}")" "-resolvePackageDependencies"
+  assert_contains "$(cat "${bootstrap_log}")" "-scheme AgentHub-Release"
   rm -rf "${tmp_dir}"
 }
 
@@ -266,13 +267,14 @@ test_beta_channel_defaults() {
   defaults="$(
     AGENTHUB_RELEASE_CHANNEL=beta bash -lc '
       source "$1"
-      printf "%s\n%s\n%s\n%s\n" "$(release_configuration)" "$(release_bundle_name)" "$(release_build_dir)" "$(release_base_url)"
+      printf "%s\n%s\n%s\n%s\n%s\n" "$(release_configuration)" "$(release_bundle_name)" "$(release_build_dir)" "$(release_base_url)" "$(release_scheme)"
     ' bash "${SCRIPT_DIR}/env.sh"
   )"
   assert_contains "${defaults}" "Beta"
   assert_contains "${defaults}" "AgentHubBeta.app"
   assert_contains "${defaults}" "/build/beta"
   assert_contains "${defaults}" "https://updates.example.com/agenthub/beta"
+  assert_contains "${defaults}" "AgentHub-Beta"
 }
 
 main() {

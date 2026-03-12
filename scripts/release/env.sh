@@ -57,7 +57,16 @@ release_publish_dir() {
 }
 
 release_scheme() {
-  echo "${AGENTHUB_RELEASE_SCHEME:-AgentHub}"
+  if [[ -n "${AGENTHUB_RELEASE_SCHEME:-}" ]]; then
+    echo "${AGENTHUB_RELEASE_SCHEME}"
+    return
+  fi
+
+  if is_beta_channel; then
+    echo "AgentHub-Beta"
+  else
+    echo "AgentHub-Release"
+  fi
 }
 
 release_configuration() {
