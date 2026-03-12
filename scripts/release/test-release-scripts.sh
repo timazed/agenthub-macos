@@ -193,13 +193,34 @@ test_beta_channel_defaults() {
   defaults="$(
     AGENTHUB_RELEASE_CHANNEL=beta bash -lc '
       source "$1"
-      printf "%s\n%s\n%s\n%s\n" "$(release_configuration)" "$(release_bundle_name)" "$(release_build_dir)" "$(release_base_url)"
+      printf "%s\n%s\n%s\n%s\n%s\n" "$(release_scheme)" "$(release_configuration)" "$(release_bundle_name)" "$(release_build_dir)" "$(release_base_url)"
     ' bash "${SCRIPT_DIR}/env.sh"
   )"
+  assert_contains "${defaults}" "AgentHub-Beta"
   assert_contains "${defaults}" "Beta"
   assert_contains "${defaults}" "AgentHubBeta.app"
   assert_contains "${defaults}" "/build/beta"
   assert_contains "${defaults}" "https://updates.example.com/agenthub/beta"
+}
+
+test_prod_channel_defaults() {
+  local metadata defaults
+  metadata="$(
+    AGENTHUB_RELEASE_CHANNEL=release bash "${SCRIPT_DIR}/read-version.sh"
+  )"
+  assert_contains "${metadata}" "bundle_id=au.com.roseadvisory.AgentHub"
+
+  defaults="$(
+    AGENTHUB_RELEASE_CHANNEL=release bash -lc '
+      source "$1"
+      printf "%s\n%s\n%s\n%s\n%s\n" "$(release_scheme)" "$(release_configuration)" "$(release_bundle_name)" "$(release_build_dir)" "$(release_base_url)"
+    ' bash "${SCRIPT_DIR}/env.sh"
+  )"
+  assert_contains "${defaults}" "AgentHub-Prod"
+  assert_contains "${defaults}" "Release"
+  assert_contains "${defaults}" "AgentHub.app"
+  assert_contains "${defaults}" "/build/release"
+  assert_contains "${defaults}" "https://updates.example.com/agenthub"
 }
 
 main() {
@@ -209,6 +230,7 @@ main() {
   test_collision_check_uses_build_number
   test_sign_release_uses_explicit_order_without_deep_signing
   test_beta_channel_defaults
+  test_prod_channel_defaults
   echo "All release script tests passed"
 }
 

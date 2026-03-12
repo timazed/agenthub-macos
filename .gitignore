@@ -98,6 +98,8 @@ iOSInjectionProject/
 !*.xcworkspace/contents.xcworkspacedata
 /*.gcno
 */xcshareddata/*
+!*.xcodeproj/xcshareddata/xcschemes/
+!*.xcodeproj/xcshareddata/xcschemes/*.xcscheme
 !*/xcshareddata/swiftpm/
 !*/xcshareddata/swiftpm/Package.resolved
 ### Xcode Patch ###
