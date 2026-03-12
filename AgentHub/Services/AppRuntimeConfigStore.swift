@@ -1,5 +1,9 @@
 import Foundation
 
+extension Notification.Name {
+    static let runtimeConfigDidChange = Notification.Name("RuntimeConfigDidChange")
+}
+
 final class AppRuntimeConfigStore {
     private let paths: AppPaths
     private let fileManager: FileManager
@@ -32,6 +36,7 @@ final class AppRuntimeConfigStore {
 
             let config = AppRuntimeConfig.default()
             try saveUnlocked(config)
+            notifyChange(config)
             return config
         }
     }
@@ -40,6 +45,7 @@ final class AppRuntimeConfigStore {
         try lock.withLock {
             try saveUnlocked(config)
         }
+        notifyChange(config)
     }
 
     private func loadUnlocked() throws -> AppRuntimeConfig {
@@ -51,5 +57,11 @@ final class AppRuntimeConfigStore {
         try paths.prepare(fileManager: fileManager)
         let data = try encoder.encode(config)
         try data.write(to: paths.runtimeConfigURL, options: [.atomic])
+    }
+
+    private func notifyChange(_ config: AppRuntimeConfig) {
+        NotificationCenter.default.post(name: .runtimeConfigDidChange, object: self, userInfo: [
+            "config": config
+        ])
     }
 }

@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		22AF00012F70000100112233 /* IMsgCore in Frameworks */ = {isa = PBXBuildFile; productRef = 22AF00022F70000200112233 /* IMsgCore */; };
+		22AF00042F70000400112233 /* MeshingKit in Frameworks */ = {isa = PBXBuildFile; productRef = 22AF00052F70000500112233 /* MeshingKit */; };
+		22AF000B2F70000B00112233 /* VariableBlurImageView in Frameworks */ = {isa = PBXBuildFile; productRef = 22AF000D2F70000D00112233 /* VariableBlurImageView */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,6 +59,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				22AF00012F70000100112233 /* IMsgCore in Frameworks */,
+				22AF00042F70000400112233 /* MeshingKit in Frameworks */,
+				22AF000B2F70000B00112233 /* VariableBlurImageView in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +122,8 @@
 			name = AgentHub;
 			packageProductDependencies = (
 				22AF00022F70000200112233 /* IMsgCore */,
+				22AF00052F70000500112233 /* MeshingKit */,
+				22AF000D2F70000D00112233 /* VariableBlurImageView */,
 			);
 			productName = AgentHub;
 			productReference = 2206394E2F58FDC7001A14A6 /* AgentHub.app */;
@@ -203,6 +209,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				22AF00032F70000300112233 /* XCRemoteSwiftPackageReference "imsg" */,
+				22AF00062F70000600112233 /* XCRemoteSwiftPackageReference "MeshingKit" */,
+				22AF000C2F70000C00112233 /* XCRemoteSwiftPackageReference "VariableBlurImageView" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2206394F2F58FDC7001A14A6 /* Products */;
@@ -596,6 +604,22 @@
 				kind = branch;
 			};
 		};
+		22AF00062F70000600112233 /* XCRemoteSwiftPackageReference "MeshingKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/rryam/MeshingKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.0;
+			};
+		};
+		22AF000C2F70000C00112233 /* XCRemoteSwiftPackageReference "VariableBlurImageView" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Eskils/VariableBlurImageView";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.1.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -603,6 +627,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 22AF00032F70000300112233 /* XCRemoteSwiftPackageReference "imsg" */;
 			productName = IMsgCore;
+		};
+		22AF00052F70000500112233 /* MeshingKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 22AF00062F70000600112233 /* XCRemoteSwiftPackageReference "MeshingKit" */;
+			productName = MeshingKit;
+		};
+		22AF000D2F70000D00112233 /* VariableBlurImageView */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 22AF000C2F70000C00112233 /* XCRemoteSwiftPackageReference "VariableBlurImageView" */;
+			productName = VariableBlurImageView;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
