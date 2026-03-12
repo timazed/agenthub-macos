@@ -1,10 +1,11 @@
 # Jenkins Release Pipeline
 
-This repository now includes Sparkle release pipelines for both prod and beta under `jenkins/` and `scripts/release/`.
+This repository includes Sparkle release pipelines for prod and beta under `jenkins/` and `scripts/release/`, plus a local dev build configuration in Xcode.
 
 ## Scope
 
-- `Release` and `Beta` channels
+- `Release` and `Beta` release channels
+- `Debug` local/dev builds in Xcode
 - Shell-script based pipeline
 - Sparkle artifact packaging and appcast publish
 - Automatic version bump and git commit/push
@@ -78,12 +79,24 @@ These variables control Sparkle appcast signing:
 
 If no Sparkle private key is configured, `publish-sparkle.sh` only writes a placeholder unsigned `appcast.xml` during `AGENTHUB_RELEASE_DRY_RUN=true` local verification. Non-dry-run releases fail fast until a Sparkle signing key is configured.
 
-## Channel Defaults
+## Environment Defaults
 
-| Channel | Xcode configuration | Bundle id | App bundle | Default feed |
-|---------|---------------------|-----------|------------|--------------|
-| `release` | `Release` | `au.com.roseadvisory.AgentHub` | `AgentHub.app` | `https://updates.example.com/agenthub/appcast.xml` |
-| `beta` | `Beta` | `au.com.roseadvisory.AgentHub.beta` | `AgentHubBeta.app` | `https://updates.example.com/agenthub/beta/appcast.xml` |
+| Environment | Xcode configuration | Bundle id | App bundle | Default feed | Notes |
+|-------------|---------------------|-----------|------------|--------------|-------|
+| `dev` | `Debug` | `au.com.roseadvisory.AgentHub.dev` | `AgentHubDev.app` | `http://127.0.0.1:8000/dev/appcast.xml` | Local-only build used from Xcode via the `AgentHub-Dev` scheme |
+| `beta` | `Beta` | `au.com.roseadvisory.AgentHub.beta` | `AgentHubBeta.app` | `https://updates.example.com/agenthub/beta/appcast.xml` | Release-candidate build used by the beta release pipeline |
+| `release` | `Release` | `au.com.roseadvisory.AgentHub` | `AgentHub.app` | `https://updates.example.com/agenthub/appcast.xml` | Production build used by the release pipeline |
+
+## Shared Xcode Schemes
+
+- `AgentHub-Dev`
+  - Builds, runs, tests, profiles, analyzes, and archives using `Debug`
+- `AgentHub-Beta`
+  - Builds, runs, profiles, analyzes, and archives using `Beta`
+  - Runs unit tests using `Debug` so the existing `@testable import AgentHub` suite keeps executing against the debug app module
+- `AgentHub-Release`
+  - Builds, runs, profiles, analyzes, and archives using `Release`
+  - Runs unit tests using `Debug` for the same reason as `AgentHub-Beta`
 
 ## Local Verification
 
@@ -111,6 +124,12 @@ Build only:
 
 ```bash
 bash scripts/release/build-release.sh
+```
+
+List shared Xcode schemes:
+
+```bash
+xcodebuild -project AgentHub.xcodeproj -list
 ```
 
 ## Jenkins Fast Follow
