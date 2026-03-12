@@ -254,8 +254,12 @@ final class CodexLoginCoordinator {
     }
 
     private func locateCodexBinary() throws -> URL {
-        if let binaryURL = try? codexBinaryLocator.locateBinary() {
-            return binaryURL
+        do {
+            return try codexBinaryLocator.locateBinary()
+        } catch AssistantRuntimeError.binaryNotFound {
+            // Fall back to the workspace binary for local development when the bundled binary is absent.
+        } catch {
+            throw error
         }
 
         let workspaceCandidate = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
