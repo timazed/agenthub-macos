@@ -83,6 +83,9 @@ struct AgentHubApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
         .defaultSize(width: 800, height: 800)
+        .commands {
+            AgentHubCommands(bootstrap: bootstrap)
+        }
 
     }
 
@@ -234,6 +237,7 @@ private final class AppBootstrap: ObservableObject {
     static let shared = AppBootstrap()
 
     @Published var container: AppContainer?
+    @Published var appUpdateManager: AppUpdateManager?
     @Published var errorMessage: String?
 
     private var didStart = false
@@ -267,6 +271,14 @@ private final class AppBootstrap: ObservableObject {
             }
 
             self.container = container
+            let appUpdateManager = AppUpdateManager(
+                bundle: .main,
+                paths: container.paths,
+                taskStore: container.taskStore,
+                activityLogStore: container.activityLogStore
+            )
+            appUpdateManager.start()
+            self.appUpdateManager = appUpdateManager
             self.errorMessage = nil
             startBackgroundServices(using: container)
             Self.log("bootstrap_success duration_ms=\(Self.durationMillis(since: startedAt))")
@@ -318,6 +330,19 @@ private final class AppBootstrap: ObservableObject {
     }
 }
 
+private struct AgentHubCommands: Commands {
+    @ObservedObject var bootstrap: AppBootstrap
+
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                bootstrap.appUpdateManager?.checkForUpdates()
+            }
+            .disabled(bootstrap.appUpdateManager?.canCheckForUpdates != true)
+        }
+    }
+}
+
 private struct LaunchStateView: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -325,49 +350,25 @@ private struct LaunchStateView: View {
     let message: String
 
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: backgroundGradientColors,
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+        let palette = OnboardingPalette.resolve(for: colorScheme)
 
-            VStack(spacing: 10) {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(Color.primary.opacity(0.82))
+        OnboardingShell(maxWidth: 760) {
+            OnboardingPanel(padding: 30) {
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(palette.accent)
 
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(Color.primary.opacity(0.92))
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(palette.title)
 
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary.opacity(0.9))
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(palette.body)
+                }
             }
-            .padding(28)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06), lineWidth: 1)
-            )
         }
         .frame(minWidth: 700, minHeight: 700)
-    }
-
-    private var backgroundGradientColors: [Color] {
-        if colorScheme == .dark {
-            return [
-                .black,
-                Color(red: 0.05, green: 0.06, blue: 0.09),
-                .black
-            ]
-        }
-        return [
-            .white,
-            Color(red: 0.95, green: 0.97, blue: 1.0),
-            .white
-        ]
     }
 }
