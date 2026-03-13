@@ -10,6 +10,7 @@ final class ChatViewModel: ObservableObject {
     @Published var pendingProposal: TaskProposal?
     @Published private(set) var activeModel = "gpt-5.4"
     @Published private(set) var activeReasoning = "Medium"
+    @Published private(set) var appTheme: AppTheme = .default
     @Published private(set) var agentName = "Agent"
     @Published private(set) var agentProfilePictureURL: String?
     @Published private(set) var isExternalRunActive = false
@@ -20,6 +21,7 @@ final class ChatViewModel: ObservableObject {
     private let personaManager: PersonaManager
     private var transcriptObserver: NSObjectProtocol?
     private var externalRunObserver: NSObjectProtocol?
+    private var runtimeConfigObserver: NSObjectProtocol?
 
     private var streamTask: Task<Void, Never>?
     private var streamingMessageID: UUID?
@@ -71,6 +73,15 @@ final class ChatViewModel: ObservableObject {
             let isActive = notification.userInfo?["isActive"] as? Bool ?? false
             Task { @MainActor [weak self] in
                 self?.isExternalRunActive = isActive
+            }
+        }
+        runtimeConfigObserver = NotificationCenter.default.addObserver(
+            forName: .runtimeConfigDidChange,
+            object: runtimeConfigStore,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.loadRuntimeConfig()
             }
         }
         loadRuntimeConfig()
@@ -230,6 +241,7 @@ final class ChatViewModel: ObservableObject {
             let config = try runtimeConfigStore.loadOrCreateDefault()
             activeModel = config.model
             activeReasoning = config.reasoningEffort.displayName
+            appTheme = config.theme
         } catch {
             debugLog("runtime_config_failed \(error.localizedDescription)")
         }
@@ -268,6 +280,9 @@ final class ChatViewModel: ObservableObject {
         }
         if let externalRunObserver {
             NotificationCenter.default.removeObserver(externalRunObserver)
+        }
+        if let runtimeConfigObserver {
+            NotificationCenter.default.removeObserver(runtimeConfigObserver)
         }
     }
 }

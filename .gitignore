@@ -97,6 +97,7 @@ iOSInjectionProject/
 !*.xcodeproj/xcshareddata/
 !*.xcworkspace/contents.xcworkspacedata
 /*.gcno
+*.profraw
 */xcshareddata/*
 !*/xcshareddata/swiftpm/
 !*/xcshareddata/swiftpm/Package.resolved

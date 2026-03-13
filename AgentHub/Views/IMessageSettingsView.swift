@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 @MainActor
 final class SettingsWindowManager {
@@ -85,8 +86,9 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
 @MainActor
 private final class SettingsSplitViewController: NSSplitViewController, NSToolbarDelegate {
     private let viewModel: IMessageIntegrationViewModel
+    private let themeViewModel: ThemeSettingsViewModel
     private let sidebarViewController: SettingsSidebarViewController
-    private let detailHostingController: NSHostingController<CommunicationChannelsSettingsView>
+    private let detailHostingController: NSHostingController<AnyView>
     private let sidebarItem: NSSplitViewItem
 
     init(container: AppContainer) {
@@ -96,10 +98,9 @@ private final class SettingsSplitViewController: NSSplitViewController, NSToolba
             monitorService: container.iMessageMonitorService,
             permissionService: IMessagePermissionService()
         )
+        themeViewModel = ThemeSettingsViewModel(runtimeConfigStore: container.runtimeConfigStore)
         sidebarViewController = SettingsSidebarViewController()
-        detailHostingController = NSHostingController(
-            rootView: CommunicationChannelsSettingsView(viewModel: viewModel)
-        )
+        detailHostingController = NSHostingController(rootView: AnyView(EmptyView()))
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarViewController)
 
         super.init(nibName: nil, bundle: nil)
@@ -142,12 +143,16 @@ private final class SettingsSplitViewController: NSSplitViewController, NSToolba
         detailHostingController.view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         sidebarViewController.select(.communicationChannels)
         viewModel.load()
+        themeViewModel.load()
+        applySelection(.communicationChannels)
     }
 
     private func applySelection(_ destination: SettingsDestination) {
         switch destination {
         case .communicationChannels:
-            detailHostingController.rootView = CommunicationChannelsSettingsView(viewModel: viewModel)
+            detailHostingController.rootView = AnyView(CommunicationChannelsSettingsView(viewModel: viewModel))
+        case .themes:
+            detailHostingController.rootView = AnyView(ThemeSettingsView(viewModel: themeViewModel))
         }
     }
 
@@ -356,7 +361,7 @@ private final class SettingsSidebarViewController: NSViewController, NSOutlineVi
 }
 
 private final class SettingsSidebarSectionCellView: NSTableCellView {
-    private let label = NSTextField(labelWithString: "Integrations")
+    private let label = NSTextField(labelWithString: "Settings")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -437,6 +442,7 @@ private final class SettingsSidebarDestinationCellView: NSTableCellView {
 
 private enum SettingsDestination: String, CaseIterable, Hashable, Identifiable {
     case communicationChannels
+    case themes
 
     var id: String { rawValue }
 
@@ -444,6 +450,8 @@ private enum SettingsDestination: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .communicationChannels:
             return "Communication Channels"
+        case .themes:
+            return "Themes"
         }
     }
 
@@ -451,6 +459,8 @@ private enum SettingsDestination: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .communicationChannels:
             return "iMessage and future channels"
+        case .themes:
+            return "Chat appearance and live previews"
         }
     }
 
@@ -458,6 +468,60 @@ private enum SettingsDestination: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .communicationChannels:
             return "message.badge.waveform.fill"
+        case .themes:
+            return "swatchpalette.fill"
+        }
+    }
+}
+
+@MainActor
+private final class ThemeSettingsViewModel: ObservableObject {
+    @Published private(set) var selectedTheme: AppTheme = .default
+    @Published var errorMessage: String?
+
+    private let runtimeConfigStore: AppRuntimeConfigStore
+    private var observer: NSObjectProtocol?
+
+    init(runtimeConfigStore: AppRuntimeConfigStore) {
+        self.runtimeConfigStore = runtimeConfigStore
+        observer = NotificationCenter.default.addObserver(
+            forName: .runtimeConfigDidChange,
+            object: runtimeConfigStore,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.load()
+            }
+        }
+    }
+
+    func load() {
+        do {
+            selectedTheme = try runtimeConfigStore.loadOrCreateDefault().theme
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func select(_ theme: AppTheme) {
+        guard theme != selectedTheme else { return }
+
+        do {
+            var config = try runtimeConfigStore.loadOrCreateDefault()
+            config.theme = theme
+            config.updatedAt = Date()
+            try runtimeConfigStore.save(config)
+            selectedTheme = theme
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    deinit {
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 }
@@ -506,6 +570,246 @@ private struct CommunicationChannelsSettingsView: View {
                 Text("Configure inbound channels, review permissions, and decide which senders can trigger an agent.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct ThemeSettingsView: View {
+    @ObservedObject var viewModel: ThemeSettingsViewModel
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 240, maximum: 280), spacing: 18, alignment: .top)
+    ]
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 28) {
+                header
+
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                    ForEach(AppTheme.allCases, id: \.self) { theme in
+                        ThemeOptionCard(
+                            theme: theme,
+                            isSelected: viewModel.selectedTheme == theme,
+                            onSelect: { viewModel.select(theme) }
+                        )
+                    }
+                }
+                .frame(maxWidth: 900, alignment: .leading)
+
+                if let errorMessage = viewModel.errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 36)
+            .padding(.top, 34)
+            .padding(.bottom, 28)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Label("Appearance", systemImage: "swatchpalette.fill")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Themes")
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("Choose the standard app appearance or switch chat to the animated Bubble Gum theme.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct ThemeOptionCard: View {
+    let theme: AppTheme
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 12) {
+                ThemePreviewCard(theme: theme)
+                    .frame(height: 164)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(isSelected ? Color.accentColor : Color.white.opacity(0.10), lineWidth: isSelected ? 2 : 1)
+                    )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(theme.displayName)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+
+                    Text(theme.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ThemePreviewCard: View {
+    let theme: AppTheme
+
+    var body: some View {
+        ZStack {
+            switch theme {
+            case .default:
+                DefaultThemePreview()
+            case .bubbleGum:
+                BubbleGumThemePreview()
+            }
+        }
+    }
+}
+
+private struct DefaultThemePreview: View {
+    @State private var sweepOffset: CGFloat = -1.1
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .windowBackgroundColor),
+                    Color(nsColor: .underPageBackgroundColor)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            VStack(spacing: 12) {
+                MiniPreviewBubble(width: 120, alignment: .leading, fill: Color.white.opacity(0.58), textColor: Color.black.opacity(0.75))
+                MiniPreviewBubble(width: 94, alignment: .trailing, fill: Color.blue.opacity(0.88), textColor: .white)
+                MiniPreviewBubble(width: 144, alignment: .leading, fill: Color.white.opacity(0.48), textColor: Color.black.opacity(0.70))
+            }
+            .padding(16)
+
+            GeometryReader { geometry in
+                LinearGradient(
+                    colors: [.clear, Color.white.opacity(0.20), .clear],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .frame(width: geometry.size.width * 0.55)
+                .rotationEffect(.degrees(14))
+                .offset(x: sweepOffset * geometry.size.width)
+            }
+            .blendMode(.screen)
+        }
+        .onAppear {
+            withAnimation(.linear(duration: 2.8).repeatForever(autoreverses: false)) {
+                sweepOffset = 1.2
+            }
+        }
+    }
+}
+
+private struct BubbleGumThemePreview: View {
+    var body: some View {
+        ZStack {
+            ChatMeshBackgroundView()
+
+            VStack(spacing: 12) {
+                MiniPreviewBubble(
+                    width: 126,
+                    alignment: .leading,
+                    fill: Color(red: 0.33, green: 0.49, blue: 0.68).opacity(0.64),
+                    textColor: .white.opacity(0.96)
+                )
+                MiniPreviewBubble(
+                    width: 98,
+                    alignment: .trailing,
+                    fill: LinearGradient(
+                        colors: [Color.blue.opacity(0.96), Color.cyan.opacity(0.78)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    textColor: .white
+                )
+                MiniPreviewBubble(
+                    width: 152,
+                    alignment: .leading,
+                    fill: Color(red: 0.33, green: 0.49, blue: 0.68).opacity(0.54),
+                    textColor: .white.opacity(0.96)
+                )
+            }
+            .padding(16)
+        }
+    }
+}
+
+private struct MiniPreviewBubble<Fill: ShapeStyle>: View {
+    let width: CGFloat
+    let alignment: HorizontalAlignment
+    let fill: Fill
+    let textColor: Color
+
+    var body: some View {
+        HStack {
+            if alignment == .trailing {
+                Spacer(minLength: 18)
+            }
+
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(fill)
+                .frame(width: width, height: 34)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(textColor.opacity(0.92))
+                        .frame(width: width * 0.54, height: 4)
+                        .padding(.horizontal, 12)
+                }
+
+            if alignment == .leading {
+                Spacer(minLength: 18)
             }
         }
     }
