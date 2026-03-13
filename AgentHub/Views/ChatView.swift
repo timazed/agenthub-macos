@@ -1,5 +1,19 @@
 import SwiftUI
+import AppKit
+import Inferno
+import MeshingKit
 
+struct X: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .top) {
+                content
+                    .blur(radius: 20)
+                    .frame(height: 80)
+                    .clipped()
+            }
+    }
+}
 struct ChatView: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -12,28 +26,46 @@ struct ChatView: View {
     @State private var composerHeight: CGFloat = ComposerMetrics.minTextHeight
     @State private var isModelMenuPresented = false
     @State private var isReasoningMenuPresented = false
-    @StateObject private var headerSnapshotStore = HeaderSnapshotStore()
-    @State private var isHeaderScrollActive = false
-    @State private var isHeaderBlurVisible = true
-    @State private var scrollSettledWorkItem: DispatchWorkItem?
-    @State private var snapshotRefreshToken = 0
+    @StateObject private var snapshotBridge = SnapshotSourceBridge()
 
     private let topOverlayHeight: CGFloat = 56
     private let bottomOverlayHeight: CGFloat = 120
-    private let headerBackdropHeight: CGFloat = 100
+    private let headerBackdropHeight: CGFloat = 50 // (plus safe area padding)
+    
+    private var gradientAppearanceColor: Color {
+        if viewModel.appTheme == .default {
+            return colorScheme == .dark ? .black : .white
+        }
+        if viewModel.appTheme == .bubbleGum {
+            return Color(hex: "#35AFF7")
+        }
+        return .white
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: viewModel.appTheme != .bubbleGum)) { timeline in
+        TimelineView(
+            .animation(
+                minimumInterval: 1 / 30,
+                paused: viewModel.appTheme != .bubbleGum
+            )
+        ) { timeline in
             GeometryReader { proxy in
                 ZStack(alignment: .top) {
-                    chatScene(size: proxy.size, timelineDate: timeline.date)
-                    headerBackdrop(size: proxy.size)
+                    chatScene(
+                        size: CGSize(
+                            width: proxy.size.width,
+                            height: proxy.size.height
+                        ),
+                        timelineDate: timeline.date
+                    )
+                    gradientTintOverlay
                     headerOverlay
                     composerOverlay
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.clear)
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .ignoresSafeArea()
             }
+            .ignoresSafeArea()
         }
     }
 
@@ -43,142 +75,116 @@ struct ChatView: View {
             themeBackground(timelineDate: timelineDate)
             conversationSurface
         }
-        .background(ChatSceneSnapshotSourceObserver(store: headerSnapshotStore))
-        .frame(width: size.width, height: size.height)
+        .ignoresSafeArea()
+        .frame(width: size.width, height: size.height, alignment: .top)
         .background(.clear)
     }
 
+    @ViewBuilder
     private var conversationSurface: some View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                conversationEntriesStack(useLazyLayout: true, includeScrollTargets: true, displayMode: .live)
-                    .padding(.horizontal, 32)
+                ZStack {
+                    conversationEntriesStack(
+                        useLazyLayout: true,
+                        includeScrollTargets: true,
+                        displayMode: .live
+                    )
+                    .padding(.horizontal, 20)
                     .padding(.top, topOverlayHeight)
                     .padding(.bottom, bottomOverlayHeight)
+                }
             }
             .background(.clear)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                ScrollActivityObserver { velocity in
-                    noteScrollActivity(velocity: velocity)
-                } onScrollEnded: {
-                    noteScrollEnded()
-                } onScrollViewResolved: { scrollView in
-                    if headerSnapshotStore.scrollView !== scrollView {
-                        headerSnapshotStore.scrollView = scrollView
-                        snapshotRefreshToken &+= 1
-                    }
-                }
-            )
             .contentMargins(.top, 0, for: .scrollContent)
             .contentMargins(.bottom, 0, for: .scrollContent)
             .onChange(of: viewModel.messages.count) { _, _ in
                 scrollToBottom(proxy: proxy)
-                refreshHeaderSnapshotSoon()
             }
             .onChange(of: viewModel.isThinking) { _, _ in
                 scrollToBottom(proxy: proxy)
-                refreshHeaderSnapshotSoon()
             }
             .onAppear {
                 scrollToBottom(proxy: proxy)
-                refreshHeaderSnapshotSoon()
             }
         }
     }
-
-    private func headerBackdrop(size: CGSize) -> some View {
-        ZStack(alignment: .top) {
-            HeaderSnapshotSurfaceView(
-                store: headerSnapshotStore,
-                width: size.width,
-                headerHeight: headerBackdropHeight,
-                refreshID: snapshotRefreshID,
-                isLiveCaptureEnabled: headerSnapshotShouldRunLive
-            )
-            .frame(
-                width: size.width,
-                height: headerBackdropHeight,
-                alignment: .top
-            )
-            .opacity(isHeaderBlurVisible ? 1 : 0)
-        }
-        .frame(width: size.width, height: headerBackdropHeight, alignment: .top)
-        .mask(
+    
+    @ViewBuilder
+    private var gradientTintOverlay: some View {
+        VStack {
             LinearGradient(
                 stops: [
-                    .init(color: .white, location: 0.0),
-                    .init(color: .white, location: 0.72),
-                    .init(color: .white.opacity(0.75), location: 0.86),
-                    .init(color: .white.opacity(0.28), location: 0.95),
+                    .init(color: gradientAppearanceColor.opacity(0.5), location: 0.0),
                     .init(color: .clear, location: 1.0)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-        )
-        .animation(.easeOut(duration: 0.18), value: isHeaderScrollActive)
-        .animation(.easeOut(duration: 0.18), value: isHeaderBlurVisible)
-        .ignoresSafeArea(.container, edges: .top)
-        .allowsHitTesting(false)
-    }
-
-    private func noteScrollActivity(velocity: CGFloat) {
-        isHeaderScrollActive = true
-        isHeaderBlurVisible = false
-
-        scrollSettledWorkItem?.cancel()
-        let workItem = DispatchWorkItem {
-            isHeaderScrollActive = false
-            DispatchQueue.main.async {
-                snapshotRefreshToken &+= 1
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                guard !isHeaderScrollActive else { return }
-                isHeaderBlurVisible = true
-            }
+            .ignoresSafeArea(edges: .top)
+            .frame(height: 80, alignment: . top)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0.0),
+                        .init(color: .black, location: 0.72),
+                        .init(color: .black.opacity(0.75), location: 0.86),
+                        .init(color: .black.opacity(0.28), location: 0.95),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea(edges: .top)
+            )
+            .allowsHitTesting(false)
+            Spacer()
+            LinearGradient(
+                stops: [
+                    .init(color: gradientAppearanceColor.opacity(0.5), location: 0.0),
+                    .init(color: .clear, location: 1.0)
+                ],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+            .ignoresSafeArea(edges: .bottom)
+            .frame(height: 80, alignment: . bottom)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0.0),
+                        .init(color: .black, location: 0.72),
+                        .init(color: .black.opacity(0.75), location: 0.86),
+                        .init(color: .black.opacity(0.28), location: 0.95),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .bottom,
+                    endPoint: .top
+                )
+                .ignoresSafeArea(edges: .bottom)
+            )
+            .allowsHitTesting(false)
         }
-        scrollSettledWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: workItem)
+        .ignoresSafeArea()
+
     }
-
-    private func noteScrollEnded() {
-        scrollSettledWorkItem?.cancel()
-        isHeaderScrollActive = false
-        isHeaderBlurVisible = false
-        DispatchQueue.main.async {
-            snapshotRefreshToken &+= 1
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            guard !isHeaderScrollActive else { return }
-            isHeaderBlurVisible = true
-        }
-    }
-
-    private var snapshotRefreshID: Int { snapshotRefreshToken }
-
-    private var headerSnapshotShouldRunLive: Bool {
-        viewModel.appTheme == .bubbleGum && isHeaderBlurVisible && !isHeaderScrollActive
-    }
-
-    private func refreshHeaderSnapshotSoon() {
-        guard !isHeaderScrollActive else { return }
-        DispatchQueue.main.async {
-            snapshotRefreshToken &+= 1
-        }
-    }
-
+        
+    @ViewBuilder
     private var headerOverlay: some View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, 20)
+                .padding(.top, 20)
 
             Spacer(minLength: 0)
         }
-        .ignoresSafeArea(.container, edges: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea()
         .allowsHitTesting(true)
     }
 
+    @ViewBuilder
     private var composerOverlay: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
@@ -189,6 +195,7 @@ struct ChatView: View {
         .background(.clear)
     }
 
+    @ViewBuilder
     private var header: some View {
         VStack(spacing: 6) {
             Button(action: onTogglePanel) {
@@ -199,7 +206,12 @@ struct ChatView: View {
                             profilePictureURL: viewModel.agentProfilePictureURL,
                             size: 32
                         )
-                        .shadow(color: overlayShade.opacity(colorScheme == .dark ? 0.22 : 0.12), radius: 10, x: 0, y: 5)
+                        .shadow(
+                            color: overlayShade.opacity(colorScheme == .dark ? 0.22 : 0.12),
+                            radius: 10,
+                            x: 0,
+                            y: 5
+                        )
                     }
 
                     HStack(spacing: 8) {
@@ -213,14 +225,7 @@ struct ChatView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 7)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(.ultraThinMaterial)
-                            .overlay(
-                                Capsule(style: .continuous)
-                                    .stroke(headerCapsuleBorder, lineWidth: 1)
-                            )
-                    )
+                    .glassEffect(.clear, in: .capsule(style: .continuous))
                 }
             }
             .buttonStyle(.plain)
@@ -229,6 +234,7 @@ struct ChatView: View {
         .frame(maxWidth: .infinity)
     }
 
+    @ViewBuilder
     private var composer: some View {
         VStack(spacing: 8) {
             if let proposal = viewModel.pendingProposal {
@@ -248,7 +254,11 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(viewModel.isThinking)
-                .popover(isPresented: $isModelMenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
+                .popover(
+                    isPresented: $isModelMenuPresented,
+                    attachmentAnchor: .point(.trailing),
+                    arrowEdge: .trailing
+                ) {
                     ModelPickerPopover(
                         models: viewModel.supportedModels,
                         activeModel: viewModel.activeModel,
@@ -267,7 +277,11 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(viewModel.isThinking)
-                .popover(isPresented: $isReasoningMenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
+                .popover(
+                    isPresented: $isReasoningMenuPresented,
+                    attachmentAnchor: .point(.trailing),
+                    arrowEdge: .trailing
+                ) {
                     ReasoningPickerPopover(
                         activeReasoning: viewModel.activeReasoning,
                         onSelect: { reasoning in
@@ -291,12 +305,7 @@ struct ChatView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, ComposerMetrics.verticalPadding)
                 .frame(minHeight: ComposerMetrics.controlHeight)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(.clear)
-                        .liquidGlass(cornerRadius: 20)
-                )
-
+                .glassEffect(.clear, in: .capsule(style: .continuous))
                 HStack(spacing: 8) {
                     CircleIconButton(
                         systemName: viewModel.isThinking ? "stop.fill" : "arrow.up",
@@ -304,15 +313,12 @@ struct ChatView: View {
                     ) {
                         if viewModel.isBusy {
                             viewModel.cancel()
-                        } else {
+                        } else if !viewModel.inputText
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .isEmpty {
                             viewModel.sendCurrentInput()
                         }
                     }
-                    .disabled(
-                        !isInputEnabled ||
-                        viewModel.isExternalRunActive ||
-                        (!viewModel.isBusy && viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    )
                 }
             }
 
@@ -353,7 +359,7 @@ struct ChatView: View {
             AdaptiveWindowBackground()
         }
     }
-    
+
     @ViewBuilder
     private func conversationEntriesStack(
         useLazyLayout: Bool,
@@ -363,13 +369,21 @@ struct ChatView: View {
         if useLazyLayout {
             LazyVStack(spacing: 18) {
                 ForEach(groupedEntries) { entry in
-                    conversationEntry(entry, includeScrollTargets: includeScrollTargets, displayMode: displayMode)
+                    conversationEntry(
+                        entry,
+                        includeScrollTargets: includeScrollTargets,
+                        displayMode: displayMode
+                    )
                 }
             }
         } else {
             VStack(spacing: 18) {
                 ForEach(groupedEntries) { entry in
-                    conversationEntry(entry, includeScrollTargets: includeScrollTargets, displayMode: displayMode)
+                    conversationEntry(
+                        entry,
+                        includeScrollTargets: includeScrollTargets,
+                        displayMode: displayMode
+                    )
                 }
             }
             .background(.clear)
@@ -387,10 +401,18 @@ struct ChatView: View {
             DateSeparator(label: label, displayMode: displayMode)
         case let .message(message):
             if includeScrollTargets {
-                ConversationBubble(message: message, theme: viewModel.appTheme, displayMode: displayMode)
-                    .id(ConversationScrollTarget.message(message.id))
+                ConversationBubble(
+                    message: message,
+                    theme: viewModel.appTheme,
+                    displayMode: displayMode
+                )
+                .id(ConversationScrollTarget.message(message.id))
             } else {
-                ConversationBubble(message: message, theme: viewModel.appTheme, displayMode: displayMode)
+                ConversationBubble(
+                    message: message,
+                    theme: viewModel.appTheme,
+                    displayMode: displayMode
+                )
             }
         case .thinking:
             if displayMode == .live, includeScrollTargets {
@@ -413,7 +435,15 @@ struct ChatView: View {
         if calendar.isDateInYesterday(date) {
             return "Yesterday \(date.formatted(date: .omitted, time: .shortened))"
         }
-        return date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day().hour().minute())
+        return date
+            .formatted(
+                .dateTime
+                    .weekday(.wide)
+                    .month(.abbreviated)
+                    .day()
+                    .hour()
+                    .minute()
+            )
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy) {
@@ -443,55 +473,5 @@ struct ChatView: View {
             return Color.white.opacity(colorScheme == .dark ? 0.12 : 0.18)
         }
         return Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.04)
-    }
-
-    private var headerBackdropVeil: some ShapeStyle {
-        if colorScheme == .dark {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(viewModel.appTheme == .bubbleGum ? 0.44 : 0.52),
-                        Color.black.opacity(viewModel.appTheme == .bubbleGum ? 0.24 : 0.3)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-        }
-
-        return AnyShapeStyle(
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(viewModel.appTheme == .bubbleGum ? 0.26 : 0.32),
-                    Color.white.opacity(viewModel.appTheme == .bubbleGum ? 0.12 : 0.16)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-    }
-
-    private var headerMotionGradient: LinearGradient {
-        if colorScheme == .dark {
-            return LinearGradient(
-                colors: [
-                    Color.black.opacity(viewModel.appTheme == .bubbleGum ? 0.72 : 0.8),
-                    Color.black.opacity(viewModel.appTheme == .bubbleGum ? 0.46 : 0.58),
-                    Color.black.opacity(0.08)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-
-        return LinearGradient(
-            colors: [
-                Color.white.opacity(viewModel.appTheme == .bubbleGum ? 0.5 : 0.64),
-                Color.white.opacity(viewModel.appTheme == .bubbleGum ? 0.26 : 0.34),
-                Color.white.opacity(0.04)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
     }
 }

@@ -49,6 +49,10 @@ struct CircleGlassButton<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     let diameter: CGFloat
     @ViewBuilder let content: () -> Content
+    
+    private var fillColor: Color {
+        colorScheme == .dark ? .white : .black
+    }
 
     var body: some View {
         content()
@@ -58,7 +62,7 @@ struct CircleGlassButton<Content: View>: View {
                 if #available(macOS 26.0, iOS 26.0, *) {
                     Circle()
                         .fill(.clear)
-                        .glassEffect(.regular, in: .circle)
+                        .glassEffect(.clear, in: .circle)
                 } else {
                     Circle()
                         .fill(.ultraThinMaterial)

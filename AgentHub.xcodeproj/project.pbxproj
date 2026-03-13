@@ -211,6 +211,7 @@
 				22AF00032F70000300112233 /* XCRemoteSwiftPackageReference "imsg" */,
 				22AF00062F70000600112233 /* XCRemoteSwiftPackageReference "MeshingKit" */,
 				22AF000C2F70000C00112233 /* XCRemoteSwiftPackageReference "VariableBlurImageView" */,
+				22945F5D2F64194000E42FA0 /* XCRemoteSwiftPackageReference "Inferno" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2206394F2F58FDC7001A14A6 /* Products */;
@@ -596,6 +597,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		22945F5D2F64194000E42FA0 /* XCRemoteSwiftPackageReference "Inferno" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/twostraws/Inferno";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.1.0;
+			};
+		};
 		22AF00032F70000300112233 /* XCRemoteSwiftPackageReference "imsg" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/steipete/imsg";
