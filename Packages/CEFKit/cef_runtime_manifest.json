@@ -1,0 +1,21 @@
+{
+  "cefVersion": "136.1.4+g89c0a8c+chromium-136.0.7103.93",
+  "chromiumVersion": "136.0.7103.93",
+  "cefCommit": "89c0a8c39a9fdc4d22b215c6d8c201e81afddb0d",
+  "apiVersion": 13601,
+  "runtimeDirectory": "Vendor/CEFRuntime/136.1.4+g89c0a8c+chromium-136.0.7103.93",
+  "platforms": {
+    "macosarm64": {
+      "archiveName": "cef_binary_136.1.4+g89c0a8c+chromium-136.0.7103.93_macosarm64.tar.bz2",
+      "archiveRoot": "cef_binary_136.1.4+g89c0a8c+chromium-136.0.7103.93_macosarm64",
+      "url": "https://cef-builds.spotifycdn.com/cef_binary_136.1.4+g89c0a8c+chromium-136.0.7103.93_macosarm64.tar.bz2",
+      "sha256": "e6b669e5979c5ba25621d9297a3fcc5642e936ed5471da130ba462b6cd5f8e91"
+    },
+    "macosx64": {
+      "archiveName": "cef_binary_136.1.4+g89c0a8c+chromium-136.0.7103.93_macosx64.tar.bz2",
+      "archiveRoot": "cef_binary_136.1.4+g89c0a8c+chromium-136.0.7103.93_macosx64",
+      "url": "https://cef-builds.spotifycdn.com/cef_binary_136.1.4+g89c0a8c+chromium-136.0.7103.93_macosx64.tar.bz2",
+      "sha256": "f744998f1d95791ff8e2973a941c7c69129eb44e372ec84d59da6ca31db477f8"
+    }
+  }
+}

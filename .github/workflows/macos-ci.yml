@@ -1,0 +1,40 @@
+name: macOS CI
+
+on:
+  push:
+    branches:
+      - main
+      - codex/**
+      - feature/**
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Bootstrap CEF runtime
+        run: scripts/bootstrap_cef_runtime.sh
+
+      - name: Build
+        run: >
+          xcodebuild
+          -project AgentHub.xcodeproj
+          -scheme AgentHub
+          -sdk macosx
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+      - name: Test
+        run: >
+          xcodebuild
+          -project AgentHub.xcodeproj
+          -scheme AgentHub
+          -sdk macosx
+          CODE_SIGNING_ALLOWED=NO
+          test
+          -only-testing:AgentHubTests

@@ -1,0 +1,3 @@
+[submodule "Vendor/CEF"]
+	path = Vendor/CEF
+	url = https://bitbucket.org/chromiumembedded/cef.git

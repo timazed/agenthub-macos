@@ -108,4 +108,7 @@ Pods/
 
 AgentHub/Resources/codex/codex
 
+# CEF runtime bootstrap output (downloaded on demand, never committed)
+Vendor/CEFRuntime/
+
 # End of https://www.gitignore.io/api/xcode,swift

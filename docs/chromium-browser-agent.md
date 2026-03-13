@@ -8,6 +8,23 @@ The embedded Chromium browser now supports two layers:
 - Deterministic OpenTable controllers retained only as prototype/reference tooling inside the Chromium pane.
 - A generic semantic browser substrate that can infer workflow state, missing requirements, verification blockers, and final-submit readiness from page inspection instead of relying on site-specific booking branches.
 
+## CEF Setup (Submodule + Bootstrap)
+
+CEF source is now tracked as a pinned git submodule at `Vendor/CEF`, and runtime binaries are provisioned on demand into `Vendor/CEFRuntime/<cef-version>/`.
+
+From a fresh clone:
+
+```bash
+git submodule update --init --recursive
+scripts/bootstrap_cef_runtime.sh
+```
+
+### Troubleshooting
+
+- `SHA256 mismatch`: clear `Vendor/CEFRuntime/.downloads/` and rerun `scripts/bootstrap_cef_runtime.sh`.
+- `Missing CEF runtime ...` during Xcode build: run `scripts/bootstrap_cef_runtime.sh` from repo root.
+- Submodule commit drift: run `git submodule status` and ensure `Vendor/CEF` resolves to `89c0a8c39a9fdc4d22b215c6d8c201e81afddb0d`.
+
 ## Generic Agent Capabilities
 
 The generic browser loop currently supports:

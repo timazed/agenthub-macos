@@ -1,3 +1,1 @@
-Vendor/CEF/Debug/Chromium[[:space:]]Embedded[[:space:]]Framework.framework/Chromium[[:space:]]Embedded[[:space:]]Framework filter=lfs diff=lfs merge=lfs -text
-t
-Vendor/CEF/Release/Chromium[[:space:]]Embedded[[:space:]]Framework.framework/Chromium[[:space:]]Embedded[[:space:]]Framework filter=lfs diff=lfs merge=lfs -text
+# No local LFS filters are required for CEF; runtime artifacts are bootstrapped on demand.
