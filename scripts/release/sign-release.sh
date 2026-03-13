@@ -22,6 +22,43 @@ sign_if_present() {
   fi
 }
 
+sign_cef_framework_contents_if_present() {
+  local framework_path="$1"
+  local identity="$2"
+  local path
+
+  if [[ ! -d "${framework_path}" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r path; do
+    sign_if_present "${path}" "${identity}"
+  done < <(find "${framework_path}/Versions" -type f \( -path '*/Libraries/*' -o -name 'Chromium Embedded Framework' \) | sort)
+}
+
+sign_cef_if_present() {
+  local app_path="$1"
+  local identity="$2"
+  local frameworks_dir helper framework_path
+
+  frameworks_dir="${app_path}/Contents/Frameworks"
+  if [[ ! -d "${frameworks_dir}" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r helper; do
+    sign_if_present "${helper}" "${identity}"
+  done < <(find "${frameworks_dir}" -maxdepth 1 -type d -name '*Helper*.app' | sort)
+
+  while IFS= read -r helper; do
+    sign_if_present "${helper}" "${identity}"
+  done < <(find "${frameworks_dir}" -maxdepth 1 -type d -name '*.xpc' | sort)
+
+  framework_path="${frameworks_dir}/Chromium Embedded Framework.framework"
+  sign_cef_framework_contents_if_present "${framework_path}" "${identity}"
+  sign_if_present "${framework_path}" "${identity}"
+}
+
 main() {
   if release_dry_run; then
     echo "Dry run enabled; skipping release signing"
@@ -56,6 +93,7 @@ main() {
   sign_if_present "${sparkle_current}/Updater.app" "${identity}"
   sign_if_present "${sparkle_current}/Autoupdate" "${identity}"
   sign_if_present "${sparkle_framework}" "${identity}"
+  sign_cef_if_present "${app_path}" "${identity}"
   codesign_path "${app_path}" "${identity}"
   "$(codesign_bin)" --verify --deep --strict --verbose=2 "${app_path}"
 }

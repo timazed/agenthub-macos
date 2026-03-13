@@ -108,6 +108,7 @@
 			buildPhases = (
 				2206394A2F58FDC7001A14A6 /* Sources */,
 				2206394B2F58FDC7001A14A6 /* Frameworks */,
+				9C0D10012FDD000100D0AA01 /* Prepare bundled dependencies */,
 				2206394C2F58FDC7001A14A6 /* Resources */,
 			);
 			buildRules = (
@@ -243,6 +244,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		9C0D10012FDD000100D0AA01 /* Prepare bundled dependencies */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/dependencies/prepare-xcode-inputs.sh",
+				"$(SRCROOT)/scripts/dependencies/bootstrap.sh",
+				"$(SRCROOT)/scripts/dependencies/manifest.json",
+				"$(SRCROOT)/scripts/dependencies/lib/common.sh",
+			);
+			name = "Prepare bundled dependencies";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Chromium Embedded Framework.framework",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "bash \"${SRCROOT}/scripts/dependencies/prepare-xcode-inputs.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		2206394A2F58FDC7001A14A6 /* Sources */ = {
@@ -474,6 +498,7 @@
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AgentHub/Info.plist;
@@ -511,6 +536,7 @@
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AgentHub/Info.plist;
@@ -548,6 +574,7 @@
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+					ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AgentHub/Info.plist;

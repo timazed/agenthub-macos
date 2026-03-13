@@ -6,6 +6,7 @@ This repository now includes Sparkle release pipelines for both prod and beta un
 
 - `Release` and `Beta` channels
 - Shell-script based pipeline
+- Build-time bootstrap for pinned Codex CLI and CEF vendor artifacts
 - Sparkle artifact packaging and appcast publish
 - Automatic version bump and git commit/push
 - No Slack, App Center, or other notification integrations in this pass
@@ -29,13 +30,14 @@ This repository now includes Sparkle release pipelines for both prod and beta un
 
 1. Read the current channel's version and build from `AgentHub.xcodeproj/project.pbxproj`.
 2. Check the current appcast to prevent publishing a duplicate version.
-3. Build the app with `xcodebuild`.
-4. Re-sign the exported `.app` with Developer ID.
-5. Submit the app for notarization and staple the ticket.
-6. Package the app for Sparkle and generate `appcast.xml`.
-7. Copy publishable artifacts into `build/release/publish/`.
-8. Bump the version metadata in `project.pbxproj`.
-9. Commit and push the release bump.
+3. Bootstrap pinned Codex CLI and CEF artifacts from `scripts/dependencies/manifest.json`.
+4. Build the app with `xcodebuild`.
+5. Re-sign the exported `.app` with Developer ID, including bundled CEF artifacts when present.
+6. Submit the app for notarization and staple the ticket.
+7. Package the app for Sparkle and generate `appcast.xml`.
+8. Copy publishable artifacts into `build/release/publish/`.
+9. Bump the version metadata in `project.pbxproj`.
+10. Commit and push the release bump.
 
 ## Required Environment Variables
 
@@ -51,6 +53,9 @@ These variables control the pipeline:
 | `AGENTHUB_RELEASE_BASE_URL` | Public base URL for hosted Sparkle artifacts | `https://updates.example.com/agenthub` or `/agenthub/beta` based on channel |
 | `AGENTHUB_RELEASE_FEED_URL` | Feed URL embedded into the release build | `<base-url>/appcast.xml` |
 | `AGENTHUB_RELEASE_APPCAST_SOURCE` | Existing appcast location used for collision checks | `<feed-url>` |
+| `AGENTHUB_DEPENDENCY_MANIFEST` | Override the pinned vendor manifest path | `scripts/dependencies/manifest.json` |
+| `AGENTHUB_DEPENDENCY_CACHE_DIR` | Cache directory for downloaded Codex/CEF artifacts | `build/dependency-cache` |
+| `AGENTHUB_SKIP_DEPENDENCY_BOOTSTRAP` | Skip dependency bootstrap step when artifacts are already staged | `false` |
 | `AGENTHUB_GIT_REMOTE` | Git remote used for the release bump push | `origin` |
 | `AGENTHUB_RELEASE_GIT_BRANCH` | Branch used for the release bump push | current branch |
 | `AGENTHUB_RELEASE_SKIP_GIT_PUSH` | Prevent the final push step after the release bump commit | `false` |
@@ -77,6 +82,8 @@ These variables control Sparkle appcast signing:
 | `AGENTHUB_SPARKLE_PRIVATE_KEY_SECRET` | Inline Sparkle private key contents written to a temp file at runtime |
 
 If no Sparkle private key is configured, `publish-sparkle.sh` only writes a placeholder unsigned `appcast.xml` during `AGENTHUB_RELEASE_DRY_RUN=true` local verification. Non-dry-run releases fail fast until a Sparkle signing key is configured.
+
+The manifest is intentionally just a pinned lockfile for vendored artifacts. Update the versions, URLs, and checksums in `scripts/dependencies/manifest.json` when you want to move to a new stable Codex CLI or CEF release. Normal builds and release jobs consume those pins reproducibly.
 
 ## Channel Defaults
 
@@ -111,6 +118,12 @@ Build only:
 
 ```bash
 bash scripts/release/build-release.sh
+```
+
+Dependency bootstrap only:
+
+```bash
+bash scripts/dependencies/bootstrap.sh
 ```
 
 ## Jenkins Fast Follow

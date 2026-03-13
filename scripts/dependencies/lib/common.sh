@@ -1,0 +1,217 @@
+#!/bin/bash
+
+set -euo pipefail
+
+CODEX_RESOURCE_DIR="AgentHub/Resources/codex"
+CODEX_BINARY_NAME="codex"
+CEF_STAGING_DIR="build/dependencies/cef"
+
+dependency_repo_root() {
+  if [[ -n "${AGENTHUB_DEPENDENCY_REPO_ROOT:-}" ]]; then
+    echo "${AGENTHUB_DEPENDENCY_REPO_ROOT}"
+    return
+  fi
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  echo "$(cd "${script_dir}/../../.." && pwd)"
+}
+
+dependency_manifest_path() {
+  if [[ -n "${AGENTHUB_DEPENDENCY_MANIFEST:-}" ]]; then
+    echo "${AGENTHUB_DEPENDENCY_MANIFEST}"
+    return
+  fi
+
+  echo "$(dependency_repo_root)/scripts/dependencies/manifest.json"
+}
+
+normalize_arch_name() {
+  local value="${1:-}"
+  case "${value}" in
+    "")
+      echo ""
+      ;;
+    arm64|aarch64)
+      echo "arm64"
+      ;;
+    x86_64|amd64)
+      echo "x86_64"
+      ;;
+    *)
+      echo "${value}"
+      ;;
+  esac
+}
+
+dependency_build_env_arch() {
+  local archs arch_count
+
+  if [[ -n "${NATIVE_ARCH_ACTUAL:-}" && "${NATIVE_ARCH_ACTUAL}" != "undefined_arch" ]]; then
+    normalize_arch_name "${NATIVE_ARCH_ACTUAL}"
+    return
+  fi
+
+  if [[ -n "${CURRENT_ARCH:-}" && "${CURRENT_ARCH}" != "undefined_arch" ]]; then
+    normalize_arch_name "${CURRENT_ARCH}"
+    return
+  fi
+
+  if [[ -z "${ARCHS:-}" ]]; then
+    echo ""
+    return
+  fi
+
+  archs=(${ARCHS})
+  arch_count="${#archs[@]}"
+  if [[ "${arch_count}" -eq 1 ]]; then
+    normalize_arch_name "${archs[0]}"
+    return
+  fi
+
+  echo "Unable to infer a single dependency architecture from ARCHS='${ARCHS}'. Set AGENTHUB_TARGET_ARCH explicitly." >&2
+  exit 1
+}
+
+dependency_default_arch() {
+  local build_env_arch manifest_path default_arch machine
+
+  if [[ -n "${AGENTHUB_TARGET_ARCH:-}" ]]; then
+    normalize_arch_name "${AGENTHUB_TARGET_ARCH}"
+    return
+  fi
+
+  build_env_arch="$(dependency_build_env_arch)"
+  if [[ -n "${build_env_arch}" ]]; then
+    echo "${build_env_arch}"
+    return
+  fi
+
+  manifest_path="$(dependency_manifest_path)"
+  if [[ -f "${manifest_path}" ]] && command -v jq >/dev/null 2>&1; then
+    default_arch="$(jq -r '.default_arch // empty' "${manifest_path}")"
+    if [[ -n "${default_arch}" ]]; then
+      normalize_arch_name "${default_arch}"
+      return
+    fi
+  fi
+
+  machine="$(uname -m)"
+  normalize_arch_name "${machine}"
+}
+
+dependency_cache_dir() {
+  if [[ -n "${AGENTHUB_DEPENDENCY_CACHE_DIR:-}" ]]; then
+    echo "${AGENTHUB_DEPENDENCY_CACHE_DIR}"
+    return
+  fi
+
+  echo "$(dependency_repo_root)/build/dependency-cache"
+}
+
+ensure_parent_dir() {
+  local path="$1"
+  mkdir -p "$(dirname "${path}")"
+}
+
+require_command() {
+  local command_name="$1"
+  if ! command -v "${command_name}" >/dev/null 2>&1; then
+    echo "Missing required command: ${command_name}" >&2
+    exit 1
+  fi
+}
+
+jq_bin() {
+  require_command jq
+  command -v jq
+}
+
+manifest_read_required() {
+  local expression="$1"
+  local manifest_path="${2:-$(dependency_manifest_path)}"
+  local value
+
+  value="$("$(jq_bin)" -r "${expression}" "${manifest_path}")"
+  if [[ -z "${value}" || "${value}" == "null" ]]; then
+    echo "Manifest value is missing for expression: ${expression}" >&2
+    exit 1
+  fi
+
+  echo "${value}"
+}
+
+dependency_version() {
+  local dependency_name="$1"
+  local manifest_path="${2:-$(dependency_manifest_path)}"
+  manifest_read_required ".${dependency_name}.version" "${manifest_path}"
+}
+
+dependency_artifact_value() {
+  local dependency_name="$1"
+  local arch="$2"
+  local key="$3"
+  local manifest_path="${4:-$(dependency_manifest_path)}"
+  manifest_read_required ".${dependency_name}.artifacts.${arch}.${key}" "${manifest_path}"
+}
+
+codex_binary_path() {
+  local repo_root="${1:-$(dependency_repo_root)}"
+  echo "${repo_root}/${CODEX_RESOURCE_DIR}/${CODEX_BINARY_NAME}"
+}
+
+cef_stage_dir() {
+  local repo_root="${1:-$(dependency_repo_root)}"
+  local version="$2"
+  local arch="$3"
+  echo "${repo_root}/${CEF_STAGING_DIR}/${version}/${arch}"
+}
+
+cef_current_dir() {
+  local repo_root="${1:-$(dependency_repo_root)}"
+  local arch="$2"
+  echo "${repo_root}/${CEF_STAGING_DIR}/current/${arch}"
+}
+
+sha256_file() {
+  local file_path="$1"
+  /usr/bin/shasum -a 256 "${file_path}" | awk '{ print $1 }'
+}
+
+download_file() {
+  local url="$1"
+  local output_path="$2"
+  ensure_parent_dir "${output_path}"
+  /usr/bin/curl -fsSL "${url}" -o "${output_path}"
+}
+
+extract_archive() {
+  local archive_path="$1"
+  local destination_dir="$2"
+  local archive_type="$3"
+
+  rm -rf "${destination_dir}"
+  mkdir -p "${destination_dir}"
+
+  case "${archive_type}" in
+    tar.gz|tgz)
+      /usr/bin/tar -xzf "${archive_path}" -C "${destination_dir}"
+      ;;
+    tar.bz2)
+      /usr/bin/tar -xjf "${archive_path}" -C "${destination_dir}"
+      ;;
+    zip)
+      /usr/bin/ditto -x -k "${archive_path}" "${destination_dir}"
+      ;;
+    *)
+      echo "Unsupported archive type: ${archive_type}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+find_first_named() {
+  local root_dir="$1"
+  local name="$2"
+  find "${root_dir}" -type f -name "${name}" -print | head -n 1
+}
