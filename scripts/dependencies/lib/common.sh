@@ -26,25 +26,78 @@ dependency_manifest_path() {
   echo "$(dependency_repo_root)/scripts/dependencies/manifest.json"
 }
 
-dependency_default_arch() {
-  if [[ -n "${AGENTHUB_TARGET_ARCH:-}" ]]; then
-    echo "${AGENTHUB_TARGET_ARCH}"
-    return
-  fi
-
-  local machine
-  machine="$(uname -m)"
-  case "${machine}" in
+normalize_arch_name() {
+  local value="${1:-}"
+  case "${value}" in
+    "")
+      echo ""
+      ;;
     arm64|aarch64)
       echo "arm64"
       ;;
-    x86_64)
+    x86_64|amd64)
       echo "x86_64"
       ;;
     *)
-      echo "${machine}"
+      echo "${value}"
       ;;
   esac
+}
+
+dependency_build_env_arch() {
+  local archs arch_count
+
+  if [[ -n "${NATIVE_ARCH_ACTUAL:-}" && "${NATIVE_ARCH_ACTUAL}" != "undefined_arch" ]]; then
+    normalize_arch_name "${NATIVE_ARCH_ACTUAL}"
+    return
+  fi
+
+  if [[ -n "${CURRENT_ARCH:-}" && "${CURRENT_ARCH}" != "undefined_arch" ]]; then
+    normalize_arch_name "${CURRENT_ARCH}"
+    return
+  fi
+
+  if [[ -z "${ARCHS:-}" ]]; then
+    echo ""
+    return
+  fi
+
+  archs=(${ARCHS})
+  arch_count="${#archs[@]}"
+  if [[ "${arch_count}" -eq 1 ]]; then
+    normalize_arch_name "${archs[0]}"
+    return
+  fi
+
+  echo "Unable to infer a single dependency architecture from ARCHS='${ARCHS}'. Set AGENTHUB_TARGET_ARCH explicitly." >&2
+  exit 1
+}
+
+dependency_default_arch() {
+  local build_env_arch manifest_path default_arch machine
+
+  if [[ -n "${AGENTHUB_TARGET_ARCH:-}" ]]; then
+    normalize_arch_name "${AGENTHUB_TARGET_ARCH}"
+    return
+  fi
+
+  build_env_arch="$(dependency_build_env_arch)"
+  if [[ -n "${build_env_arch}" ]]; then
+    echo "${build_env_arch}"
+    return
+  fi
+
+  manifest_path="$(dependency_manifest_path)"
+  if [[ -f "${manifest_path}" ]] && command -v jq >/dev/null 2>&1; then
+    default_arch="$(jq -r '.default_arch // empty' "${manifest_path}")"
+    if [[ -n "${default_arch}" ]]; then
+      normalize_arch_name "${default_arch}"
+      return
+    fi
+  fi
+
+  machine="$(uname -m)"
+  normalize_arch_name "${machine}"
 }
 
 dependency_cache_dir() {

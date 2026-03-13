@@ -90,15 +90,33 @@ sign_staged_dependencies() {
   sign_if_present "${frameworks_dir}/Chromium Embedded Framework.framework" "${identity}"
 }
 
+copy_directory_contents() {
+  local source_dir="$1"
+  local destination_dir="$2"
+  local path target_path
+
+  if [[ ! -d "${source_dir}" ]]; then
+    return
+  fi
+
+  while IFS= read -r path; do
+    target_path="${destination_dir}/$(basename "${path}")"
+    rm -rf "${target_path}"
+    cp -R "${path}" "${destination_dir}/"
+  done < <(find "${source_dir}" -mindepth 1 -maxdepth 1 -print | sort)
+}
+
 main() {
-  local manifest_path arch repo_root stage_root frameworks_dir codex_binary path copied_framework
+  local manifest_path arch repo_root cef_root stage_root resources_root frameworks_dir codex_binary copied_framework
 
   manifest_path="$(dependency_manifest_path)"
   arch="$(dependency_default_arch)"
   repo_root="$(dependency_repo_root)"
   bash "${SCRIPT_DIR}/bootstrap.sh" --dependency all --manifest "${manifest_path}" --arch "${arch}" >/dev/null
   codex_binary="$(codex_binary_path "${repo_root}")"
-  stage_root="$(cef_current_dir "${repo_root}" "${arch}")/Release"
+  cef_root="$(cef_current_dir "${repo_root}" "${arch}")"
+  stage_root="${cef_root}/Release"
+  resources_root="${cef_root}/Resources"
   frameworks_dir="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
 
   if [[ ! -f "${codex_binary}" ]]; then
@@ -116,9 +134,8 @@ main() {
     "${frameworks_dir}/Chromium Embedded Framework.framework" \
     "${frameworks_dir}"/*Helper*.app \
     "${frameworks_dir}"/*.xpc
-  while IFS= read -r path; do
-    cp -R "${path}" "${frameworks_dir}/"
-  done < <(find "${stage_root}" -mindepth 1 -maxdepth 1 -print | sort)
+  copy_directory_contents "${stage_root}" "${frameworks_dir}"
+  copy_directory_contents "${resources_root}" "${frameworks_dir}"
   copied_framework="${frameworks_dir}/Chromium Embedded Framework.framework"
   normalize_cef_framework_layout "${copied_framework}"
   sign_staged_dependencies "${frameworks_dir}"

@@ -10,9 +10,34 @@ fail() {
   exit 1
 }
 
+assert_equals() {
+  local expected="$1"
+  local actual="$2"
+  if [[ "${expected}" != "${actual}" ]]; then
+    fail "expected '${expected}', got '${actual}'"
+  fi
+}
+
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  if [[ "${haystack}" != *"${needle}"* ]]; then
+    fail "expected output to contain '${needle}'"
+  fi
+}
+
 assert_exists() {
   local path="$1"
   [[ -e "${path}" ]] || fail "expected path to exist: ${path}"
+}
+
+run_dependency_default_arch() {
+  local script_path="$1"
+  shift
+  env "$@" bash -lc '
+    source "$1"
+    dependency_default_arch
+  ' bash "${script_path}"
 }
 
 make_codex_archive() {
@@ -160,6 +185,7 @@ EOF
   assert_exists "${output_root}/Frameworks/Chromium Embedded Framework.framework/Versions/Current/Libraries/libEGL.dylib"
   assert_exists "${output_root}/Frameworks/AgentHub Helper.app"
   assert_exists "${output_root}/Frameworks/AgentHub Helper (Alerts).xpc"
+  assert_exists "${output_root}/Frameworks/icudtl.dat"
   assert_exists "${log_path}"
   grep -q "libEGL.dylib" "${log_path}" || fail "expected nested CEF dylib to be codesigned"
   grep -q "AgentHub Helper.app" "${log_path}" || fail "expected helper app to be copied and codesigned"
@@ -169,9 +195,141 @@ EOF
   rm -rf "${tmp_dir}"
 }
 
+test_dependency_default_arch_prefers_manifest_default() {
+  local tmp_dir repo_root manifest_path output
+  tmp_dir="$(mktemp -d)"
+  repo_root="${tmp_dir}/repo"
+  manifest_path="${tmp_dir}/manifest.json"
+  mkdir -p "${repo_root}/scripts/dependencies"
+  cat >"${manifest_path}" <<'EOF'
+{
+  "schema_version": 1,
+  "default_arch": "arm64"
+}
+EOF
+
+  mkdir -p "${tmp_dir}/fake-bin"
+  cat >"${tmp_dir}/fake-bin/uname" <<'EOF'
+#!/bin/bash
+echo "x86_64"
+EOF
+  chmod +x "${tmp_dir}/fake-bin/uname"
+
+  output="$(run_dependency_default_arch "${SCRIPT_DIR}/lib/common.sh" \
+    PATH="${tmp_dir}/fake-bin:${PATH}" \
+    AGENTHUB_DEPENDENCY_REPO_ROOT="${repo_root}" \
+    AGENTHUB_DEPENDENCY_MANIFEST="${manifest_path}")"
+
+  assert_equals "arm64" "${output}"
+  rm -rf "${tmp_dir}"
+}
+
+test_dependency_default_arch_prefers_explicit_target_arch() {
+  local tmp_dir repo_root manifest_path output
+  tmp_dir="$(mktemp -d)"
+  repo_root="${tmp_dir}/repo"
+  manifest_path="${tmp_dir}/manifest.json"
+  mkdir -p "${repo_root}/scripts/dependencies"
+  cat >"${manifest_path}" <<'EOF'
+{
+  "schema_version": 1,
+  "default_arch": "arm64"
+}
+EOF
+
+  output="$(run_dependency_default_arch "${SCRIPT_DIR}/lib/common.sh" \
+    AGENTHUB_DEPENDENCY_REPO_ROOT="${repo_root}" \
+    AGENTHUB_DEPENDENCY_MANIFEST="${manifest_path}" \
+    AGENTHUB_TARGET_ARCH="x86_64" \
+    NATIVE_ARCH_ACTUAL="arm64" \
+    CURRENT_ARCH="arm64" \
+    ARCHS="arm64")"
+
+  assert_equals "x86_64" "${output}"
+  rm -rf "${tmp_dir}"
+}
+
+test_dependency_default_arch_prefers_xcode_native_arch() {
+  local tmp_dir repo_root manifest_path output
+  tmp_dir="$(mktemp -d)"
+  repo_root="${tmp_dir}/repo"
+  manifest_path="${tmp_dir}/manifest.json"
+  mkdir -p "${repo_root}/scripts/dependencies"
+  cat >"${manifest_path}" <<'EOF'
+{
+  "schema_version": 1,
+  "default_arch": "arm64"
+}
+EOF
+
+  output="$(run_dependency_default_arch "${SCRIPT_DIR}/lib/common.sh" \
+    AGENTHUB_DEPENDENCY_REPO_ROOT="${repo_root}" \
+    AGENTHUB_DEPENDENCY_MANIFEST="${manifest_path}" \
+    NATIVE_ARCH_ACTUAL="x86_64" \
+    CURRENT_ARCH="arm64" \
+    ARCHS="arm64")"
+
+  assert_equals "x86_64" "${output}"
+  rm -rf "${tmp_dir}"
+}
+
+test_dependency_default_arch_uses_single_archs_value() {
+  local tmp_dir repo_root manifest_path output
+  tmp_dir="$(mktemp -d)"
+  repo_root="${tmp_dir}/repo"
+  manifest_path="${tmp_dir}/manifest.json"
+  mkdir -p "${repo_root}/scripts/dependencies"
+  cat >"${manifest_path}" <<'EOF'
+{
+  "schema_version": 1,
+  "default_arch": "arm64"
+}
+EOF
+
+  output="$(run_dependency_default_arch "${SCRIPT_DIR}/lib/common.sh" \
+    AGENTHUB_DEPENDENCY_REPO_ROOT="${repo_root}" \
+    AGENTHUB_DEPENDENCY_MANIFEST="${manifest_path}" \
+    ARCHS="x86_64")"
+
+  assert_equals "x86_64" "${output}"
+  rm -rf "${tmp_dir}"
+}
+
+test_dependency_default_arch_rejects_multi_archs_without_explicit_target() {
+  local tmp_dir repo_root manifest_path output status
+  tmp_dir="$(mktemp -d)"
+  repo_root="${tmp_dir}/repo"
+  manifest_path="${tmp_dir}/manifest.json"
+  mkdir -p "${repo_root}/scripts/dependencies"
+  cat >"${manifest_path}" <<'EOF'
+{
+  "schema_version": 1
+}
+EOF
+
+  set +e
+  output="$(run_dependency_default_arch "${SCRIPT_DIR}/lib/common.sh" \
+    AGENTHUB_DEPENDENCY_REPO_ROOT="${repo_root}" \
+    AGENTHUB_DEPENDENCY_MANIFEST="${manifest_path}" \
+    ARCHS="arm64 x86_64" 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "${status}" -eq 0 ]]; then
+    fail "expected multi-arch resolution to fail without AGENTHUB_TARGET_ARCH"
+  fi
+  assert_contains "${output}" "Set AGENTHUB_TARGET_ARCH explicitly"
+  rm -rf "${tmp_dir}"
+}
+
 main() {
   test_bootstrap_stages_codex_and_cef
   test_prepare_xcode_inputs_copies_cef_release_payload
+  test_dependency_default_arch_prefers_manifest_default
+  test_dependency_default_arch_prefers_explicit_target_arch
+  test_dependency_default_arch_prefers_xcode_native_arch
+  test_dependency_default_arch_uses_single_archs_value
+  test_dependency_default_arch_rejects_multi_archs_without_explicit_target
   echo "All dependency script tests passed"
 }
 

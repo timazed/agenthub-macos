@@ -210,7 +210,7 @@ test_build_release_runs_dependency_bootstrap() {
   cat >"${fake_bootstrap}" <<'EOF'
 #!/bin/bash
 set -euo pipefail
-printf 'bootstrap %s\n' "${AGENTHUB_DEPENDENCY_MANIFEST}" >>"${AGENTHUB_BOOTSTRAP_LOG}"
+printf 'bootstrap %s %s\n' "${AGENTHUB_DEPENDENCY_MANIFEST}" "${AGENTHUB_TARGET_ARCH:-}" >>"${AGENTHUB_BOOTSTRAP_LOG}"
 EOF
   chmod +x "${fake_bootstrap}"
 
@@ -258,6 +258,65 @@ EOF
   rm -rf "${tmp_dir}"
 }
 
+test_build_release_forwards_explicit_target_arch() {
+  local tmp_dir bootstrap_log fake_bootstrap fake_xcodebuild output
+  tmp_dir="$(mktemp -d)"
+  bootstrap_log="${tmp_dir}/bootstrap.log"
+  fake_bootstrap="${tmp_dir}/fake-bootstrap.sh"
+  fake_xcodebuild="${tmp_dir}/fake-xcodebuild.sh"
+
+  cat >"${fake_bootstrap}" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf 'bootstrap %s\n' "${AGENTHUB_TARGET_ARCH:-}" >>"${AGENTHUB_BOOTSTRAP_LOG}"
+EOF
+  chmod +x "${fake_bootstrap}"
+
+  cat >"${fake_xcodebuild}" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf 'xcodebuild %s\n' "$*" >>"${AGENTHUB_BOOTSTRAP_LOG}"
+derived=""
+configuration="Release"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -derivedDataPath)
+      derived="$2"
+      shift 2
+      ;;
+    -configuration)
+      configuration="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+if [[ -n "${derived}" ]]; then
+  mkdir -p "${derived}/Build/Products/${configuration}/AgentHub.app"
+fi
+EOF
+  chmod +x "${fake_xcodebuild}"
+
+  output="$(
+    AGENTHUB_BOOTSTRAP_LOG="${bootstrap_log}" \
+    AGENTHUB_DEPENDENCY_BOOTSTRAP_BIN="${fake_bootstrap}" \
+    AGENTHUB_XCODEBUILD_BIN="${fake_xcodebuild}" \
+    AGENTHUB_RELEASE_BUILD_DIR="${tmp_dir}/build" \
+    AGENTHUB_RELEASE_OUTPUT_DIR="${tmp_dir}/build/output" \
+    AGENTHUB_RELEASE_DERIVED_DATA="${tmp_dir}/derived" \
+    AGENTHUB_TARGET_ARCH="x86_64" \
+    bash "${SCRIPT_DIR}/build-release.sh" 2>&1
+  )"
+
+  assert_contains "${output}" "Built release app"
+  assert_contains "$(head -n 1 "${bootstrap_log}")" "bootstrap x86_64"
+  assert_contains "$(cat "${bootstrap_log}")" "ARCHS=x86_64"
+  assert_contains "$(cat "${bootstrap_log}")" "ONLY_ACTIVE_ARCH=YES"
+  rm -rf "${tmp_dir}"
+}
+
 test_beta_channel_defaults() {
   local metadata defaults
   metadata="$(current_beta_release_metadata)"
@@ -277,6 +336,11 @@ test_beta_channel_defaults() {
   assert_contains "${defaults}" "AgentHub-Beta"
 }
 
+test_release_schemes_are_committed() {
+  [[ -f "${REPO_ROOT}/AgentHub.xcodeproj/xcshareddata/xcschemes/AgentHub-Beta.xcscheme" ]] || fail "expected AgentHub-Beta shared scheme"
+  [[ -f "${REPO_ROOT}/AgentHub.xcodeproj/xcshareddata/xcschemes/AgentHub-Release.xcscheme" ]] || fail "expected AgentHub-Release shared scheme"
+}
+
 main() {
   cd "${REPO_ROOT}"
   test_publish_requires_sparkle_key_for_real_releases
@@ -284,7 +348,9 @@ main() {
   test_collision_check_uses_build_number
   test_sign_release_uses_explicit_order_without_deep_signing
   test_build_release_runs_dependency_bootstrap
+  test_build_release_forwards_explicit_target_arch
   test_beta_channel_defaults
+  test_release_schemes_are_committed
   echo "All release script tests passed"
 }
 
